@@ -249,9 +249,15 @@ def test_quality_uses_actual_persisted_wire_and_cost_ledger(tmp_path):
     assert ledger["stages"]["narration"]["calculated_cost_usd"]
     assert ledger["stages"]["context"]["provider_reported_cost_usd"] is None
     assert Decimal(ledger["calculated_total_usd"]) > 0
-    run = db.execute("SELECT token_budget_json, request_json, wire_json, counter_id, counter_mode FROM context_runs").fetchone()
-    assert json.loads(run["request_json"])["narrator"]["messages"]
-    assert json.loads(run["wire_json"])["narrator"]["messages"]
+    run = db.execute("SELECT token_budget_json, request_json, wire_json, payload_hash, counter_id, counter_mode FROM context_runs").fetchone()
+    request_snapshot = json.loads(run["request_json"])
+    wire_snapshot = json.loads(run["wire_json"])
+    emitted = provider.calls[-1]
+    assert emitted["messages"] == wire_snapshot["narrator"]["messages"]
+    assert emitted["prepared_wire"] == wire_snapshot["narrator"]
+    assert emitted["wire_metadata"]["payload_hash"] == run["payload_hash"]
+    assert emitted["wire_metadata"]["input_tokens"] == json.loads(run["token_budget_json"])["narrator"]["input_tokens"]
+    assert request_snapshot["narrator"] == emitted["prepared_wire"]
 
 
 def test_required_narrator_wire_overflow_preflights_before_director(tmp_path):
@@ -297,6 +303,87 @@ def test_context_run_insert_rolls_back_when_final_context_cas_loses(tmp_path):
         service._save_context_run(job, preview)
 
     assert db.execute("SELECT COUNT(*) FROM context_runs WHERE generation_job_id=?", (job["id"],)).fetchone()[0] == 0
+
+
+def test_post_director_pack_failure_terminalizes_attempt_and_usage(tmp_path, monkeypatch):
+    db, owner, campaign = _story(tmp_path)
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    pool = build_candidate_pool(db, campaign.id, campaign.initial_branch_id, "Look", checkpoint_id=head.checkpoint_id, owner_id=owner.id)
+    plan = {"checkpoint_id": pool["checkpoint_id"], "action_hash": pool["action_hash"], "selected_memory_ids": [], "reasons": {}, "reason_sources": {}, "scene_ids": pool["scene_ids"], "conflict_flags": []}
+
+    class DirectorOnly(FakeProvider):
+        def generate_structured(self, request, schema):
+            return ProviderResult(text=json.dumps({**plan, "action_hash": request["action_hash"]}), usage={"input_tokens": 17, "output_tokens": 5, "total_tokens": 22})
+
+    service = GenerationService(db, DirectorOnly([]), profile={"roles": {"context": DEFAULT_PROFILE, "narrator": DEFAULT_PROFILE}})
+    monkeypatch.setattr(service, "_pack_selected", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("forced pack failure")))
+    job = service.generate(owner.id, campaign.id, campaign.initial_branch_id, "Look", idempotency_key="post-director-pack-failure", expected_checkpoint_id=head.checkpoint_id, mode="quality")
+
+    assert job["status"] == "failed"
+    attempt = db.execute("SELECT status,usage_json FROM provider_attempts WHERE generation_job_id=? AND stage='context'", (job["id"],)).fetchone()
+    assert attempt["status"] == "failed"
+    assert json.loads(attempt["usage_json"])["total_tokens"] == 22
+    assert db.execute("SELECT COUNT(*) FROM provider_attempts WHERE status='dispatched'").fetchone()[0] == 0
+    assert db.execute("SELECT COUNT(*) FROM generation_branch_guards WHERE generation_job_id=?", (job["id"],)).fetchone()[0] == 0
+
+
+def test_fractional_paid_cap_rejects_before_first_provider_call(tmp_path):
+    db, owner, campaign = _story(tmp_path)
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    profile = {**DEFAULT_PROFILE, "credential_tier": "paid", "is_test_profile": False, "pricing": {"prompt": "0.000001", "completion": "0.000001"}}
+
+    class Counting(FakeProvider):
+        def __init__(self):
+            super().__init__([])
+            self.calls = 0
+
+        def generate_text(self, request):
+            self.calls += 1
+            yield ProviderResult(text="unused", usage={"input_tokens": 1, "output_tokens": 1})
+
+    provider = Counting()
+    service = GenerationService(db, provider, profile=profile, settings={"budgets": {"narrator": {"input_limit": 1000, "requested_output": 100}}})
+    with pytest.raises(ValidationError, match="Aggregate generation estimate"):
+        service.generate(owner.id, campaign.id, campaign.initial_branch_id, "Look", idempotency_key="fractional-cap", expected_checkpoint_id=head.checkpoint_id, policy="capped_paid", cap="0.000001")
+    assert provider.calls == 0
+
+
+@pytest.mark.parametrize("director_usage", [{"provider_cost_usd": "0.00099"}, {"status": "unknown"}])
+def test_director_cost_updates_remaining_allowance_before_narrator(tmp_path, director_usage):
+    db, owner, campaign = _story(tmp_path)
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    pool = build_candidate_pool(db, campaign.id, campaign.initial_branch_id, "Look", checkpoint_id=head.checkpoint_id, owner_id=owner.id)
+    plan = {"checkpoint_id": pool["checkpoint_id"], "action_hash": pool["action_hash"], "selected_memory_ids": [], "reasons": {}, "reason_sources": {}, "scene_ids": pool["scene_ids"], "conflict_flags": []}
+    context_profile = {**DEFAULT_PROFILE, "id": "priced-context", "credential_tier": "paid", "is_test_profile": False, "pricing": {"prompt": "0.00000001", "completion": "0.00000001"}}
+    narrator_profile = {**context_profile, "id": "priced-narrator", "pricing": {"prompt": "0.0000001", "completion": "0.0000001"}}
+
+    class Provider(FakeProvider):
+        def __init__(self):
+            super().__init__([])
+            self.director_calls = 0
+            self.narrator_calls = 0
+
+        def generate_structured(self, request, schema):
+            self.director_calls += 1
+            return ProviderResult(text=json.dumps({**plan, "action_hash": request["action_hash"]}), usage=director_usage)
+
+        def generate_text(self, request):
+            self.narrator_calls += 1
+            yield ProviderResult(text="unused", usage={"provider_cost_usd": "0.00001"})
+
+    provider = Provider()
+    settings = {"budgets": {"context": {"input_limit": 12000, "requested_output": 4000}, "narrator": {"input_limit": 1000, "requested_output": 100}}}
+    service = GenerationService(db, provider, profile={"roles": {"context": context_profile, "narrator": narrator_profile}}, settings=settings)
+    job = service.generate(owner.id, campaign.id, campaign.initial_branch_id, "Look", idempotency_key=f"director-cost-{director_usage.get('status', 'known')}", expected_checkpoint_id=head.checkpoint_id, mode="quality", policy="capped_paid", cap="0.001")
+
+    assert provider.director_calls == 1, job
+    if director_usage.get("status") == "unknown":
+        assert provider.narrator_calls == 1
+        assert job["cost_ledger"]["stages"]["context"]["actual_status"] == "unknown"
+        assert Decimal(job["cost_ledger"]["stages"]["context"]["estimated_cost_usd"]) > 0
+    else:
+        assert provider.narrator_calls == 0
+        assert job["status"] == "failed"
 
 
 def test_cost_ledger_keeps_provider_billing_separate_from_unknown_usage(tmp_path):

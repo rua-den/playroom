@@ -635,13 +635,27 @@ class GenerationService:
                 failure = ProviderFailure("SCHEMA_INVALID", str(exc))
                 self._finish_attempt(key, "failed", failure, "")
                 raise _ProviderError(failure)
-            final_preview = self._pack_selected(preview, plan, narrator, director_selected_only=True)
-            final_preview["omission_reasons"] = [*final_preview.get("omission_reasons", []), *[item for item in director_omissions if item not in final_preview.get("omission_reasons", [])]]
             director_meta["usage"] = result.usage or {"status": "unknown"}
             director_result = result
+            try:
+                final_preview = self._pack_selected(preview, plan, narrator, director_selected_only=True)
+                final_preview["omission_reasons"] = [*final_preview.get("omission_reasons", []), *[item for item in director_omissions if item not in final_preview.get("omission_reasons", [])]]
+            except Exception as exc:
+                failure = ProviderFailure("PACKING_FAILED", "Validated director output could not be packed")
+                self._record_usage(job["id"], "context", result)
+                self._finish_attempt(director_key, "failed", result, result.text or "")
+                raise _ProviderError(failure) from exc
         else:
             final_preview = self._pack_selected(preview, plan, narrator)
-        final_preview, narrator_request, narrator_meta = self._narrator_request(job, narrator, final_preview, settings)
+        try:
+            final_preview, narrator_request, narrator_meta = self._narrator_request(job, narrator, final_preview, settings)
+        except Exception as exc:
+            if director_result is None:
+                raise
+            failure = ProviderFailure("PACKING_FAILED", "Validated director output could not be packed")
+            self._record_usage(job["id"], "context", director_result)
+            self._finish_attempt(director_key, "failed", director_result, director_result.text or "")
+            raise _ProviderError(failure) from exc
         saved_narrator = self.connection.execute("SELECT request_json FROM provider_attempts WHERE generation_job_id=? AND stage='narration' AND status='queued'", (job["id"],)).fetchone()
         if saved_narrator and saved_narrator["request_json"] and saved_narrator["request_json"] != "{}":
             persisted_request = json.loads(saved_narrator["request_json"])
@@ -651,6 +665,10 @@ class GenerationService:
                 narrator_meta["wire"] = persisted_request.get("prepared_wire")
                 narrator_meta.setdefault("payload_hash", final_preview.get("payload_hash"))
         if director_result is not None:
+            # Update the ledger before checking the narrator allowance. A
+            # provider-reported director cost must reduce the remaining
+            # parent cap before narration can be dispatched.
+            self._record_usage(job["id"], "context", director_result)
             # The validated selection, immutable final context, usage ledger,
             # and completed director attempt form one durable boundary.  The
             # narrator claim is made only after this transaction commits, so
