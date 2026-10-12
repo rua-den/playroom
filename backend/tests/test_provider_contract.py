@@ -8,7 +8,7 @@ import pytest
 
 from playroom.credentials import CredentialStore
 from playroom.model_profiles import validate_dispatch, OpenRouterVerifier, estimate_cost_usd
-from playroom.provider import OpenRouterAdapter, ProviderFailure, ProviderResult, FakeProvider
+from playroom.provider import OpenRouterAdapter, ProviderFailure, ProviderResult, FakeProvider, default_provider_factory
 from playroom.domain import ValidationError
 
 
@@ -16,6 +16,15 @@ def _profile(**overrides):
     profile = {"id": "profile-1", "version": 1, "profile_hash": "hash-1", "provider_tag": "exact", "model": "m", "endpoint": "https://openrouter.ai/api/v1/chat/completions", "context_limit": 100, "output_limit": 10, "supported_parameters": ["max_tokens", "response_format"], "native_structured_output": True, "structured_schema_parameter": "response_format", "structured_output": True}
     profile.update(overrides)
     return profile
+
+
+def test_default_factory_builds_exact_pinned_role_adapter():
+    profile = _profile(provider="openrouter")
+    adapter = default_provider_factory(owner_id="owner", stage="narration", profile=profile, credential="pinned-secret")
+    assert isinstance(adapter, OpenRouterAdapter)
+    assert adapter.profile["provider_tag"] == "exact"
+    with pytest.raises(ValueError, match="credential"):
+        default_provider_factory(owner_id="owner", stage="context", profile=profile, credential=None)
 
 
 class _SplitStream(httpx.SyncByteStream):

@@ -19,7 +19,8 @@ from .domain import NotFound, PlayroomError, RateLimited, StateConflict, Unautho
 from .settings import DEFAULT_TEST_CONTEXT_PROFILE
 from .generation import GenerationRuntime
 from .generation import GenerationService
-from .provider import FakeProvider
+from .provider import FakeProvider, default_provider_factory
+from .attempt_runtime import PhysicalAttemptRegistry
 
 
 def _allowed_hosts(value: set[str] | None) -> set[str]:
@@ -83,9 +84,11 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        if app.state.generation_provider is not None and app.state.generation_provider.__class__.__name__ == "FakeProvider" and app.state.generation_provider_factory is default_provider_factory:
+            app.state.generation_provider_factory = None
         initial_runtime = getattr(app.state, "generation_runtime", None)
         if initial_runtime is None and (app.state.generation_provider is not None or app.state.generation_provider_factory is not None):
-            initial_runtime = GenerationRuntime(app.state.database_url, app.state.generation_provider, provider_factory=app.state.generation_provider_factory, credential_resolver=app.state.generation_credential_resolver)
+            initial_runtime = GenerationRuntime(app.state.database_url, app.state.generation_provider, provider_factory=app.state.generation_provider_factory, credential_resolver=app.state.generation_credential_resolver, attempt_registry=app.state.generation_attempt_registry)
             app.state.generation_runtime = initial_runtime
         if initial_runtime is None:
             recovery_connection = connect(app.state.database_url)
@@ -98,8 +101,10 @@ def create_app(
         yield
         runtime = getattr(app.state, "generation_runtime", None)
         if runtime is not None:
-            runtime.stop()
-        if app.state.memory_keeper is not None:
+            stopped = runtime.stop()
+        else:
+            stopped = True
+        if app.state.memory_keeper is not None and stopped:
             app.state.memory_keeper.close()
 
     app = FastAPI(title="Playroom", version="0.1.0", lifespan=lifespan, docs_url=None, redoc_url=None)
@@ -169,8 +174,8 @@ def create_app(
     app.include_router(memory.router)
     app.include_router(context_api.router)
     app.state.generation_provider = generation_provider
-    app.state.generation_provider_factory = generation_provider_factory
-    app.state.generation_credential_resolver = None
+    app.state.generation_provider_factory = generation_provider_factory or (default_provider_factory if generation_provider is None else None)
+    app.state.generation_attempt_registry = PhysicalAttemptRegistry()
     app.state.generation_runtime = None
     app.include_router(generation.router)
     app.include_router(configuration.router)

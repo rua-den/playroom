@@ -40,6 +40,9 @@ def _profile_config(connection: sqlite3.Connection, request: Request, owner: Own
     return {
         "profile_id": profile["id"],
         "profile_version": profile.get("version"),
+        "profile_hash": profile.get("profile_hash"),
+        "settings_revision": settings.get("settings_revision"),
+        "owner_settings_hash": settings.get("settings_hash"),
         "context_window": context_limit,
         "input_limit": int(profile.get("input_limit", context_limit)),
         "output_limit": output_limit,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import codecs
 import json
+import threading
 from dataclasses import dataclass, field
 from typing import Iterable, Iterator
 
@@ -131,6 +132,18 @@ class OpenRouterAdapter(ProviderAdapter):
             raise ValueError("OpenRouter endpoint does not match the verified profile")
         self._key, self.endpoint, self.profile = api_key, endpoint, dict(profile or {})
         self.client = http_client or httpx.Client(timeout=300)
+        self._active_response = None
+        self._response_lock = threading.Lock()
+
+    def cancel(self, request: dict) -> None:
+        super().cancel(request)
+        with self._response_lock:
+            response = self._active_response
+        if response is not None:
+            try:
+                response.close()
+            except Exception:
+                pass
 
     def capabilities_for(self, profile: dict) -> ProviderCapabilities:
         return ProviderCapabilities(self.endpoint, profile["model"], int(profile["context_limit"]), int(profile["output_limit"]), structured_output=bool(profile.get("structured_output")), supported_parameters=tuple(profile.get("supported_parameters", ())), output_parameter=profile.get("output_parameter", "max_tokens"), provider_tag=profile.get("provider_tag"))
@@ -173,11 +186,11 @@ class OpenRouterAdapter(ProviderAdapter):
         except ValueError as exc:
             yield ProviderFailure("CONFIG_INVALID", str(exc))
             return
-        yield from self._stream(payload)
+        yield from self._stream(payload, request=request)
 
     def generate_structured(self, request: dict, schema: dict) -> ProviderResult | ProviderFailure:
         try:
-            events = list(self._stream(self._payload(request, schema)))
+            events = list(self._stream(self._payload(request, schema), request=request))
         except ValueError as exc:
             return ProviderFailure("CONFIG_INVALID", str(exc))
         failure = next((item for item in events if isinstance(item, ProviderFailure)), None)
@@ -193,7 +206,7 @@ class OpenRouterAdapter(ProviderAdapter):
             return ProviderFailure("SCHEMA_INVALID", "Provider returned data outside the requested schema")
         return result
 
-    def _stream(self, payload: dict) -> Iterator[str | ProviderResult | ProviderFailure]:
+    def _stream(self, payload: dict, *, request: dict | None = None) -> Iterator[str | ProviderResult | ProviderFailure]:
         text_parts: list[str] = []
         usage = None
         finish_reason = None
@@ -243,11 +256,15 @@ class OpenRouterAdapter(ProviderAdapter):
 
         try:
             with self.client.stream("POST", self.endpoint, headers={"Authorization": f"Bearer {self._key}", "Content-Type": "application/json"}, json=payload) as response:
+                with self._response_lock:
+                    self._active_response = response
                 if response.status_code >= 400:
                     code = "QUOTA_EXHAUSTED" if response.status_code in {402, 429} else "MODEL_UNAVAILABLE" if response.status_code in {404, 503} else "PROVIDER_ERROR"
                     yield ProviderFailure(code, "OpenRouter request failed")
                     return
                 for chunk in response.iter_bytes():
+                    if request and request.get("cancel_event") is not None and request["cancel_event"].is_set():
+                        return
                     pending += decoder.decode(chunk, final=False)
                     while "\n" in pending:
                         line, pending = pending.split("\n", 1)
@@ -283,6 +300,9 @@ class OpenRouterAdapter(ProviderAdapter):
         except httpx.HTTPError:
             yield ProviderFailure("MODEL_UNAVAILABLE", "OpenRouter provider could not be reached")
             return
+        finally:
+            with self._response_lock:
+                self._active_response = None
         if failed:
             return
         if finish_reason == "length":
@@ -293,3 +313,12 @@ class OpenRouterAdapter(ProviderAdapter):
             yield ProviderFailure("MISSING_TERMINAL", "Provider stream did not provide a normal terminal frame")
         else:
             yield ProviderResult("".join(text_parts), usage if usage is not None else {"status": "unknown"}, "stop")
+
+
+def default_provider_factory(*, owner_id: str, stage: str, profile: dict, credential: str, http_client=None) -> ProviderAdapter:
+    """Construct the pinned adapter for one immutable role dispatch."""
+    if profile.get("provider") != "openrouter":
+        raise ValueError("No production adapter is registered for this provider")
+    if not credential:
+        raise ValueError("Pinned provider credential is unavailable")
+    return OpenRouterAdapter(credential, profile["endpoint"], profile=profile, http_client=http_client)

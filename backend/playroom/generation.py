@@ -22,9 +22,12 @@ from .context import build_candidate_pool, build_context_preview, _profiles
 from .db import transaction
 from .domain import NotFound, StateConflict, ValidationError
 from .model_profiles import estimate_cost_usd, validate_dispatch
+from .model_profiles import get_model_profile
+from .settings import get_owner_settings
 from .provider import ProviderAdapter, ProviderFailure, ProviderResult
 from .context_director import deterministic_selection, validate_director_plan
 from .timeline import _create_committed_revision_in_transaction, get_branch_head, load_state_checkpoint
+from .attempt_runtime import PhysicalAttemptRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -79,13 +82,14 @@ class _ProviderError(Exception):
 class GenerationService:
     """Durable worker with one immutable parent and one attempt per stage."""
 
-    def __init__(self, connection: sqlite3.Connection, provider: ProviderAdapter, *, profile: dict | None = None, settings: dict | None = None, timeout_seconds: float = 300.0, provider_factory=None, credential_resolver=None):
+    def __init__(self, connection: sqlite3.Connection, provider: ProviderAdapter | None, *, profile: dict | None = None, settings: dict | None = None, timeout_seconds: float = 300.0, provider_factory=None, credential_resolver=None, attempt_registry=None):
         self.connection, self.provider = connection, provider
         self.timeout_seconds = timeout_seconds
         self.profile = _copy(profile or DEFAULT_PROFILE)
         self.settings = _copy(settings or {})
         self.provider_factory = provider_factory
         self.credential_resolver = credential_resolver
+        self.attempt_registry = attempt_registry or PhysicalAttemptRegistry()
         self._attempt_cancel_events: dict[str, Event] = {}
         self._ensure_tables()
 
@@ -106,6 +110,17 @@ class GenerationService:
         else:
             narrator = context = self.profile
         return {"narrator": _copy(narrator), "context": _copy(context)}
+
+    def _persisted_config(self, owner_id: str):
+        settings = get_owner_settings(self.connection, owner_id)
+        roles = {}
+        for role, binding in (settings.get("roles") or {}).items():
+            if binding:
+                roles[role] = get_model_profile(self.connection, owner_id, binding["id"], binding.get("version"))
+        if not roles:
+            return None, None
+        narrator = roles.get("narrator") or DEFAULT_PROFILE
+        return settings, {"narrator": _copy(narrator), "context": _copy(roles.get("context") or narrator)}
 
     def _epoch(self) -> str:
         return self.connection.execute("SELECT epoch FROM execution_epochs WHERE id=1").fetchone()["epoch"]
@@ -128,32 +143,34 @@ class GenerationService:
             raise ValidationError("Aggregate generation estimate exceeds the confirmed USD cap")
         return {"policy": policy, "cap": str(cap) if cap is not None else None, "stages": entries, "reserved_total_usd": str(total), "actual_total_usd": None}
 
-    def _request_hash(self, campaign_id, branch_id, action, checkpoint_id, preview_id, idempotency_key, mode, policy, cap):
+    def _request_hash(self, campaign_id, branch_id, action, checkpoint_id, preview_id, idempotency_key, mode, policy, cap, submitted_identity=None):
         # Recovery identity is derived only from the submitted request. Live
         # settings/profiles/keys are intentionally absent and may change later.
+        if submitted_identity is not None:
+            return _hash({"campaign_id": campaign_id, "branch_id": branch_id, "action": action, "checkpoint_id": checkpoint_id, "preview_id": preview_id, "idempotency_key": idempotency_key, "submitted": submitted_identity})
         return _hash({"campaign_id": campaign_id, "branch_id": branch_id, "action": action, "checkpoint_id": checkpoint_id, "preview_id": preview_id, "idempotency_key": idempotency_key, "mode": mode, "policy": policy, "cap": str(cap) if cap is not None else None})
 
-    def generate(self, owner_id: str, campaign_id: str, branch_id: str, action: str, *, idempotency_key: str, expected_checkpoint_id: str, preview_id: str | None = None, mode: str = "economy", policy: str = "free_only", cap=None, execute: bool = True) -> dict:
+    def existing_for_submitted_request(self, owner_id, campaign_id, branch_id, action, *, idempotency_key, expected_checkpoint_id, preview_id, submitted_identity):
+        request_hash = self._request_hash(campaign_id, branch_id, action, expected_checkpoint_id, preview_id, idempotency_key, None, None, None, submitted_identity=submitted_identity)
+        existing = self.connection.execute("SELECT id,request_hash FROM generation_jobs WHERE owner_id=? AND branch_id=? AND operation='generation' AND idempotency_key=?", (owner_id, branch_id, idempotency_key)).fetchone()
+        if existing is None:
+            return None
+        if existing["request_hash"] != request_hash:
+            raise StateConflict("Conflicting idempotency payload")
+        return self._job(existing["id"])
+
+    def generate(self, owner_id: str, campaign_id: str, branch_id: str, action: str, *, idempotency_key: str, expected_checkpoint_id: str, preview_id: str | None = None, mode: str = "economy", policy: str = "free_only", cap=None, execute: bool = True, submitted_identity=None) -> dict:
         if mode not in {"economy", "quality"}:
             raise ValidationError("Unknown generation mode")
         if not action.strip() or not idempotency_key.strip():
             raise ValidationError("Action and idempotency key are required")
-        request_hash = self._request_hash(campaign_id, branch_id, action, expected_checkpoint_id, preview_id, idempotency_key, mode, policy, cap)
+        request_hash = self._request_hash(campaign_id, branch_id, action, expected_checkpoint_id, preview_id, idempotency_key, mode, policy, cap, submitted_identity=submitted_identity)
         existing = self.connection.execute("SELECT id,request_hash FROM generation_jobs WHERE owner_id=? AND branch_id=? AND operation='generation' AND idempotency_key=?", (owner_id, branch_id, idempotency_key)).fetchone()
         if existing:
             if existing["request_hash"] != request_hash:
                 raise StateConflict("Conflicting idempotency payload")
             return self._job(existing["id"])
         preview_snapshot = None
-        if preview_id is not None:
-            preview_row = self.connection.execute("SELECT payload_json FROM context_previews WHERE id=? AND owner_id=?", (preview_id, owner_id)).fetchone()
-            if preview_row is None:
-                raise NotFound("Context preview not found")
-            preview_snapshot = json.loads(preview_row["payload_json"])
-            if (preview_snapshot.get("campaign_id"), preview_snapshot.get("branch_id"), preview_snapshot.get("action"), preview_snapshot.get("checkpoint_id")) != (campaign_id, branch_id, action, expected_checkpoint_id):
-                raise StateConflict("Submitted context preview does not match generation identity")
-            if preview_snapshot.get("status") != "ready":
-                raise ValidationError("Only a ready context preview can be submitted")
         profiles = self._profiles()
         settings = _copy(self.settings)
         settings.update({"mode": mode, "policy": policy, "confirmed_usd_cap": str(cap) if cap is not None else settings.get("confirmed_usd_cap")})
@@ -173,10 +190,40 @@ class GenerationService:
             count = self.connection.execute("SELECT COUNT(*) AS n FROM provider_attempts WHERE status='dispatched'").fetchone()["n"]
             if count >= 2:
                 raise StateConflict("Provider concurrency limit reached")
+            locked_settings, locked_profiles = self._persisted_config(owner_id)
+            if locked_settings is not None:
+                settings = locked_settings
+                profiles = locked_profiles
+                if submitted_identity is not None:
+                    if not submitted_identity["mode"]["present"] or submitted_identity["mode"]["value"] is None:
+                        mode = settings.get("mode", mode)
+                    if not submitted_identity["policy"]["present"] or submitted_identity["policy"]["value"] is None:
+                        policy = settings.get("policy", policy)
+                    if not submitted_identity["cap"]["present"] or submitted_identity["cap"]["value"] is None:
+                        cap = settings.get("confirmed_usd_cap")
+                settings = _copy(settings)
+                settings.update({"mode": mode, "policy": policy, "confirmed_usd_cap": str(cap) if cap is not None else settings.get("confirmed_usd_cap")})
+            if preview_id is not None:
+                preview_row = self.connection.execute("SELECT payload_json FROM context_previews WHERE id=? AND owner_id=?", (preview_id, owner_id)).fetchone()
+                if preview_row is None:
+                    raise NotFound("Context preview not found")
+                preview_snapshot = json.loads(preview_row["payload_json"])
+                if (preview_snapshot.get("campaign_id"), preview_snapshot.get("branch_id"), preview_snapshot.get("action"), preview_snapshot.get("checkpoint_id")) != (campaign_id, branch_id, action, expected_checkpoint_id):
+                    raise StateConflict("Submitted context preview does not match generation identity")
+                if preview_snapshot.get("status") != "ready":
+                    raise ValidationError("Only a ready context preview can be submitted")
+            if preview_snapshot is not None and preview_snapshot.get("profile_id"):
+                preview_profile = next((candidate for candidate in (profiles.get("context"), profiles.get("narrator")) if candidate and candidate.get("id") == preview_snapshot.get("profile_id")), None)
+                if preview_profile is None or (preview_snapshot.get("profile_version") is not None and preview_profile.get("version") != preview_snapshot.get("profile_version")) or (preview_snapshot.get("profile_hash") and preview_profile.get("profile_hash") != preview_snapshot.get("profile_hash")):
+                    raise StateConflict("Submitted context preview is stale because its profile changed")
             if preview_snapshot is None:
                 narrator = profiles["narrator"]
-                preview_config = {"profile_id": narrator.get("id"), "context_window": narrator.get("context_limit", 12000), "input_limit": narrator.get("context_limit", 12000), "output_limit": narrator.get("output_limit", 4000), "wrapper_buffer": narrator.get("wrapper_buffer", 512), "requested_output": min(4000, narrator.get("output_limit", 4000)), "is_test_profile": bool(narrator.get("is_test_profile")), "capabilities_verified": bool(narrator.get("capabilities_verified", True))}
+                preview_config = {"profile_id": narrator.get("id"), "profile_version": narrator.get("version"), "profile_hash": narrator.get("profile_hash"), "settings_revision": settings.get("settings_revision"), "owner_settings_hash": settings.get("settings_hash"), "context_window": narrator.get("context_limit", 12000), "input_limit": narrator.get("context_limit", 12000), "output_limit": narrator.get("output_limit", 4000), "wrapper_buffer": narrator.get("wrapper_buffer", 512), "requested_output": min(4000, narrator.get("output_limit", 4000)), "is_test_profile": bool(narrator.get("is_test_profile")), "capabilities_verified": bool(narrator.get("capabilities_verified", True))}
                 preview_snapshot = build_context_preview(self.connection, campaign_id, branch_id, action, preview_config, owner_id=owner_id, settings_hash=_hash(settings))
+            if preview_snapshot.get("settings_revision") is not None and preview_snapshot.get("settings_revision") != settings.get("settings_revision"):
+                raise StateConflict("Submitted context preview is stale because settings changed")
+            if preview_snapshot.get("owner_settings_hash") and preview_snapshot.get("owner_settings_hash") != settings.get("settings_hash"):
+                raise StateConflict("Submitted context preview is stale because settings changed")
             if preview_snapshot.get("checkpoint_id") != expected_checkpoint_id or preview_snapshot.get("action") != action:
                 raise StateConflict("Submitted context preview is stale")
             if preview_snapshot.get("status") == "blocked":
@@ -238,17 +285,21 @@ class GenerationService:
             self._check_dispatch(job, context, narrator, preview, aggregate=True)
             request = {"stage": "context", "messages": self._director_messages(job["action"], pool), "reserved_completion_tokens": min(4000, int(context.get("output_limit", 4000))), "model": context.get("model"), "checkpoint_id": pool["checkpoint_id"], "action_hash": pool["action_hash"]}
             key = f"{job['id']}:context"
-            request["cancel_event"] = Event()
-            self._attempt_cancel_events[key] = request["cancel_event"]
             self._insert_attempt(job, "context", key, _hash(_serializable_request(request)), context, request)
-            self._mark_dispatched(key)
+            if not self._mark_dispatched(key):
+                raise _ProviderError(ProviderFailure("CANCELLED", "Generation attempt was claimed by another worker"))
             self._event(job["id"], "context", "phase_changed", None, "", {"phase": "context_dispatched"})
-            context_provider = self._provider_for(job, "context", context)
-            context_started = time.monotonic()
-            result = context_provider.generate_structured(request, SELECTION_SCHEMA)
-            if time.monotonic() - context_started > self.timeout_seconds:
-                context_provider.cancel(request)
-                raise _ProviderError(ProviderFailure("PROVIDER_TIMEOUT", "Context director exceeded its timeout"))
+            try:
+                context_provider = self._provider_for(job, "context", context)
+                result = self.attempt_registry.structured(key, context_provider, request, SELECTION_SCHEMA, self.timeout_seconds)
+            except TimeoutError as exc:
+                code = "CANCELLED" if str(exc) == "cancelled" else "PROVIDER_TIMEOUT"
+                failure = ProviderFailure(code, "Generation was cancelled" if code == "CANCELLED" else "Context director exceeded its timeout")
+                self._finish_attempt(key, "interrupted" if code == "CANCELLED" else "failed", failure, "")
+                raise _ProviderError(failure)
+            except _ProviderError as exc:
+                self._finish_attempt(key, "failed", exc.failure, "")
+                raise
             self._require_active(key, job["id"])
             if isinstance(result, ProviderFailure):
                 self._finish_attempt(key, "failed", result, "")
@@ -356,29 +407,29 @@ class GenerationService:
     def _narrate(self, job, profile, preview):
         key = f"{job['id']}:narration"
         request = {"stage": "narration", "messages": [{"role": "system", "content": "Continue the story in Vietnamese using only supplied context."}, {"role": "user", "content": json.dumps({"blocks": preview.get("blocks", []), "action": preview["action"], "selected_memory_ids": preview.get("selected_memory_ids", [])}, ensure_ascii=False, sort_keys=True)}], "reserved_completion_tokens": min(4000, int(profile.get("output_limit", 4000))), "model": profile.get("model"), "payload_hash": preview["payload_hash"]}
-        request["cancel_event"] = Event()
-        self._attempt_cancel_events[key] = request["cancel_event"]
         self._insert_attempt(job, "narration", key, preview["payload_hash"], profile, request)
-        self._mark_dispatched(key)
+        if not self._mark_dispatched(key):
+            raise _ProviderError(ProviderFailure("CANCELLED", "Generation attempt was claimed by another worker"))
         self._event(job["id"], "narration", "phase_changed", None, "", {"phase": "narration_dispatched"})
         parts, result = [], None
-        started = time.monotonic()
-        narration_provider = self._provider_for(job, "narration", profile)
         try:
-            for event in narration_provider.generate_text(request):
-                if time.monotonic() - started > self.timeout_seconds:
-                    narration_provider.cancel(request)
-                    raise _ProviderError(ProviderFailure("PROVIDER_TIMEOUT", "Narration attempt exceeded its timeout"))
-                if self._cancel_requested(job["id"]):
-                    raise _ProviderError(ProviderFailure("CANCELLED", "Generation was cancelled"))
-                if isinstance(event, ProviderFailure):
-                    raise _ProviderError(event)
-                if isinstance(event, ProviderResult):
-                    result = event
-                    if not parts and event.text:
-                        self._append_output(job["id"], "narration", event.text, parts)
-                elif isinstance(event, str) and event:
-                    self._append_output(job["id"], "narration", event, parts)
+            narration_provider = self._provider_for(job, "narration", profile)
+            try:
+                for event in self.attempt_registry.stream(key, narration_provider, request, self.timeout_seconds):
+                    if self._cancel_requested(job["id"]):
+                        self.attempt_registry.cancel(job["id"])
+                        raise _ProviderError(ProviderFailure("CANCELLED", "Generation was cancelled"))
+                    if isinstance(event, ProviderFailure):
+                        raise _ProviderError(event)
+                    if isinstance(event, ProviderResult):
+                        result = event
+                        if not parts and event.text:
+                            self._append_output(job["id"], "narration", event.text, parts)
+                    elif isinstance(event, str) and event:
+                        self._append_output(job["id"], "narration", event, parts)
+            except TimeoutError as exc:
+                code = "CANCELLED" if str(exc) == "cancelled" or self._cancel_requested(job["id"]) else "PROVIDER_TIMEOUT"
+                raise _ProviderError(ProviderFailure(code, "Generation was cancelled" if code == "CANCELLED" else "Narration attempt exceeded its timeout"))
             if result is None:
                 raise _ProviderError(ProviderFailure("MISSING_TERMINAL", "Provider did not return a terminal result"))
             if result.failure:
@@ -415,7 +466,7 @@ class GenerationService:
             self.connection.execute("INSERT INTO provider_attempts(id,generation_job_id,stage,stage_key,profile_snapshot_json,payload_hash,status,request_json,output_text,output_offset,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)", (str(uuid4()), job["id"], stage, key, json.dumps(_copy(profile), sort_keys=True), payload_hash, "queued", json.dumps(_serializable_request(request), ensure_ascii=False, sort_keys=True), "", 0, _now()))
 
     def _mark_dispatched(self, key):
-        self.connection.execute("UPDATE provider_attempts SET status='dispatched',dispatched_at=?,claim_epoch=(SELECT epoch FROM execution_epochs WHERE id=1) WHERE stage_key=? AND status='queued'", (_now(), key))
+        return self.connection.execute("UPDATE provider_attempts SET status='dispatched',dispatched_at=?,claim_epoch=(SELECT epoch FROM execution_epochs WHERE id=1) WHERE stage_key=? AND status='queued'", (_now(), key)).rowcount == 1
 
     @staticmethod
     def _offset(text: str) -> int:
@@ -453,6 +504,7 @@ class GenerationService:
             active = self.connection.execute("SELECT COUNT(*) AS n FROM provider_attempts WHERE generation_job_id=? AND status='dispatched'", (job_id,)).fetchone()["n"]
             status = "cancelling" if active else "cancelled"
             self.connection.execute("UPDATE generation_jobs SET cancel_requested=1,status=? WHERE id=? AND owner_id=? AND status IN ('queued','running','candidate')", (status, job_id, owner_id))
+            self.attempt_registry.cancel(job_id)
             for key, event in self._attempt_cancel_events.items():
                 if key.startswith(f"{job_id}:"):
                     event.set()
@@ -540,11 +592,14 @@ class GenerationService:
             head = get_branch_head(self.connection, job["campaign_id"], job["branch_id"], owner_id)
             if head.checkpoint_id != job["checkpoint_id"]:
                 raise StateConflict("Candidate is stale")
+            competing = self.connection.execute("SELECT generation_job_id FROM generation_branch_guards WHERE branch_id=? AND generation_job_id<>?", (job["branch_id"], job_id)).fetchone()
+            if competing:
+                raise StateConflict("An active generation owns this branch")
             _create_committed_revision_in_transaction(self.connection, job["campaign_id"], job["branch_id"], job["action"], job["draft"], expected_state_version=head.state_version)
             if self.connection.execute("UPDATE generation_jobs SET status='committed' WHERE id=? AND status='candidate'", (job_id,)).rowcount != 1:
                 raise StateConflict("Candidate was already committed")
             self.connection.execute("DELETE FROM generation_branch_guards WHERE generation_job_id=?", (job_id,))
-            self._event(job_id, "narration", "committed", len(job["draft"]), "", {})
+            self._event(job_id, "narration", "committed", self._offset(job["draft"]), "", {"offset_unit": "utf16_code_units"})
         return self._job(job_id)
 
 
@@ -569,12 +624,13 @@ class DurableGenerationWorker:
 class GenerationRuntime:
     """Shared application worker independent from request/stream lifetime."""
 
-    def __init__(self, database_url, provider, *, profile=None, provider_factory=None, credential_resolver=None, poll_seconds: float = 0.05):
+    def __init__(self, database_url, provider, *, profile=None, provider_factory=None, credential_resolver=None, attempt_registry=None, poll_seconds: float = 0.05):
         from threading import Event, Thread
         from .db import connect
         self._connect = connect
         self.connection = connect(database_url)
-        self.service = GenerationService(self.connection, provider, profile=profile, provider_factory=provider_factory, credential_resolver=credential_resolver)
+        self.attempt_registry = attempt_registry or PhysicalAttemptRegistry()
+        self.service = GenerationService(self.connection, provider, profile=profile, provider_factory=provider_factory, credential_resolver=credential_resolver, attempt_registry=self.attempt_registry)
         self.poll_seconds = poll_seconds
         self._stop = Event()
         self._thread = None
@@ -603,5 +659,9 @@ class GenerationRuntime:
     def stop(self):
         if self._thread:
             self._stop.set()
+            self.attempt_registry.shutdown()
             self._thread.join(timeout=2)
+            if self._thread.is_alive():
+                return False
         self.connection.close()
+        return True
