@@ -45,6 +45,14 @@ def migrate(connection: sqlite3.Connection) -> None:
     columns = {row[1] for row in connection.execute("PRAGMA table_info(campaigns)")}
     if "archived_at" not in columns:
         connection.execute("ALTER TABLE campaigns ADD COLUMN archived_at TEXT")
+    generation_columns = {row[1] for row in connection.execute("PRAGMA table_info(generation_jobs)")}
+    if generation_columns:
+        for name, definition in (("action", "TEXT NOT NULL DEFAULT ''"), ("mode", "TEXT NOT NULL DEFAULT 'economy'"), ("policy", "TEXT NOT NULL DEFAULT 'free_only'"), ("draft", "TEXT NOT NULL DEFAULT ''"), ("failure_json", "TEXT"), ("usage_json", "TEXT")):
+            if name not in generation_columns:
+                connection.execute(f"ALTER TABLE generation_jobs ADD COLUMN {name} {definition}")
+    attempt_columns = {row[1] for row in connection.execute("PRAGMA table_info(provider_attempts)")}
+    if attempt_columns and "output_text" not in attempt_columns:
+        connection.execute("ALTER TABLE provider_attempts ADD COLUMN output_text TEXT NOT NULL DEFAULT ''")
 
 
 def request_connection(request: Request):

@@ -8,7 +8,7 @@ from uuid import uuid4
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from .api import auth, campaigns, context as context_api, memory
+from .api import auth, campaigns, context as context_api, memory, generation
 from .db import connect, migrate
 from .domain import NotFound, PlayroomError, RateLimited, StateConflict, Unauthorized, ValidationError
 from .settings import DEFAULT_TEST_CONTEXT_PROFILE
@@ -123,4 +123,6 @@ def create_app(
     app.include_router(campaigns.router)
     app.include_router(memory.router)
     app.include_router(context_api.router)
+    app.state.generation_provider = None
+    app.include_router(generation.router)
     return app

@@ -18,6 +18,20 @@ DEFAULT_TEST_CONTEXT_PROFILE = {
     "token_count_mode": "estimated",
 }
 
+DEFAULT_NARRATOR_PROFILE = {
+    "profile_id": "fake-narrator-test",
+    "label": "Synthetic fixture narrator",
+    "provider": "fake",
+    "endpoint": "fake://local",
+    "model": "synthetic-fixture",
+    "context_limit": 12000,
+    "output_limit": 4000,
+    "credential_tier": "free",
+    "pricing_verified": True,
+    "secret_version": "synthetic",
+    "is_test_profile": True,
+}
+
 
 def config_hash(config: dict) -> str:
     payload = json.dumps(config, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
