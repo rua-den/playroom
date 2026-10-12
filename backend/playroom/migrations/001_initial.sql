@@ -181,6 +181,21 @@ CREATE TABLE IF NOT EXISTS context_runs (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS context_previews (
+    id TEXT PRIMARY KEY,
+    campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+    branch_id TEXT NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+    owner_id TEXT NOT NULL REFERENCES owners(id) ON DELETE CASCADE,
+    checkpoint_id TEXT NOT NULL REFERENCES state_checkpoints(id),
+    state_version INTEGER NOT NULL,
+    action_hash TEXT NOT NULL,
+    settings_hash TEXT NOT NULL,
+    payload_hash TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_context_previews_owner ON context_previews(owner_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS generation_jobs (
     id TEXT PRIMARY KEY,
     owner_id TEXT NOT NULL REFERENCES owners(id) ON DELETE CASCADE,
@@ -223,5 +238,9 @@ CREATE TRIGGER IF NOT EXISTS prevent_scene_version_update
 BEFORE UPDATE ON scene_versions BEGIN SELECT RAISE(ABORT, 'scene versions are immutable'); END;
 CREATE TRIGGER IF NOT EXISTS prevent_scene_version_delete
 BEFORE DELETE ON scene_versions BEGIN SELECT RAISE(ABORT, 'scene versions are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS prevent_context_preview_update
+BEFORE UPDATE ON context_previews BEGIN SELECT RAISE(ABORT, 'context previews are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS prevent_context_preview_delete
+BEFORE DELETE ON context_previews BEGIN SELECT RAISE(ABORT, 'context previews are immutable'); END;
 
 INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));

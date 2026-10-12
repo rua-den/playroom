@@ -8,9 +8,10 @@ from uuid import uuid4
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from .api import auth, campaigns, memory
+from .api import auth, campaigns, context as context_api, memory
 from .db import connect, migrate
 from .domain import NotFound, PlayroomError, RateLimited, StateConflict, Unauthorized, ValidationError
+from .settings import DEFAULT_TEST_CONTEXT_PROFILE
 
 
 def _allowed_hosts(value: set[str] | None) -> set[str]:
@@ -53,6 +54,7 @@ def create_app(
     secure_cookies: bool = True,
     login_failure_limit: int = 5,
     login_failure_window_seconds: int = 900,
+    context_model_profiles: dict | None = None,
 ) -> FastAPI:
     configured_url = database_url or os.getenv("PLAYROOM_DATABASE_URL", "./data/playroom.sqlite3")
     is_memory_database = configured_url in {":memory:", "sqlite:///:memory:"}
@@ -76,6 +78,7 @@ def create_app(
     app.state.secure_cookies = secure_cookies
     app.state.login_failure_limit = login_failure_limit
     app.state.login_failure_window_seconds = login_failure_window_seconds
+    app.state.context_model_profiles = context_model_profiles if context_model_profiles is not None else {DEFAULT_TEST_CONTEXT_PROFILE["profile_id"]: dict(DEFAULT_TEST_CONTEXT_PROFILE)}
 
     @app.middleware("http")
     async def protect_host_and_origin(request: Request, call_next):
@@ -115,4 +118,5 @@ def create_app(
     app.include_router(auth.router)
     app.include_router(campaigns.router)
     app.include_router(memory.router)
+    app.include_router(context_api.router)
     return app
