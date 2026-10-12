@@ -1,6 +1,6 @@
 # Personal Playroom Mobile Web Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Follow the user's model routing: implementation must be delegated to `gpt-5.6-luna` with `medium` reasoning; the orchestrator reviews the diff and runs verification. Do not substitute an unsupported model silently.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Follow the user's model routing: implementation must be delegated to `gpt-6-luna` with `medium` reasoning; the orchestrator reviews the diff and runs verification. Do not substitute an unsupported model silently.
 
 **Goal:** Build a private mobile-first roleplay web app accessible anywhere, with inspectable context and branch-correct memory for long Vietnamese stories.
 
@@ -34,9 +34,7 @@
 
 ## Execution status
 
-This repository contains the reviewed design, plan, review report and reference analysis. Application implementation has not started. Execute against this repo after reading its AGENTS.md; the earlier APK-analysis workspace is reference material, not the application checkout. Provider/model selection is a defined Task 3 configuration step, not assumed from the existing chat account.
-
-Required coding model `gpt-5.6-luna` is not present in the currently advertised spawn-model list. This does not block document review or design, but dispatch availability must be confirmed when implementation is requested. If unavailable, report the routing blocker and do not write implementation code or silently use another model.
+Implementation authorized on 12/10/2026. The user explicitly selected gpt-6-luna with medium reasoning, superseding the earlier gpt-5.6-luna instruction. Dispatch succeeded. Work starts on feat/playroom-mvp in an isolated checkout; per-task progress is recorded in the plan-scoped SDD ledger. No real-provider trial or VPS deployment has occurred.
 
 ## Delivery checkpoints
 

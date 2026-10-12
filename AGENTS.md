@@ -3,7 +3,7 @@
 ## Model routing
 
 - Use `gpt-5.6-sol` for orchestration: requirements, architecture, planning, coordination, review and final verification.
-- Always delegate implementation that writes or refactors code to `gpt-5.6-luna`, with `medium` reasoning unless the task explicitly requires another effort.
+- Always delegate implementation that writes or refactors code to `gpt-6-luna`, with `medium` reasoning unless the task explicitly requires another effort.
 - The orchestrator must review the diff and run relevant verification after the coding agent finishes, before claiming completion.
 - If the required Luna model is unavailable, stop implementation and tell the user. Do not silently substitute another model or write implementation code in the orchestrator.
 - Documentation, planning and review can be performed by the orchestrator.
