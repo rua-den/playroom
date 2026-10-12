@@ -116,4 +116,3 @@ def count_provider_wire(request: dict, profile: dict, *, schema: dict | None = N
 
 def stage_cost(profile: dict, input_tokens: int, output_tokens: int) -> Decimal:
     return estimate_cost_usd(profile, input_tokens, output_tokens)
-

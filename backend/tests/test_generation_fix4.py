@@ -152,4 +152,3 @@ def test_quality_uses_actual_persisted_wire_and_cost_ledger(tmp_path):
     run = db.execute("SELECT token_budget_json, request_json, wire_json, counter_id, counter_mode FROM context_runs").fetchone()
     assert json.loads(run["request_json"])["narrator"]["messages"]
     assert json.loads(run["wire_json"])["narrator"]["messages"]
-
