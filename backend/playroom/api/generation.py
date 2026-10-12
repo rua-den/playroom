@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
 
 from ..db import request_connection
@@ -27,13 +27,8 @@ def _service(request: Request, connection: sqlite3.Connection, owner: Owner) -> 
         if not binding:
             continue
         roles[role] = get_model_profile(connection, owner.id, binding["id"], binding.get("version"))
-        if not isinstance(provider, FakeProvider) and roles[role].get("secret_version"):
-            # Resolve the pinned version immediately before dispatch. A
-            # rotated/revoked key must fail this request rather than silently
-            # selecting a mutable replacement.
-            request.app.state.credential_store.get(owner.id, roles[role]["secret_version"])
     if getattr(request.app.state, "generation_runtime", None) is None:
-        request.app.state.generation_runtime = GenerationRuntime(request.app.state.database_url, provider)
+        request.app.state.generation_runtime = GenerationRuntime(request.app.state.database_url, provider, provider_factory=request.app.state.generation_provider_factory, credential_resolver=request.app.state.generation_credential_resolver)
         request.app.state.generation_runtime.start()
     # Keep explicit fake/demo injection usable without requiring a credential
     # file; production profiles still pin their immutable secret version.
@@ -45,28 +40,32 @@ class GenerateRequest(BaseModel):
     action: str = Field(min_length=1, max_length=20000)
     idempotency_key: str = Field(min_length=1, max_length=256)
     checkpoint_id: str
-    mode: str = "economy"
-    policy: str = "free_only"
+    mode: str | None = None
+    policy: str | None = None
     cap: Decimal | None = Field(default=None, gt=0)
 
 
-class GenerationEventsQuery(BaseModel):
-    after: int = Field(default=0, ge=0)
+class DraftRequest(BaseModel):
+    draft: str = Field(max_length=100000)
 
 
 @router.post("/campaigns/{campaign_id}/generate", status_code=201)
 def generate(campaign_id: str, payload: GenerateRequest, request: Request, connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
-    return _service(request, connection, owner).generate(owner.id, campaign_id, payload.branch_id, payload.action, idempotency_key=payload.idempotency_key, expected_checkpoint_id=payload.checkpoint_id, mode=payload.mode, policy=payload.policy, cap=payload.cap, execute=False)
-
-
-@router.get("/generation/jobs/{job_id}")
-def status(job_id: str, connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
-    return GenerationService(connection, FakeProvider([])).get_job(owner.id, job_id)
+    configured = get_owner_settings(connection, owner.id)
+    mode = payload.mode or configured.get("mode", "economy")
+    policy = payload.policy or configured.get("policy", "free_only")
+    cap = payload.cap if payload.cap is not None else configured.get("confirmed_usd_cap")
+    return _service(request, connection, owner).generate(owner.id, campaign_id, payload.branch_id, payload.action, idempotency_key=payload.idempotency_key, expected_checkpoint_id=payload.checkpoint_id, mode=mode, policy=policy, cap=cap, execute=False)
 
 
 @router.get("/generation/jobs/by-key")
 def status_by_key(branch_id: str, idempotency_key: str, connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
     return GenerationService(connection, FakeProvider([])).get_job_by_key(owner.id, branch_id, idempotency_key)
+
+
+@router.get("/generation/jobs/{job_id}")
+def status(job_id: str, connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
+    return GenerationService(connection, FakeProvider([])).get_job(owner.id, job_id)
 
 
 @router.get("/generation/jobs/{job_id}/content")
@@ -75,13 +74,18 @@ def content(job_id: str, connection: sqlite3.Connection = Depends(request_connec
 
 
 @router.get("/generation/jobs/{job_id}/events")
-def events(job_id: str, after: int = 0, connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
+def events(job_id: str, after: int = Query(default=0, ge=0), connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
     return {"events": GenerationService(connection, FakeProvider([])).events(owner.id, job_id, after=after)}
 
 
 @router.post("/generation/jobs/{job_id}/cancel")
 def cancel(job_id: str, connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
     return GenerationService(connection, FakeProvider([])).cancel(owner.id, job_id)
+
+
+@router.put("/generation/jobs/{job_id}/draft")
+def edit_draft(job_id: str, payload: DraftRequest, connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
+    return GenerationService(connection, FakeProvider([])).edit_draft(owner.id, job_id, payload.draft)
 
 
 @router.post("/generation/jobs/{job_id}/commit")

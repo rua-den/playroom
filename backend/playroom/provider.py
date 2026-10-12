@@ -49,6 +49,12 @@ class ProviderAdapter:
     def generate_structured(self, request: dict, schema: dict) -> ProviderResult | ProviderFailure:
         raise NotImplementedError("Structured output is not supported by this adapter")
 
+    def cancel(self, request: dict) -> None:
+        """Best-effort physical cancellation hook for worker shutdown."""
+        event = request.get("cancel_event") if isinstance(request, dict) else None
+        if event is not None and hasattr(event, "set"):
+            event.set()
+
 
 class FakeProvider(ProviderAdapter):
     """Deterministic provider for tests and explicit local fixtures only."""
@@ -63,7 +69,7 @@ class FakeProvider(ProviderAdapter):
         return self.capabilities
 
     def generate_text(self, request: dict) -> Iterator[str | ProviderResult | ProviderFailure]:
-        self.calls.append(dict(request))
+        self.calls.append({key: value for key, value in request.items() if key != "cancel_event"})
         stage = str(request.get("stage", "narration"))
         self.stage_counts[stage] = self.stage_counts.get(stage, 0) + 1
         output = self.outputs.pop(0) if self.outputs else ""
@@ -93,7 +99,7 @@ class FakeProvider(ProviderAdapter):
         yield ProviderResult(text=str(output), usage={"input_tokens": request.get("estimated_input_tokens", 0), "output_tokens": len(words), "total_tokens": request.get("estimated_input_tokens", 0) + len(words)}, finish_reason="stop")
 
     def generate_structured(self, request: dict, schema: dict) -> ProviderResult | ProviderFailure:
-        self.calls.append(dict(request))
+        self.calls.append({key: value for key, value in request.items() if key != "cancel_event"})
         stage = str(request.get("stage", "context"))
         self.stage_counts[stage] = self.stage_counts.get(stage, 0) + 1
         output = self.outputs.pop(0) if self.outputs else ProviderFailure("MODEL_REFUSED", "No deterministic structured fixture")

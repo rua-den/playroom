@@ -112,7 +112,8 @@ def build_candidate_pool(connection: sqlite3.Connection, campaign_id: str, branc
     optional.sort(key=lambda item: _rank(item, terms, scene_ids | matched_actor_ids))
     dropped = [{"id": item["id"], "reason": "optional candidate pool limit"} for item in optional[limit:]]
     dropped.extend({"id": memory_id, "reason": "pending memory approval; not eligible for context"} for memory_id in checkpoint.snapshot.get("pending_memory_versions", {}))
-    return {"checkpoint_id": checkpoint.id, "branch_id": branch_id, "action_hash": _canonical_hash(action), "mandatory": mandatory, "optional": optional[:limit], "scene_ids": sorted(scene_values), "scene_cast_ids": sorted(scene_ids), "excluded": dropped, "pool_limit": limit, "omission_reasons": dropped}
+    recent_context = [{"turn_id": turn["turn_id"], "revision_id": turn["revision_id"], "sequence": turn["sequence"], "action": turn["action_text"], "narration": turn["narrative_text"], "source_ids": [turn["turn_id"], turn["revision_id"]]} for turn in turn_rows[-8:]]
+    return {"checkpoint_id": checkpoint.id, "branch_id": branch_id, "action_hash": _canonical_hash(action), "mandatory": mandatory, "optional": optional[:limit], "scene_ids": sorted(scene_values), "scene_cast_ids": sorted(scene_ids), "excluded": dropped, "pool_limit": limit, "omission_reasons": dropped, "recent_context": recent_context}
 
 
 def validate_selection_plan(checkpoint_id: str, action_hash: str, pool: dict, plan: dict) -> dict:

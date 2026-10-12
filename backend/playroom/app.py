@@ -17,6 +17,9 @@ from .settings import ensure_configuration_tables
 from .db import connect, migrate
 from .domain import NotFound, PlayroomError, RateLimited, StateConflict, Unauthorized, ValidationError
 from .settings import DEFAULT_TEST_CONTEXT_PROFILE
+from .generation import GenerationRuntime
+from .generation import GenerationService
+from .provider import FakeProvider
 
 
 def _allowed_hosts(value: set[str] | None) -> set[str]:
@@ -64,6 +67,8 @@ def create_app(
     context_counter_id: str = "synthetic-test-counter",
     credential_root: str | None = None,
     provider_verifier=None,
+    generation_provider=None,
+    generation_provider_factory=None,
 ) -> FastAPI:
     configured_url = database_url or os.getenv("PLAYROOM_DATABASE_URL", "./data/playroom.sqlite3")
     is_memory_database = configured_url in {":memory:", "sqlite:///:memory:"}
@@ -79,6 +84,15 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         initial_runtime = getattr(app.state, "generation_runtime", None)
+        if initial_runtime is None and app.state.generation_provider is not None:
+            initial_runtime = GenerationRuntime(app.state.database_url, app.state.generation_provider, provider_factory=app.state.generation_provider_factory, credential_resolver=app.state.generation_credential_resolver)
+            app.state.generation_runtime = initial_runtime
+        if initial_runtime is None:
+            recovery_connection = connect(app.state.database_url)
+            try:
+                GenerationService(recovery_connection, FakeProvider([])).recover_after_restart()
+            finally:
+                recovery_connection.close()
         if initial_runtime is not None:
             initial_runtime.start()
         yield
@@ -99,6 +113,7 @@ def create_app(
     app.state.context_counter = context_counter
     app.state.context_counter_id = context_counter_id
     app.state.credential_store = CredentialStore(credential_root or os.getenv("PLAYROOM_CREDENTIAL_ROOT", "./data/secrets"))
+    app.state.generation_credential_resolver = lambda owner_id, version: app.state.credential_store.get(owner_id, version)
     app.state.provider_verifier = provider_verifier or OpenRouterVerifier()
 
     @app.middleware("http")
@@ -152,7 +167,9 @@ def create_app(
     app.include_router(campaigns.router)
     app.include_router(memory.router)
     app.include_router(context_api.router)
-    app.state.generation_provider = None
+    app.state.generation_provider = generation_provider
+    app.state.generation_provider_factory = generation_provider_factory
+    app.state.generation_credential_resolver = None
     app.state.generation_runtime = None
     app.include_router(generation.router)
     app.include_router(configuration.router)

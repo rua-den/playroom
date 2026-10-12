@@ -8,8 +8,10 @@ transaction, so a browser disconnect cannot cancel or duplicate work.
 
 import hashlib
 import json
+import logging
 import sqlite3
 import time
+from threading import Event
 from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import uuid4
@@ -17,12 +19,14 @@ from uuid import uuid4
 from jsonschema import Draft202012Validator
 
 from .context import build_candidate_pool, build_context_preview, _profiles
-from .db import migrate, transaction
+from .db import transaction
 from .domain import NotFound, StateConflict, ValidationError
 from .model_profiles import estimate_cost_usd, validate_dispatch
 from .provider import ProviderAdapter, ProviderFailure, ProviderResult
 from .context_director import deterministic_selection, validate_director_plan
 from .timeline import _create_committed_revision_in_transaction, get_branch_head, load_state_checkpoint
+
+logger = logging.getLogger(__name__)
 
 
 def _now() -> str:
@@ -35,6 +39,12 @@ def _hash(value) -> str:
 
 def _copy(value):
     return json.loads(json.dumps(value, ensure_ascii=False, sort_keys=True))
+
+
+def _serializable_request(value):
+    copied = dict(value)
+    copied.pop("cancel_event", None)
+    return _copy(copied)
 
 
 DEFAULT_PROFILE = {
@@ -69,22 +79,23 @@ class _ProviderError(Exception):
 class GenerationService:
     """Durable worker with one immutable parent and one attempt per stage."""
 
-    def __init__(self, connection: sqlite3.Connection, provider: ProviderAdapter, *, profile: dict | None = None, settings: dict | None = None, timeout_seconds: float = 300.0):
+    def __init__(self, connection: sqlite3.Connection, provider: ProviderAdapter, *, profile: dict | None = None, settings: dict | None = None, timeout_seconds: float = 300.0, provider_factory=None, credential_resolver=None):
         self.connection, self.provider = connection, provider
         self.timeout_seconds = timeout_seconds
         self.profile = _copy(profile or DEFAULT_PROFILE)
         self.settings = _copy(settings or {})
+        self.provider_factory = provider_factory
+        self.credential_resolver = credential_resolver
+        self._attempt_cancel_events: dict[str, Event] = {}
         self._ensure_tables()
 
     def _ensure_tables(self) -> None:
-        migrate(self.connection)
-        self.connection.executescript("""
-        CREATE TABLE IF NOT EXISTS generation_branch_guards (branch_id TEXT PRIMARY KEY, generation_job_id TEXT NOT NULL, acquired_at TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS generation_events (id INTEGER PRIMARY KEY AUTOINCREMENT, generation_job_id TEXT NOT NULL, stage TEXT, event_type TEXT NOT NULL, offset INTEGER, content TEXT NOT NULL DEFAULT '', payload_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL);
-        CREATE INDEX IF NOT EXISTS ix_generation_events_job ON generation_events(generation_job_id, id);
-        CREATE TABLE IF NOT EXISTS execution_epochs (id INTEGER PRIMARY KEY CHECK(id=1), epoch TEXT NOT NULL, created_at TEXT NOT NULL);
-        INSERT OR IGNORE INTO execution_epochs(id, epoch, created_at) VALUES (1, lower(hex(randomblob(16))), strftime('%Y-%m-%dT%H:%M:%fZ','now'));
-        """)
+        # Schema ownership stays in startup ``migrate``; service construction
+        # must be a read/worker operation and cannot implicitly run DDL.
+        required = {"generation_jobs", "provider_attempts", "generation_branch_guards", "generation_events", "execution_epochs"}
+        present = {row["name"] for row in self.connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if not required.issubset(present):
+            raise RuntimeError("Generation schema is not migrated")
 
     def _profiles(self) -> dict:
         if isinstance(self.profile.get("roles"), dict):
@@ -99,28 +110,52 @@ class GenerationService:
     def _epoch(self) -> str:
         return self.connection.execute("SELECT epoch FROM execution_epochs WHERE id=1").fetchone()["epoch"]
 
-    def _request_hash(self, campaign_id, branch_id, action, checkpoint_id, idempotency_key, mode, policy, cap, settings, profiles):
-        return _hash({"campaign_id": campaign_id, "branch_id": branch_id, "action": action, "checkpoint_id": checkpoint_id, "idempotency_key": idempotency_key, "mode": mode, "policy": policy, "cap": str(cap) if cap is not None else None, "settings": settings, "profiles": profiles})
+    def _reservation(self, profiles: dict, mode: str, policy: str, cap) -> dict:
+        stages = ["narration"] if mode == "economy" else ["context", "narration"]
+        entries, total = {}, Decimal("0")
+        for stage in stages:
+            profile = profiles["context" if stage == "context" else "narrator"]
+            input_tokens = 12000
+            output_tokens = min(4000, int(profile.get("output_limit", 4000)))
+            if policy == "free_only":
+                validate_dispatch(profile, policy, {"input_tokens": 0, "completion_tokens": output_tokens}, None)
+            elif policy == "capped_paid":
+                if cap is None:
+                    raise ValidationError("A confirmed USD cap is required")
+                total += estimate_cost_usd(profile, input_tokens, output_tokens)
+            entries[stage] = {"reserved_input_tokens": input_tokens, "reserved_output_tokens": output_tokens, "estimated_cost_usd": str(estimate_cost_usd(profile, input_tokens, output_tokens)), "actual_cost_usd": None, "usage": None}
+        if policy == "capped_paid" and total > Decimal(str(cap)):
+            raise ValidationError("Aggregate generation estimate exceeds the confirmed USD cap")
+        return {"policy": policy, "cap": str(cap) if cap is not None else None, "stages": entries, "reserved_total_usd": str(total), "actual_total_usd": None}
+
+    def _request_hash(self, campaign_id, branch_id, action, checkpoint_id, idempotency_key, mode, policy, cap):
+        # Recovery identity is derived only from the submitted request. Live
+        # settings/profiles/keys are intentionally absent and may change later.
+        return _hash({"campaign_id": campaign_id, "branch_id": branch_id, "action": action, "checkpoint_id": checkpoint_id, "idempotency_key": idempotency_key, "mode": mode, "policy": policy, "cap": str(cap) if cap is not None else None})
 
     def generate(self, owner_id: str, campaign_id: str, branch_id: str, action: str, *, idempotency_key: str, expected_checkpoint_id: str, mode: str = "economy", policy: str = "free_only", cap=None, execute: bool = True) -> dict:
         if mode not in {"economy", "quality"}:
             raise ValidationError("Unknown generation mode")
         if not action.strip() or not idempotency_key.strip():
             raise ValidationError("Action and idempotency key are required")
-        profiles = self._profiles()
-        settings = _copy(self.settings)
-        settings.update({"mode": mode, "policy": policy, "confirmed_usd_cap": str(cap) if cap is not None else settings.get("confirmed_usd_cap")})
-        request_hash = self._request_hash(campaign_id, branch_id, action, expected_checkpoint_id, idempotency_key, mode, policy, cap, settings, profiles)
+        request_hash = self._request_hash(campaign_id, branch_id, action, expected_checkpoint_id, idempotency_key, mode, policy, cap)
         existing = self.connection.execute("SELECT id,request_hash FROM generation_jobs WHERE owner_id=? AND branch_id=? AND operation='generation' AND idempotency_key=?", (owner_id, branch_id, idempotency_key)).fetchone()
         if existing:
             if existing["request_hash"] != request_hash:
                 raise StateConflict("Conflicting idempotency payload")
             return self._job(existing["id"])
+        profiles = self._profiles()
+        settings = _copy(self.settings)
+        settings.update({"mode": mode, "policy": policy, "confirmed_usd_cap": str(cap) if cap is not None else settings.get("confirmed_usd_cap")})
         head = get_branch_head(self.connection, campaign_id, branch_id, owner_id)
         if head.checkpoint_id != expected_checkpoint_id:
             raise StateConflict("Generation checkpoint is stale")
         job_id, created = str(uuid4()), _now()
         with transaction(self.connection):
+            # Recheck ownership/head while the reservation lock is held.
+            locked_head = get_branch_head(self.connection, campaign_id, branch_id, owner_id)
+            if locked_head.checkpoint_id != expected_checkpoint_id:
+                raise StateConflict("Generation checkpoint is stale")
             if self.connection.execute("SELECT 1 FROM generation_branch_guards WHERE branch_id=?", (branch_id,)).fetchone():
                 raise StateConflict("A generation is already active on this branch")
             # A persistent count prevents multiple application workers from
@@ -128,7 +163,12 @@ class GenerationService:
             count = self.connection.execute("SELECT COUNT(*) AS n FROM provider_attempts WHERE status='dispatched'").fetchone()["n"]
             if count >= 2:
                 raise StateConflict("Provider concurrency limit reached")
-            self.connection.execute("INSERT INTO generation_jobs(id,owner_id,campaign_id,branch_id,operation,idempotency_key,request_hash,checkpoint_id,action,status,mode,policy,created_at,settings_snapshot_json,profile_snapshot_json,execution_epoch,cancel_requested) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (job_id, owner_id, campaign_id, branch_id, "generation", idempotency_key, request_hash, expected_checkpoint_id, action, "queued", mode, policy, created, json.dumps(settings, sort_keys=True), json.dumps(profiles, sort_keys=True), self._epoch(), 0))
+            reservation = self._reservation(profiles, mode, policy, cap)
+            self.connection.execute("INSERT INTO generation_jobs(id,owner_id,campaign_id,branch_id,operation,idempotency_key,request_hash,checkpoint_id,action,status,mode,policy,created_at,settings_snapshot_json,profile_snapshot_json,execution_epoch,cancel_requested,reserved_cost_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (job_id, owner_id, campaign_id, branch_id, "generation", idempotency_key, request_hash, expected_checkpoint_id, action, "queued", mode, policy, created, json.dumps(settings, sort_keys=True), json.dumps(profiles, sort_keys=True), self._epoch(), 0, json.dumps(reservation, sort_keys=True)))
+            planned = ["narration"] if mode == "economy" else ["context", "narration"]
+            for stage in planned:
+                stage_profile = profiles["context" if stage == "context" else "narrator"]
+                self.connection.execute("INSERT INTO provider_attempts(id,generation_job_id,stage,stage_key,profile_snapshot_json,payload_hash,status,request_json,output_text,output_offset,claim_epoch,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (str(uuid4()), job_id, stage, f"{job_id}:{stage}", json.dumps(_copy(stage_profile), sort_keys=True), f"pending:{stage}", "queued", "{}", "", 0, self._epoch(), created))
             self.connection.execute("INSERT INTO generation_branch_guards(branch_id,generation_job_id,acquired_at) VALUES(?,?,?)", (branch_id, job_id, created))
             self._event(job_id, None, "reserved", None, "", {"checkpoint_id": expected_checkpoint_id})
         return self.run(job_id) if execute else self._job(job_id)
@@ -152,7 +192,8 @@ class GenerationService:
         except (ValidationError, StateConflict) as exc:
             self._fail(job_id, ProviderFailure("STATE_CONFLICT", str(exc)))
         except Exception as exc:
-            self._fail(job_id, ProviderFailure("GENERATION_FAILED", str(exc)))
+            logger.exception("generation job failed", extra={"job_id": job_id})
+            self._fail(job_id, ProviderFailure("GENERATION_FAILED", "Generation worker failed"))
         return self._job(job_id)
 
     def _execute(self, job) -> None:
@@ -162,17 +203,31 @@ class GenerationService:
         preview = build_context_preview(self.connection, job["campaign_id"], job["branch_id"], job["action"], config, owner_id=job["owner_id"], settings_hash=_hash(settings))
         if preview["checkpoint_id"] != job["checkpoint_id"] or preview["status"] == "stale":
             raise StateConflict("Generation checkpoint is stale")
+        if preview["status"] == "blocked":
+            raise ValidationError(preview.get("failure") or "Required context exceeds the verified input budget")
         pool = build_candidate_pool(self.connection, job["campaign_id"], job["branch_id"], job["action"], checkpoint_id=job["checkpoint_id"], owner_id=job["owner_id"])
         plan = deterministic_selection(pool, pool["checkpoint_id"], pool["action_hash"])
         final_preview = preview
-        if job["mode"] == "quality":
+        context_attempt = self.connection.execute("SELECT status FROM provider_attempts WHERE generation_job_id=? AND stage='context'", (job["id"],)).fetchone()
+        saved_context = job["final_context_json"] if "final_context_json" in job.keys() else None
+        if job["mode"] == "quality" and context_attempt and context_attempt["status"] == "completed" and saved_context:
+            final_preview = json.loads(saved_context)
+        elif job["mode"] == "quality":
             self._check_dispatch(job, context, narrator, preview, aggregate=True)
             request = {"stage": "context", "messages": self._director_messages(job["action"], pool), "reserved_completion_tokens": min(4000, int(context.get("output_limit", 4000))), "model": context.get("model"), "checkpoint_id": pool["checkpoint_id"], "action_hash": pool["action_hash"]}
             key = f"{job['id']}:context"
-            self._insert_attempt(job, "context", key, _hash(request), context, request)
+            request["cancel_event"] = Event()
+            self._attempt_cancel_events[key] = request["cancel_event"]
+            self._insert_attempt(job, "context", key, _hash(_serializable_request(request)), context, request)
             self._mark_dispatched(key)
             self._event(job["id"], "context", "phase_changed", None, "", {"phase": "context_dispatched"})
-            result = self.provider.generate_structured(request, SELECTION_SCHEMA)
+            context_provider = self._provider_for(job, "context", context)
+            context_started = time.monotonic()
+            result = context_provider.generate_structured(request, SELECTION_SCHEMA)
+            if time.monotonic() - context_started > self.timeout_seconds:
+                context_provider.cancel(request)
+                raise _ProviderError(ProviderFailure("PROVIDER_TIMEOUT", "Context director exceeded its timeout"))
+            self._require_active(key, job["id"])
             if isinstance(result, ProviderFailure):
                 self._finish_attempt(key, "failed", result, "")
                 raise _ProviderError(result)
@@ -184,28 +239,45 @@ class GenerationService:
                 failure = ProviderFailure("SCHEMA_INVALID", str(exc))
                 self._finish_attempt(key, "failed", failure, "")
                 raise _ProviderError(failure)
-            final_preview = self._pack_selected(preview, plan, narrator)
-            self._finish_attempt(key, "completed", result, json.dumps(plan, ensure_ascii=False, sort_keys=True))
-            self._save_context_run(job, final_preview, result.usage)
+            final_preview = self._pack_selected(preview, plan, narrator, director_selected_only=True)
+            with transaction(self.connection):
+                self._require_active(key, job["id"])
+                if self._finish_attempt(key, "completed", result, json.dumps(plan, ensure_ascii=False, sort_keys=True)) != 1:
+                    raise _ProviderError(ProviderFailure("CANCELLED", "Generation was cancelled"))
+                self._save_context_run(job, final_preview, result.usage)
             self._event(job["id"], "context", "phase_changed", None, "", {"phase": "context_completed", "selected_memory_ids": plan["selected_memory_ids"]})
             self._check_dispatch(job, context, narrator, final_preview, aggregate=False)
         else:
             final_preview = self._pack_selected(preview, plan, narrator)
+            self._save_context_run(job, final_preview, {"status": "not_called", "mode": "economy"})
+        self._check_dispatch(job, context, narrator, final_preview, aggregate=False)
         self._narrate(job, narrator, final_preview)
 
     def _check_dispatch(self, job, context, narrator, preview, *, aggregate: bool):
         tokens = int((preview.get("budget") or {}).get("input_tokens") or 0)
         out = min(4000, int(narrator.get("output_limit", 4000)))
+        wire = json.dumps({"system": "Continue the story in Vietnamese using only supplied context.", "action": preview.get("action", ""), "blocks": preview.get("blocks", [])}, ensure_ascii=False, sort_keys=True)
+        wire_tokens = max(tokens, (len(wire) + 3) // 4)
+        input_cap = min(int(narrator.get("input_limit", narrator.get("context_limit", 12000))), int(narrator.get("context_limit", 12000)) - out - int(narrator.get("wrapper_buffer", 512)))
+        if wire_tokens > input_cap:
+            raise ValidationError("Final serialized provider wire exceeds the verified input budget")
+        tokens = wire_tokens
         if job["policy"] == "capped_paid":
             cap = json.loads(job["settings_snapshot_json"]).get("confirmed_usd_cap")
             if cap is None:
                 raise ValidationError("A confirmed USD cap is required")
             chosen = [context, narrator] if aggregate else [narrator]
             total = sum((estimate_cost_usd(p, tokens, out) for p in chosen), Decimal("0"))
-            if total > Decimal(str(cap)):
+            remaining = Decimal(str(cap))
+            if not aggregate and job["mode"] == "quality":
+                ledger = json.loads(job["reserved_cost_json"] or "{}")
+                context_entry = (ledger.get("stages") or {}).get("context") or {}
+                # Unknown director usage retains its conservative reservation.
+                remaining -= Decimal(str(context_entry.get("actual_cost_usd") or context_entry.get("estimated_cost_usd") or "0"))
+            if total > remaining:
                 raise ValidationError("Aggregate generation estimate exceeds the confirmed USD cap")
             for profile in chosen:
-                validate_dispatch(profile, job["policy"], {"input_tokens": tokens, "completion_tokens": out}, cap)
+                validate_dispatch(profile, job["policy"], {"input_tokens": tokens, "completion_tokens": out}, remaining)
         else:
             validate_dispatch(narrator, job["policy"], {"input_tokens": tokens, "completion_tokens": out}, None)
             if job["mode"] == "quality":
@@ -213,10 +285,28 @@ class GenerationService:
 
     def _director_messages(self, action, pool):
         payload = {"action": action, "checkpoint_id": pool["checkpoint_id"], "candidate_pool": {"mandatory": pool.get("mandatory", []), "optional": pool.get("optional", []), "scene_ids": pool.get("scene_ids", []), "omission_reasons": pool.get("omission_reasons", [])}}
+        # The director gets bounded, source-grounded recent raw history in
+        # addition to the candidate pool; it never receives an unbounded DB.
+        payload["recent_context"] = pool.get("recent_context", [])[-8:]
         return [{"role": "system", "content": "Return only a SelectionPlan JSON. Select supplied IDs and cite each source."}, {"role": "user", "content": json.dumps(payload, ensure_ascii=False, sort_keys=True)}]
 
-    def _pack_selected(self, preview, plan, profile):
-        blocks, known = list(preview.get("blocks", [])), {b["id"] for b in preview.get("blocks", [])}
+    def _provider_for(self, job, stage, profile):
+        secret = None
+        if self.credential_resolver is not None and (self.provider_factory is not None or self.provider.__class__.__name__ != "FakeProvider"):
+            try:
+                secret = self.credential_resolver(job["owner_id"], profile.get("secret_version"))
+            except Exception as exc:
+                raise _ProviderError(ProviderFailure("CREDENTIAL_UNAVAILABLE", "Pinned credential version is unavailable")) from exc
+        if self.provider_factory is not None:
+            try:
+                return self.provider_factory(owner_id=job["owner_id"], stage=stage, profile=_copy(profile), credential=secret)
+            except Exception as exc:
+                raise _ProviderError(ProviderFailure("CONFIG_INVALID", "Provider could not be constructed for the pinned profile")) from exc
+        return self.provider
+
+    def _pack_selected(self, preview, plan, profile, *, director_selected_only=False):
+        base = [b for b in preview.get("blocks", []) if b.get("mandatory")] if director_selected_only else list(preview.get("blocks", []))
+        blocks, known = base, {b["id"] for b in base}
         by_id = {item["id"]: item for item in plan.get("optional", [])}
         for memory_id in plan.get("selected_memory_ids", []):
             item = by_id.get(memory_id)
@@ -237,18 +327,25 @@ class GenerationService:
     def _save_context_run(self, job, preview, usage):
         source_ids = [source for block in preview.get("blocks", []) for source in block.get("source_ids", [])]
         self.connection.execute("INSERT INTO context_runs(id,campaign_id,branch_id,checkpoint_id,settings_revision,source_ids_json,omission_reasons_json,token_budget_json,payload_hash,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)", (str(uuid4()), job["campaign_id"], job["branch_id"], job["checkpoint_id"], json.loads(job["settings_snapshot_json"]).get("settings_revision", 0), json.dumps(sorted(set(source_ids))), json.dumps(preview.get("omission_reasons", []), ensure_ascii=False), json.dumps({**preview.get("budget", {}), "director_usage": usage or {"status": "unknown"}}, ensure_ascii=False), preview["payload_hash"], _now()))
+        updated = self.connection.execute("UPDATE generation_jobs SET final_context_json=? WHERE id=? AND status='running' AND cancel_requested=0", (json.dumps(preview, ensure_ascii=False, sort_keys=True), job["id"]))
+        if updated.rowcount != 1:
+            raise _ProviderError(ProviderFailure("CANCELLED", "Generation was cancelled"))
 
     def _narrate(self, job, profile, preview):
         key = f"{job['id']}:narration"
         request = {"stage": "narration", "messages": [{"role": "system", "content": "Continue the story in Vietnamese using only supplied context."}, {"role": "user", "content": json.dumps({"blocks": preview.get("blocks", []), "action": preview["action"], "selected_memory_ids": preview.get("selected_memory_ids", [])}, ensure_ascii=False, sort_keys=True)}], "reserved_completion_tokens": min(4000, int(profile.get("output_limit", 4000))), "model": profile.get("model"), "payload_hash": preview["payload_hash"]}
+        request["cancel_event"] = Event()
+        self._attempt_cancel_events[key] = request["cancel_event"]
         self._insert_attempt(job, "narration", key, preview["payload_hash"], profile, request)
         self._mark_dispatched(key)
         self._event(job["id"], "narration", "phase_changed", None, "", {"phase": "narration_dispatched"})
         parts, result = [], None
         started = time.monotonic()
+        narration_provider = self._provider_for(job, "narration", profile)
         try:
-            for event in self.provider.generate_text(request):
+            for event in narration_provider.generate_text(request):
                 if time.monotonic() - started > self.timeout_seconds:
+                    narration_provider.cancel(request)
                     raise _ProviderError(ProviderFailure("PROVIDER_TIMEOUT", "Narration attempt exceeded its timeout"))
                 if self._cancel_requested(job["id"]):
                     raise _ProviderError(ProviderFailure("CANCELLED", "Generation was cancelled"))
@@ -269,9 +366,14 @@ class GenerationService:
             draft = "".join(parts)
             if not draft:
                 raise _ProviderError(ProviderFailure("MISSING_TERMINAL", "Provider returned empty narrative"))
-            self._finish_attempt(key, "completed", result, draft)
-            self.connection.execute("UPDATE generation_jobs SET status='candidate',draft=?,usage_json=? WHERE id=?", (draft, json.dumps(result.usage or {"status": "unknown"}, ensure_ascii=False), job["id"]))
-            self._event(job["id"], "narration", "completed", len(draft), "", {"usage": result.usage or {"status": "unknown"}})
+            with transaction(self.connection):
+                self._require_active(key, job["id"])
+                self._finish_attempt(key, "completed", result, draft)
+                changed = self.connection.execute("UPDATE generation_jobs SET status='candidate',draft=?,usage_json=? WHERE id=? AND status='running' AND cancel_requested=0 AND execution_epoch=(SELECT epoch FROM execution_epochs WHERE id=1)", (draft, json.dumps(result.usage or {"status": "unknown"}, ensure_ascii=False), job["id"]))
+                if changed.rowcount != 1:
+                    raise _ProviderError(ProviderFailure("CANCELLED", "Generation was cancelled"))
+                self.connection.execute("DELETE FROM generation_branch_guards WHERE generation_job_id=?", (job["id"],))
+            self._event(job["id"], "narration", "completed", self._offset(draft), "", {"usage": result.usage or {"status": "unknown"}, "offset_unit": "utf16_code_units"})
         except _ProviderError as exc:
             self._finish_attempt(key, "interrupted" if exc.failure.code == "CANCELLED" else "failed", exc.failure, "".join(parts))
             raise
@@ -280,24 +382,43 @@ class GenerationService:
         parts.append(text)
         output = "".join(parts)
         row = self.connection.execute("SELECT stage_key FROM provider_attempts WHERE generation_job_id=? AND stage=?", (job_id, stage)).fetchone()
-        self.connection.execute("UPDATE provider_attempts SET output_text=?,output_offset=? WHERE stage_key=?", (output, len(output), row["stage_key"]))
+        self._require_active(row["stage_key"], job_id)
+        self.connection.execute("UPDATE provider_attempts SET output_text=?,output_offset=? WHERE stage_key=? AND status='dispatched'", (output, self._offset(output), row["stage_key"]))
         self.connection.execute("UPDATE generation_jobs SET draft=? WHERE id=?", (output, job_id))
-        self._event(job_id, stage, "delta", len(output), text, {})
+        self._event(job_id, stage, "delta", self._offset(output), text, {"offset_unit": "utf16_code_units"})
 
     def _insert_attempt(self, job, stage, key, payload_hash, profile, request):
-        self.connection.execute("INSERT INTO provider_attempts(id,generation_job_id,stage,stage_key,profile_snapshot_json,payload_hash,status,request_json,output_text,output_offset,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)", (str(uuid4()), job["id"], stage, key, json.dumps(_copy(profile), sort_keys=True), payload_hash, "queued", json.dumps(_copy(request), ensure_ascii=False, sort_keys=True), "", 0, _now()))
+        updated = self.connection.execute("UPDATE provider_attempts SET profile_snapshot_json=?,payload_hash=?,request_json=? WHERE generation_job_id=? AND stage=? AND status='queued'", (json.dumps(_copy(profile), sort_keys=True), payload_hash, json.dumps(_serializable_request(request), ensure_ascii=False, sort_keys=True), job["id"], stage))
+        if updated.rowcount == 0:
+            self.connection.execute("INSERT INTO provider_attempts(id,generation_job_id,stage,stage_key,profile_snapshot_json,payload_hash,status,request_json,output_text,output_offset,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)", (str(uuid4()), job["id"], stage, key, json.dumps(_copy(profile), sort_keys=True), payload_hash, "queued", json.dumps(_serializable_request(request), ensure_ascii=False, sort_keys=True), "", 0, _now()))
 
     def _mark_dispatched(self, key):
-        self.connection.execute("UPDATE provider_attempts SET status='dispatched',dispatched_at=? WHERE stage_key=? AND status='queued'", (_now(), key))
+        self.connection.execute("UPDATE provider_attempts SET status='dispatched',dispatched_at=?,claim_epoch=(SELECT epoch FROM execution_epochs WHERE id=1) WHERE stage_key=? AND status='queued'", (_now(), key))
+
+    @staticmethod
+    def _offset(text: str) -> int:
+        return len(text.encode("utf-16-le")) // 2
+
+    def _require_active(self, key, job_id):
+        row = self.connection.execute("SELECT a.status,a.claim_epoch,j.execution_epoch,j.cancel_requested FROM provider_attempts a JOIN generation_jobs j ON j.id=a.generation_job_id WHERE a.stage_key=? AND j.id=?", (key, job_id)).fetchone()
+        current = self._epoch()
+        if row is None or row["status"] != "dispatched" or row["claim_epoch"] != current or row["execution_epoch"] != current or row["cancel_requested"]:
+            raise _ProviderError(ProviderFailure("CANCELLED", "Generation attempt is no longer active"))
 
     def _finish_attempt(self, key, status, result, output):
         usage = result.usage if isinstance(result, ProviderResult) else {"status": "unknown"}
         failure = result if isinstance(result, ProviderFailure) else None
-        self.connection.execute("UPDATE provider_attempts SET status=?,output_text=?,output_offset=?,usage_json=?,failure_json=?,finished_at=? WHERE stage_key=?", (status, output, len(output), json.dumps(usage or {"status": "unknown"}), json.dumps({"code": failure.code, "message": failure.message}) if failure else None, _now(), key))
+        changed = self.connection.execute("UPDATE provider_attempts SET status=?,output_text=?,output_offset=?,usage_json=?,failure_json=?,finished_at=? WHERE stage_key=? AND status='dispatched' AND claim_epoch=(SELECT epoch FROM execution_epochs WHERE id=1)", (status, output, self._offset(output), json.dumps(usage or {"status": "unknown"}), json.dumps({"code": failure.code, "message": failure.message}) if failure else None, _now(), key)).rowcount
+        self._attempt_cancel_events.pop(key, None)
+        return changed
 
     def _fail(self, job_id, failure):
         self.connection.execute("UPDATE generation_jobs SET status=?,failure_json=? WHERE id=?", ("cancelled" if failure.code == "CANCELLED" else "failed", json.dumps({"code": failure.code, "message": failure.message}, ensure_ascii=False), job_id))
         self.connection.execute("DELETE FROM generation_branch_guards WHERE generation_job_id=?", (job_id,))
+        for key, event in list(self._attempt_cancel_events.items()):
+            if key.startswith(f"{job_id}:"):
+                event.set()
+                self._attempt_cancel_events.pop(key, None)
         self._event(job_id, None, "failed", None, "", {"code": failure.code, "message": failure.message})
 
     def _cancel_requested(self, job_id):
@@ -305,21 +426,43 @@ class GenerationService:
         return bool(row and row["cancel_requested"])
 
     def cancel(self, owner_id, job_id):
-        self.get_job(owner_id, job_id)
+        job = self.get_job(owner_id, job_id)
         with transaction(self.connection):
-            self.connection.execute("UPDATE generation_jobs SET cancel_requested=1,status='cancelled' WHERE id=? AND owner_id=? AND status IN ('queued','running','candidate')", (job_id, owner_id))
-            self.connection.execute("UPDATE provider_attempts SET status='interrupted',finished_at=? WHERE generation_job_id=? AND status IN ('queued','dispatched')", (_now(), job_id))
-            self.connection.execute("DELETE FROM generation_branch_guards WHERE generation_job_id=?", (job_id,))
+            active = self.connection.execute("SELECT COUNT(*) AS n FROM provider_attempts WHERE generation_job_id=? AND status='dispatched'", (job_id,)).fetchone()["n"]
+            status = "cancelling" if active else "cancelled"
+            self.connection.execute("UPDATE generation_jobs SET cancel_requested=1,status=? WHERE id=? AND owner_id=? AND status IN ('queued','running','candidate')", (status, job_id, owner_id))
+            for key, event in self._attempt_cancel_events.items():
+                if key.startswith(f"{job_id}:"):
+                    event.set()
+            self.connection.execute("UPDATE provider_attempts SET status='interrupted',finished_at=? WHERE generation_job_id=? AND status='queued'", (_now(), job_id))
+            if not active:
+                self.connection.execute("DELETE FROM generation_branch_guards WHERE generation_job_id=?", (job_id,))
         self._event(job_id, None, "cancelled", None, "", {})
+        return self._job(job_id)
+
+    def edit_draft(self, owner_id, job_id, draft: str):
+        job = self.get_job(owner_id, job_id)
+        if job["status"] in {"candidate", "committed"}:
+            raise ValidationError("Complete candidates cannot be edited as drafts")
+        if not isinstance(draft, str):
+            raise ValidationError("Draft must be text")
+        self.connection.execute("UPDATE generation_jobs SET draft=? WHERE id=? AND owner_id=? AND status NOT IN ('candidate','committed')", (draft, job_id, owner_id))
+        self._event(job_id, None, "draft_edited", self._offset(draft), "", {"offset_unit": "utf16_code_units"})
         return self._job(job_id)
 
     def recover_after_restart(self):
         with transaction(self.connection):
             jobs = self.connection.execute("SELECT generation_job_id FROM provider_attempts WHERE status='dispatched'").fetchall()
             self.connection.execute("UPDATE provider_attempts SET status='interrupted',failure_json=?,finished_at=? WHERE status='dispatched'", (json.dumps({"code": "PROVIDER_INTERRUPTED", "message": "Process restarted while provider call was ambiguous"}), _now()))
+            running = self.connection.execute("SELECT id,final_context_json FROM generation_jobs WHERE status='running'").fetchall()
             self.connection.execute("UPDATE generation_jobs SET status='interrupted' WHERE status='running'")
             for job in jobs:
                 self.connection.execute("DELETE FROM generation_branch_guards WHERE generation_job_id=?", (job["generation_job_id"],))
+            for job in running:
+                queued = self.connection.execute("SELECT 1 FROM provider_attempts WHERE generation_job_id=? AND status='queued'", (job["id"],)).fetchone()
+                dispatched = self.connection.execute("SELECT 1 FROM provider_attempts WHERE generation_job_id=? AND status='dispatched'", (job["id"],)).fetchone()
+                if queued and not dispatched and job["final_context_json"]:
+                    self.connection.execute("UPDATE generation_jobs SET status='queued' WHERE id=?", (job["id"],))
 
     startup_recover = recover_after_restart
 
@@ -336,7 +479,7 @@ class GenerationService:
 
     def content(self, owner_id, job_id):
         job = self.get_job(owner_id, job_id)
-        return {"job_id": job_id, "status": job["status"], "draft": job.get("draft", ""), "offset": len(job.get("draft", "")), "failure": job.get("failure")}
+        return {"job_id": job_id, "status": job["status"], "draft": job.get("draft", ""), "offset": self._offset(job.get("draft", "")), "offset_unit": "utf16_code_units", "failure": job.get("failure")}
 
     def get_job_by_key(self, owner_id, branch_id, idempotency_key):
         row = self.connection.execute("SELECT id FROM generation_jobs WHERE owner_id=? AND branch_id=? AND operation='generation' AND idempotency_key=?", (owner_id, branch_id, idempotency_key)).fetchone()
@@ -404,12 +547,12 @@ class DurableGenerationWorker:
 class GenerationRuntime:
     """Shared application worker independent from request/stream lifetime."""
 
-    def __init__(self, database_url, provider, *, profile=None, poll_seconds: float = 0.05):
+    def __init__(self, database_url, provider, *, profile=None, provider_factory=None, credential_resolver=None, poll_seconds: float = 0.05):
         from threading import Event, Thread
         from .db import connect
         self._connect = connect
         self.connection = connect(database_url)
-        self.service = GenerationService(self.connection, provider, profile=profile)
+        self.service = GenerationService(self.connection, provider, profile=profile, provider_factory=provider_factory, credential_resolver=credential_resolver)
         self.poll_seconds = poll_seconds
         self._stop = Event()
         self._thread = None
@@ -430,8 +573,9 @@ class GenerationRuntime:
                 self.service.run_queued(limit=1)
             except Exception:
                 # Job-level failures are persisted by GenerationService. A
-                # transient database lock should leave queued work durable.
-                pass
+                # transient database lock leaves queued work durable, while
+                # the exception remains observable to operators.
+                logger.exception("generation worker iteration failed")
             sleep(self.poll_seconds)
 
     def stop(self):
