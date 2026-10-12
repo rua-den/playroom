@@ -8,7 +8,10 @@ from uuid import uuid4
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from .api import auth, campaigns, context as context_api, memory, generation
+from .api import auth, campaigns, context as context_api, memory, generation, configuration
+from .credentials import CredentialStore
+from .model_profiles import OpenRouterVerifier, ensure_profile_tables
+from .settings import ensure_configuration_tables
 from .db import connect, migrate
 from .domain import NotFound, PlayroomError, RateLimited, StateConflict, Unauthorized, ValidationError
 from .settings import DEFAULT_TEST_CONTEXT_PROFILE
@@ -57,6 +60,8 @@ def create_app(
     context_model_profiles: dict | None = None,
     context_counter=None,
     context_counter_id: str = "synthetic-test-counter",
+    credential_root: str | None = None,
+    provider_verifier=None,
 ) -> FastAPI:
     configured_url = database_url or os.getenv("PLAYROOM_DATABASE_URL", "./data/playroom.sqlite3")
     is_memory_database = configured_url in {":memory:", "sqlite:///:memory:"}
@@ -64,6 +69,8 @@ def create_app(
     keeper = connect(effective_url) if is_memory_database else None
     migration_connection = keeper or connect(effective_url)
     migrate(migration_connection)
+    ensure_profile_tables(migration_connection)
+    ensure_configuration_tables(migration_connection)
     if not is_memory_database:
         migration_connection.close()
 
@@ -83,6 +90,8 @@ def create_app(
     app.state.context_model_profiles = context_model_profiles if context_model_profiles is not None else {DEFAULT_TEST_CONTEXT_PROFILE["profile_id"]: dict(DEFAULT_TEST_CONTEXT_PROFILE)}
     app.state.context_counter = context_counter
     app.state.context_counter_id = context_counter_id
+    app.state.credential_store = CredentialStore(credential_root or os.getenv("PLAYROOM_CREDENTIAL_ROOT", "./data/secrets"))
+    app.state.provider_verifier = provider_verifier or OpenRouterVerifier()
 
     @app.middleware("http")
     async def protect_host_and_origin(request: Request, call_next):
@@ -125,4 +134,5 @@ def create_app(
     app.include_router(context_api.router)
     app.state.generation_provider = None
     app.include_router(generation.router)
+    app.include_router(configuration.router)
     return app

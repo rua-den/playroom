@@ -7,8 +7,8 @@ import httpx2 as httpx
 import pytest
 
 from playroom.credentials import CredentialStore
-from playroom.model_profiles import validate_dispatch, OpenRouterVerifier
-from playroom.provider import OpenRouterAdapter, ProviderFailure
+from playroom.model_profiles import validate_dispatch, OpenRouterVerifier, estimate_cost_usd
+from playroom.provider import OpenRouterAdapter, ProviderFailure, ProviderResult, FakeProvider
 from playroom.domain import ValidationError
 
 
@@ -29,7 +29,7 @@ def test_openrouter_provider_error_and_missing_terminal_are_distinct():
     transport = httpx.MockTransport(lambda request: httpx.Response(200, content=b'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n', headers={"content-type": "text/event-stream"}))
     adapter = OpenRouterAdapter("secret-key", "https://openrouter.ai/api/v1/chat/completions", http_client=httpx.Client(transport=transport))
     events = list(adapter.generate_text({"model": "m", "messages": []}))
-    assert isinstance(events[-1], ProviderFailure) and events[-1].code == "OUTPUT_TRUNCATED"
+    assert isinstance(events[-1], ProviderFailure) and events[-1].code == "MISSING_TERMINAL"
 
 
 def test_credential_store_masks_and_rotation_keeps_versions(tmp_path):
@@ -54,9 +54,75 @@ def test_paid_cap_is_money_and_unknown_eligibility_fails_closed():
 
 def test_openrouter_metadata_verification_requires_exact_endpoint_and_records_tier():
     def route(request):
-        if request.url.path.endswith("/models/m"):
-            return httpx.Response(200, json={"data": {"pricing": {"prompt": "0", "completion": "0"}, "supported_parameters": ["response_format"]}})
-        return httpx.Response(200, json={"data": {"is_free_tier": True, "limit": None}})
+        if request.url.path.endswith("/models/author/model/endpoints"):
+            return httpx.Response(200, json={"data": [{"provider_name": "Exact", "provider_id": "exact", "context_length": 8192, "max_completion_tokens": 1024, "pricing": {"prompt": "0", "completion": "0"}, "supported_parameters": ["response_format"], "data_policy": {"allow_training": False}}]})
+        return httpx.Response(200, json={"data": {"is_free_tier": False, "limit": None}})
     verifier = OpenRouterVerifier(http_client=httpx.Client(transport=httpx.MockTransport(route)))
-    result = verifier.verify("secret", "m", "https://openrouter.ai/api/v1/chat/completions")
+    result = verifier.verify("secret", "author/model:free", "https://openrouter.ai/api/v1/chat/completions")
     assert result["credential_tier"] == "free" and result["structured_output"] is True
+    assert result["provider_tag"] == "exact"
+    assert result["metadata_source"].endswith("/models/author/model/endpoints")
+
+
+def test_streaming_requires_normal_finish_and_done_and_handles_split_utf8_multiline():
+    body = b"data: {\"choices\":[{\"delta\":{\"content\":\"Xin \\\xc3\"}}]}\n" \
+        b"data: \"chao\"}\n\n" \
+        b"data: {\"choices\":[{\"delta\":{\"content\":\"!\"},\"finish_reason\":\"stop\"}]}\n\n" \
+        b"data: [DONE]\n\n"
+    # The first event is intentionally malformed as a multi-line JSON value; the
+    # adapter must reject it rather than repair it.
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, content=body, headers={"content-type": "text/event-stream"}))
+    adapter = OpenRouterAdapter("secret-key", "https://openrouter.ai/api/v1/chat/completions", profile={"model": "m", "context_limit": 100, "output_limit": 10, "supported_parameters": ["max_tokens"]}, http_client=httpx.Client(transport=transport))
+    events = list(adapter.generate_text({"model": "m", "messages": []}))
+    assert isinstance(events[-1], ProviderFailure) and events[-1].code == "PROVIDER_ERROR"
+
+
+def test_streaming_split_utf8_and_multiline_data_event_completes():
+    first = b'{"choices":[{"delta":{"content":"Xin "}}]}'
+    second = b'data: {\n'
+    second += b'data: "choices": [{"delta": {"content": "ch\xc3\xa0o"}}]\n'
+    second += b'data: }'
+    stop = b'{"choices":[{"finish_reason":"stop"}]}'
+    body = b"data: " + first + b"\n\n" + second + b"\n\n" + b"data: " + stop + b"\n\n" + b"data: [DONE]\n\n"
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, content=body, headers={"content-type": "text/event-stream"}))
+    adapter = OpenRouterAdapter("secret-key", "https://openrouter.ai/api/v1/chat/completions", profile={"model": "m", "context_limit": 100, "output_limit": 10, "supported_parameters": ["max_tokens"]}, http_client=httpx.Client(transport=transport))
+    events = list(adapter.generate_text({"model": "m", "messages": []}))
+    assert "".join(item for item in events if isinstance(item, str)) == "Xin chào"
+    assert isinstance(events[-1], ProviderResult) and events[-1].finish_reason == "stop"
+
+
+def test_length_refusal_and_schema_shape_are_not_successes():
+    def response(body):
+        return httpx.MockTransport(lambda request: httpx.Response(200, content=body, headers={"content-type": "text/event-stream"}))
+    length = b'data: {"choices":[{"finish_reason":"length"}]}\n\ndata: [DONE]\n\n'
+    adapter = OpenRouterAdapter("secret", "https://openrouter.ai/api/v1/chat/completions", profile={"model": "m", "context_limit": 100, "output_limit": 10, "supported_parameters": ["max_tokens"]}, http_client=httpx.Client(transport=response(length)))
+    events = list(adapter.generate_text({"model": "m", "messages": []}))
+    assert isinstance(events[-1], ProviderFailure) and events[-1].code == "OUTPUT_TRUNCATED"
+
+    refusal = b'data: {"choices":[{"delta":{"refusal":"no"}}]}\n\ndata: [DONE]\n\n'
+    adapter = OpenRouterAdapter("secret", "https://openrouter.ai/api/v1/chat/completions", profile={"model": "m", "context_limit": 100, "output_limit": 10, "supported_parameters": ["max_tokens"]}, http_client=httpx.Client(transport=response(refusal)))
+    events = list(adapter.generate_text({"model": "m", "messages": []}))
+    assert isinstance(events[-1], ProviderFailure) and events[-1].code == "MODEL_REFUSED"
+
+    structured = b'data: {"choices":[{"delta":{"content":"{\\"id\\":1}"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'
+    adapter = OpenRouterAdapter("secret", "https://openrouter.ai/api/v1/chat/completions", profile={"model": "m", "context_limit": 100, "output_limit": 10, "supported_parameters": ["max_tokens", "response_format"], "structured_output": True}, http_client=httpx.Client(transport=response(structured)))
+    result = adapter.generate_structured({"model": "m", "messages": []}, {"type": "object", "required": ["name"], "properties": {"name": {"type": "string"}}, "additionalProperties": False})
+    assert isinstance(result, ProviderFailure) and result.code == "SCHEMA_INVALID"
+
+
+def test_dispatch_cost_rejects_unknown_and_accepts_fractional_cap():
+    profile = {"endpoint": "x", "model": "m", "secret_version": "s", "pricing_verified": True, "credential_tier": "paid", "pricing": {"prompt": "0.001", "completion": "0.002"}}
+    assert estimate_cost_usd(profile, 1000, 2000) == Decimal("0.000005")
+    validate_dispatch({**profile, "reserved_input_tokens": 1000, "reserved_completion_tokens": 2000}, "capped_paid", {"input_tokens": 1000, "completion_tokens": 2000}, Decimal("0.005"))
+    with pytest.raises(ValidationError, match="price"):
+        validate_dispatch({**profile, "pricing": {}}, "capped_paid", {"input_tokens": 1, "completion_tokens": 1}, Decimal("0.01"))
+    with pytest.raises(ValidationError, match="allowance"):
+        validate_dispatch(profile, "capped_paid", {}, Decimal("0.01"))
+
+
+def test_fake_provider_can_model_missing_terminal_and_cancellation():
+    provider = FakeProvider([{"events": ["partial"], "finish_reason": None}, {"cancelled": True}])
+    first = list(provider.generate_text({"stage": "narration"}))
+    assert isinstance(first[-1], ProviderFailure) and first[-1].code == "MISSING_TERMINAL"
+    second = list(provider.generate_text({"stage": "narration"}))
+    assert isinstance(second[-1], ProviderFailure) and second[-1].code == "CANCELLED"

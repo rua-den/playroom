@@ -24,6 +24,8 @@ class CredentialStore:
         except OSError: pass
 
     def _path(self, owner_id: str, credential_id: str) -> Path:
+        if any(part in owner_id for part in ("..", "/", "\\")) or owner_id != Path(owner_id).name:
+            raise ValidationError("Invalid owner ID")
         if any(part in credential_id for part in ("..", "/", "\\")) or credential_id != Path(credential_id).name:
             raise ValidationError("Invalid credential ID")
         path = (self.root / owner_id / f"{credential_id}.json").resolve()
@@ -55,7 +57,18 @@ class CredentialStore:
         record = self._read(owner_id, credential_id)
         secret = record.get("secret", "")
         suffix = secret[-3:] if len(secret) >= 3 else "***"
-        return {"id": record["id"], "version": record["version"], "revoked": bool(record.get("revoked")), "masked": secret[:3] + "***" + suffix, "secret": None}
+        masked = "***" if len(secret) < 3 else secret[:3] + "***" + suffix
+        return {"id": record["id"], "version": record["version"], "revoked": bool(record.get("revoked")), "masked": masked, "secret": None}
+
+    def list_masked(self, owner_id: str) -> list[dict]:
+        owner_dir = self.root / owner_id
+        if not owner_dir.exists():
+            return []
+        records = []
+        for path in sorted(owner_dir.glob("*.json")):
+            record = json.loads(path.read_text(encoding="utf-8"))
+            records.append(self.masked(owner_id, record["id"]))
+        return records
 
     def revoke(self, owner_id: str, credential_id: str) -> None:
         path = self._path(owner_id, credential_id)

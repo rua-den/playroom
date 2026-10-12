@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
@@ -8,6 +9,7 @@ from pydantic import BaseModel, Field
 from ..db import request_connection
 from ..domain import Owner, ValidationError
 from ..generation import GenerationService
+from ..provider import FakeProvider
 from .auth import require_owner
 
 router = APIRouter(prefix="/api", tags=["generation"])
@@ -20,7 +22,7 @@ class GenerateRequest(BaseModel):
     checkpoint_id: str
     mode: str = "economy"
     policy: str = "free_only"
-    cap: int | None = Field(default=None, ge=1)
+    cap: Decimal | None = Field(default=None, gt=0)
 
 
 @router.post("/campaigns/{campaign_id}/generate", status_code=201)
@@ -28,7 +30,6 @@ def generate(campaign_id: str, payload: GenerateRequest, request: Request, conne
     provider = getattr(request.app.state, "generation_provider", None)
     if provider is None:
         raise ValidationError("Narrative generation is not configured")
-    return GenerationService(connection, provider).generate(owner.id, campaign_id, payload.branch_id, payload.action, idempotency_key=payload.idempotency_key, expected_checkpoint_id=payload.checkpoint_id, mode=payload.mode, policy=payload.policy, cap=payload.cap)
     return GenerationService(connection, provider).generate(owner.id, campaign_id, payload.branch_id, payload.action, idempotency_key=payload.idempotency_key, expected_checkpoint_id=payload.checkpoint_id, mode=payload.mode, policy=payload.policy, cap=payload.cap)
 
 

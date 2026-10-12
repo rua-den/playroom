@@ -12,13 +12,15 @@ dependencies = [
   "fastapi>=0.143,<1",
   "pydantic>=2.11.7,<3",
   "uvicorn>=0.34.3,<1",
+  "httpx2>=2.13,<3",
+  "jsonschema>=4.23,<5",
 ]
 
 [project.scripts]
 playroom-owner = "playroom.auth:main"
 
 [project.optional-dependencies]
-test = ["httpx2>=2.13,<3", "pytest>=8.4.1,<9"]
+test = ["pytest>=8.4.1,<9"]
 
 [tool.setuptools]
 package-dir = {"" = "backend"}
