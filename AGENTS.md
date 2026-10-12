@@ -1,0 +1,37 @@
+# Playroom agent instructions
+
+## Model routing
+
+- Use `gpt-5.6-sol` for orchestration: requirements, architecture, planning, coordination, review and final verification.
+- Always delegate implementation that writes or refactors code to `gpt-5.6-luna`, with `medium` reasoning unless the task explicitly requires another effort.
+- The orchestrator must review the diff and run relevant verification after the coding agent finishes, before claiming completion.
+- If the required Luna model is unavailable, stop implementation and tell the user. Do not silently substitute another model or write implementation code in the orchestrator.
+- Documentation, planning and review can be performed by the orchestrator.
+
+## Read order
+
+1. `README.md`.
+2. `docs/superpowers/specs/2026-10-12-personal-playroom-design.md`.
+3. `docs/superpowers/plans/2026-10-12-personal-playroom-implementation-plan.md`.
+4. `docs/superpowers/reviews/2026-10-12-personal-playroom-plan-review.md`.
+
+On the user's Windows host, read `C:\Users\huy.nguyen\.codex\RTK.md` and prefix shell commands with `rtk` as instructed there. Do not assume this host-specific path exists on CI or the VPS.
+
+## Product and data rules
+
+- Mobile-first private web app, accessible through the user's existing VPS.
+- The current proxy is **Caddy**, confirmed directly by the user. Old wedding-online Nginx/Certbot docs do not override that fact.
+- Verify live OS/architecture/resources, Python/systemd, ports, Caddy configuration and domain before deployment. Do not treat example values as production settings.
+- Canon, approved memory, scene, transcript and summaries are separate; retain provenance and immutable state checkpoints.
+- Never silently overwrite user-approved canon, truncate required context or import data from an abandoned future branch.
+- Generation reconnect must recover the existing job/idempotency key without automatically resubmitting provider requests.
+- Do not invent the missing initial history of the user's `playrooom` chat.
+
+## Scope and operation
+
+- Follow delivery checkpoints so a usable phone trial can precede full branch/import/release automation.
+- No real paid AI calls in automated tests. Use the fake provider; live trials require user-controlled configuration/action.
+- Keep Playroom's service, data, secrets, releases and domain configuration separate from wedding-online.
+- Production publication and infrastructure changes require the user's authorization for that action; a docs task does not authorize deployment.
+- Never put API keys, SSH private keys, session credentials, production databases, exports with private story data, or third-party APK bundles in Git.
+- Run verification appropriate to the change. For docs-only work, check links, consistency and diff; do not claim application tests/build/deployment passed.
