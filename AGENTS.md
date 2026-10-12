@@ -12,8 +12,9 @@
 
 1. `README.md`.
 2. `docs/superpowers/specs/2026-10-12-personal-playroom-design.md`.
-3. `docs/superpowers/plans/2026-10-12-personal-playroom-implementation-plan.md`.
-4. `docs/superpowers/reviews/2026-10-12-personal-playroom-plan-review.md`.
+3. `docs/superpowers/specs/2026-10-12-runtime-ai-context-policy.md`.
+4. `docs/superpowers/plans/2026-10-12-personal-playroom-implementation-plan.md`.
+5. `docs/superpowers/reviews/2026-10-12-personal-playroom-plan-review.md` and `docs/references/playrooom-style-and-evaluation.md`.
 
 On the user's Windows host, read `C:\Users\huy.nguyen\.codex\RTK.md` and prefix shell commands with `rtk` as instructed there. Do not assume this host-specific path exists on CI or the VPS.
 
@@ -26,6 +27,8 @@ On the user's Windows host, read `C:\Users\huy.nguyen\.codex\RTK.md` and prefix 
 - Never silently overwrite user-approved canon, truncate required context or import data from an abandoned future branch.
 - Generation reconnect must recover the existing job/idempotency key without automatically resubmitting provider requests.
 - Do not invent the missing initial history of the user's `playrooom` chat.
+- Preserve memory/style/checkpoints across runtime-model changes. Quality/economy share data; free-only cannot silently call a paid fallback. Director outputs reference IDs, not authority to change canon.
+- Normalize provider refusal/quota/incomplete separately; partial or max-token output cannot auto-commit as a completed turn.
 
 ## Scope and operation
 
