@@ -306,7 +306,7 @@ class GenerationService:
                 validate_dispatch(context, job["policy"], {"input_tokens": tokens, "completion_tokens": out}, None)
 
     def _director_messages(self, action, pool):
-        payload = {"action": action, "checkpoint_id": pool["checkpoint_id"], "candidate_pool": {"mandatory": pool.get("mandatory", []), "optional": pool.get("optional", []), "scene_ids": pool.get("scene_ids", []), "omission_reasons": pool.get("omission_reasons", [])}}
+        payload = {"action": action, "checkpoint_id": pool["checkpoint_id"], "action_hash": pool["action_hash"], "candidate_pool": {"mandatory": pool.get("mandatory", []), "optional": pool.get("optional", []), "scene_ids": pool.get("scene_ids", []), "omission_reasons": pool.get("omission_reasons", [])}}
         # The director gets bounded, source-grounded recent raw history in
         # addition to the candidate pool; it never receives an unbounded DB.
         payload["recent_context"] = pool.get("recent_context", [])[-8:]

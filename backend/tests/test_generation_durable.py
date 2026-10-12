@@ -61,8 +61,10 @@ def test_quality_narrator_wire_uses_only_validated_director_selection(tmp_path):
     provider = FakeProvider([json.dumps(plan), "Narrator output."])
     service = GenerationService(db, provider, profile={"roles": {"context": {**DEFAULT_PROFILE, "id": "director"}, "narrator": DEFAULT_PROFILE}})
     job = service.generate(owner.id, campaign.id, campaign.initial_branch_id, "lighthouse", idempotency_key="quality-pack", expected_checkpoint_id=head.checkpoint_id, mode="quality")
+    director_wire = json.dumps(provider.calls[0], ensure_ascii=False)
     wire = json.dumps(provider.calls[-1], ensure_ascii=False)
     assert job["status"] == "candidate"
+    assert pool["action_hash"] in director_wire
     assert "OPTIONAL LIGHTHOUSE MEMORY" not in wire
 
 
