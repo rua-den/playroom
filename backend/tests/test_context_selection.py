@@ -22,12 +22,13 @@ def story(tmp_path):
     connection = connect(tmp_path / "context.sqlite3")
     migrate(connection)
     owner = create_owner(connection, "context@example.test", "strong context password")
-    henn, mila, doctor, mentioned = (str(uuid4()) for _ in range(4))
+    henn, mila, doctor, mentioned, ambiguous = (str(uuid4()) for _ in range(5))
     campaign = create_campaign(connection, owner.id, "Synthetic context fixture", {"name": "Rain City", "lore": "The old dairy has a blue gate."}, [
         {"id": henn, "name": "Henn", "aliases": ["Hen"], "height_cm": 168},
         {"id": mila, "name": "Mila", "aliases": ["Mimi"]},
         {"id": doctor, "name": "Dr. Vinh", "aliases": ["Vinh"]},
         {"id": mentioned, "name": "Bao", "aliases": ["B"]},
+        {"id": ambiguous, "name": "Bex", "aliases": ["B"]},
     ], {"name": "Henn", "agency_rule": "The player alone controls Henn's choices."})
     branch = campaign.initial_branch_id
     checkpoint = get_branch_head(connection, campaign.id, branch).checkpoint_id
@@ -72,7 +73,7 @@ def story(tmp_path):
     other = create_campaign(connection, owner.id, "Other synthetic world", {"name": "Other"}, [], {"name": "Other player"})
     foreign_memory = append_memory_version(connection, other.id, other.initial_branch_id, "event", "Foreign campaign memory must not enter this preview.", origin="user", expected_state_version=1, source_revision_ids=[])
     assert summary.status == promise.status == relevant.status == excluded.status == "approved"
-    yield {"connection": connection, "owner": owner, "campaign": campaign, "branch": branch, "henn": henn, "mila": mila, "doctor": doctor, "mentioned": mentioned, "revisions": revisions, "summary": summary, "promise": promise, "relevant": relevant, "old_event": old_event, "pending": pending, "excluded": excluded, "other": other, "foreign_memory": foreign_memory, "head": head, "fixture_spec": fixture_spec}
+    yield {"connection": connection, "owner": owner, "campaign": campaign, "branch": branch, "henn": henn, "mila": mila, "doctor": doctor, "mentioned": mentioned, "ambiguous": ambiguous, "revisions": revisions, "summary": summary, "promise": promise, "relevant": relevant, "old_event": old_event, "pending": pending, "excluded": excluded, "other": other, "foreign_memory": foreign_memory, "head": head, "fixture_spec": fixture_spec}
     connection.close()
 
 
@@ -261,6 +262,80 @@ def test_same_relevance_actor_memory_prefers_newer_effective_turn(story):
     pool = build_candidate_pool(story['connection'], story['campaign'].id, story['branch'], 'Henn checks the silver compass', owner_id=story['owner'].id)
     ordered = [item['id'] for item in pool['optional']]
     assert ordered.index(newer.memory_id) < ordered.index(old.memory_id)
+
+
+def test_off_scene_alias_boosts_associated_memory_and_keeps_ambiguous_ids(story):
+    head = get_branch_head(story["connection"], story["campaign"].id, story["branch"])
+    bao = append_memory_version(story["connection"], story["campaign"].id, story["branch"], "lore", "The archive has a silent hinge.", origin="user", expected_state_version=head.state_version, source_revision_ids=[], entity_ids=[story["mentioned"]])
+    head = get_branch_head(story["connection"], story["campaign"].id, story["branch"])
+    bex = append_memory_version(story["connection"], story["campaign"].id, story["branch"], "lore", "The archive has a silent hinge.", origin="user", expected_state_version=head.state_version, source_revision_ids=[], entity_ids=[story["ambiguous"]])
+    head = get_branch_head(story["connection"], story["campaign"].id, story["branch"])
+    irrelevant = append_memory_version(story["connection"], story["campaign"].id, story["branch"], "lore", "The archive has a silent hinge.", origin="user", expected_state_version=head.state_version, source_revision_ids=[], entity_ids=[story["doctor"]])
+    pool = build_candidate_pool(story["connection"], story["campaign"].id, story["branch"], "B studies the archive", owner_id=story["owner"].id)
+    character_ids = {item["key"].partition(":")[2] for item in pool["mandatory"] if item.get("kind") == "character"}
+    assert {story["mentioned"], story["ambiguous"]}.issubset(character_ids)
+    ordered = [item["id"] for item in pool["optional"]]
+    assert ordered.index(bao.memory_id) < ordered.index(irrelevant.memory_id)
+    assert ordered.index(bex.memory_id) < ordered.index(irrelevant.memory_id)
+    no_false_match = build_candidate_pool(story["connection"], story["campaign"].id, story["branch"], "Babout studies the archive", owner_id=story["owner"].id)
+    false_match_ids = {item["key"].partition(":")[2] for item in no_false_match["mandatory"] if item.get("kind") == "character"}
+    assert story["mentioned"] not in false_match_ids and story["ambiguous"] not in false_match_ids
+
+
+def test_preview_adds_off_scene_memory_actor_profile_and_omits_dependency_as_pair_when_tight(story):
+    head = get_branch_head(story["connection"], story["campaign"].id, story["branch"])
+    memory = append_memory_version(story["connection"], story["campaign"].id, story["branch"], "lore", "The archive holds a sealed letter.", origin="user", expected_state_version=head.state_version, source_revision_ids=[], entity_ids=[story["mentioned"]])
+    preview = build_context_preview(story["connection"], story["campaign"].id, story["branch"], "Tell me about the archive", _model_config(), owner_id=story["owner"].id)
+    block_ids = {block["id"] for block in preview["blocks"]}
+    assert memory.memory_id in block_ids
+    assert any(block["type"] == "character" and story["mentioned"] in block["text"] for block in preview["blocks"])
+    tight = build_context_preview(story["connection"], story["campaign"].id, story["branch"], "Tell me about the archive", {**_model_config(), "input_limit": 300}, owner_id=story["owner"].id)
+    assert memory.memory_id not in {block["id"] for block in tight["blocks"]}
+    assert not any(block["type"] == "character" and story["mentioned"] in block["text"] for block in tight["blocks"])
+    assert any(entry["id"] == memory.memory_id and "profile" in entry["reason"].casefold() for entry in tight["omission_reasons"])
+
+
+def test_fixture_expectations_and_style_cases_drive_preview_assertions(story):
+    spec = story["fixture_spec"]
+    symbolic_sources = spec["symbolic_sources"]
+    old_promise_pair = int(symbolic_sources["old_promise"].split(":")[1])
+    latest_pair = int(symbolic_sources["latest_raw"].split(":")[1])
+    assert story["revisions"][old_promise_pair - 1] in story["promise"].source_revision_ids
+    assert story["revisions"][latest_pair - 1] == story["revisions"][-1]
+    assert symbolic_sources["approved_summary"] == "pairs:1-119"
+    assert symbolic_sources["mentioned_only_actor"] == "Bao"
+    expectation_ids = {
+        "old_promise": story["promise"].memory_id,
+        "old_ledger_event": story["old_event"].memory_id,
+        "latest_raw": story["revisions"][-1],
+        "henn_agency_rule": "agency_rule",
+        "scene_cast": "scene_cast",
+        "pending_memory": story["pending"].memory_id,
+        "foreign_campaign": story["foreign_memory"].memory_id,
+        "irrelevant_side_lore": story["excluded"].memory_id,
+        "mentioned_only_actor_as_present": story["mentioned"],
+    }
+    preview = build_context_preview(story["connection"], story["campaign"].id, story["branch"], "Continue at the clinic", _model_config(), owner_id=story["owner"].id)
+    block_ids = {block["id"] for block in preview["blocks"]}
+    for symbolic in spec["expectations"]["must_include"]:
+        if symbolic == "henn_agency_rule":
+            assert any("player alone controls henn" in block["text"].casefold() for block in preview["blocks"])
+        elif symbolic == "scene_cast":
+            assert set(next(iter(preview["scene"]["scenes"].values()))["present_ids"]) == {story["henn"], story["mila"]}
+        else:
+            assert expectation_ids[symbolic] in block_ids
+    assert any(block["type"] == "style" for block in preview["blocks"])
+    for symbolic in spec["expectations"]["must_exclude"]:
+        if symbolic == "mentioned_only_actor_as_present":
+            assert not any(block["type"] == "character" and story["mentioned"] in block["text"] for block in preview["blocks"])
+        else:
+            assert expectation_ids[symbolic] not in block_ids
+    style_data = json.loads((Path(__file__).parent / "fixtures" / "style-cases.json").read_text(encoding="utf-8"))
+    for case in style_data["cases"]:
+        if case["expected"] == "required_profile":
+            assert any(case["text"] in block["text"] for block in preview["blocks"])
+        else:
+            assert any(entry.get("actor_id") == story["mentioned"] and "outside current scene" in entry["reason"] for entry in preview["omission_reasons"])
 
 def test_preview_injected_counter_is_internal_and_owned_read_is_saved(story):
     calls = []

@@ -34,7 +34,7 @@ def _terms(value: str) -> set[str]:
 
 def _contains_name(value: str, name: str) -> bool:
     normalized_name = _normalize(name).strip()
-    if len(normalized_name) < 2:
+    if not normalized_name:
         return False
     return re.search(r"(?<!\w)" + re.escape(normalized_name) + r"(?!\w)", _normalize(value)) is not None
 
@@ -72,9 +72,9 @@ def _selected_turns(connection: sqlite3.Connection, campaign_id: str, checkpoint
     return sorted((dict(by_revision[item]) for item in selected), key=lambda row: row["sequence"])
 
 
-def _rank(record: dict, terms: set[str], scene_character_ids: set[str]) -> tuple:
+def _rank(record: dict, terms: set[str], relevant_actor_ids: set[str]) -> tuple:
     overlap = len(terms & _terms(record["text"]))
-    actors = len(scene_character_ids & set(record["entity_ids"]))
+    actors = len(relevant_actor_ids & set(record["entity_ids"]))
     obligation = 10 if record["kind"] == "promise" else 6 if record["kind"] == "event" else 0
     recency = max(record.get("source_turn_sequences", []), default=0)
     return (-(overlap * 4 + actors * 2 + obligation), -recency, record["id"])
@@ -109,7 +109,7 @@ def build_candidate_pool(connection: sqlite3.Connection, campaign_id: str, branc
         record["source_turn_sequences"] = [sequence_by_revision[source] for source in record["source_revision_ids"] if source in sequence_by_revision]
     mandatory = [*selected_profiles, {"id": checkpoint.snapshot["scene_version_id"], "type": "scene", "text": json.dumps(scene, ensure_ascii=False, sort_keys=True), "source_ids": [checkpoint.snapshot["scene_version_id"]], "mandatory": True}, *[item for item in records if item["mandatory"] or item["pinned"]]]
     optional = [item for item in records if item not in mandatory]
-    optional.sort(key=lambda item: _rank(item, terms, scene_ids))
+    optional.sort(key=lambda item: _rank(item, terms, scene_ids | matched_actor_ids))
     dropped = [{"id": item["id"], "reason": "optional candidate pool limit"} for item in optional[limit:]]
     dropped.extend({"id": memory_id, "reason": "pending memory approval; not eligible for context"} for memory_id in checkpoint.snapshot.get("pending_memory_versions", {}))
     return {"checkpoint_id": checkpoint.id, "branch_id": branch_id, "action_hash": _canonical_hash(action), "mandatory": mandatory, "optional": optional[:limit], "scene_ids": sorted(scene_values), "scene_cast_ids": sorted(scene_ids), "excluded": dropped, "pool_limit": limit, "omission_reasons": dropped}
@@ -183,6 +183,13 @@ def build_context_preview(connection: sqlite3.Connection, campaign_id: str, bran
     sequence_by_revision = {turn["revision_id"]: turn["sequence"] for turn in turns}
     for memory in memories:
         memory["source_turn_sequences"] = [sequence_by_revision[source] for source in memory["source_revision_ids"] if source in sequence_by_revision]
+    profile_by_actor = {profile["key"].partition(":")[2]: profile for profile in profiles if profile["kind"] == "character"}
+    required_memory_ids = {memory["id"] for memory in memories if memory["mandatory"] or memory["pinned"]}
+    required_memory_ids.update(covered.values())
+    required_actor_ids = set(scene_character_ids) | set(matched_actor_ids)
+    required_actor_ids.update(actor_id for memory in memories if memory["id"] in required_memory_ids for actor_id in memory["entity_ids"])
+    selected_profile_ids = {profile["id"] for profile in profiles if profile["kind"] in {"world", "persona", "style"} or (profile["kind"] == "character" and profile["key"].partition(":")[2] in required_actor_ids)}
+    selected_profiles = [profile for profile in profiles if profile["id"] in selected_profile_ids]
     blocks = []
     blocks.append({"id": f"action:{_canonical_hash(action)}", "type": "action", "text": action, "source_ids": [], "mandatory": True, "why": "Current player action must be preserved verbatim."})
     for profile in selected_profiles:
@@ -211,7 +218,7 @@ def build_context_preview(connection: sqlite3.Connection, campaign_id: str, bran
             if source_ids and source_ids.issubset(verbatim_revision_ids) and memory["kind"] not in {"promise", "event", "canon", "invariant"}:
                 omitted.append({"id": memory["id"], "reason": "The complete source span is already present verbatim."})
                 continue
-            is_related = bool(_terms(action) & _terms(memory["text"])) or bool(set(memory["entity_ids"]) & {char_id for scene_item in scene.get("scenes", {}).values() for char_id in scene_item.get("present_ids", [])})
+            is_related = bool(_terms(action) & _terms(memory["text"])) or bool(set(memory["entity_ids"]) & (scene_character_ids | matched_actor_ids))
             if is_related:
                 blocks.append({"id": memory["id"], "type": "memory", "text": memory["text"], "source_ids": [memory["version_id"], *memory["source_revision_ids"]], "mandatory": False, "why": "Action terms, aliases, or current scene cast match this approved memory.", "knowledge_scope": memory["knowledge_scope"], "known_by": memory["known_by"], "as_of_cursor": memory["effective_cursor"], "source_turn_sequences": memory["source_turn_sequences"]})
             else:
@@ -227,29 +234,38 @@ def build_context_preview(connection: sqlite3.Connection, campaign_id: str, bran
     required_blocks = [block for block in candidate_blocks if block["mandatory"]]
     optional_blocks = [block for block in candidate_blocks if not block["mandatory"]]
     record_by_id = {item["id"]: item for item in memories}
-    optional_blocks.sort(key=lambda block: (0 if block["id"] in summary_by_id else 1, _rank(record_by_id[block["id"]], _terms(action), scene_character_ids) if block["id"] in record_by_id else (0, block["id"])))
+    optional_blocks.sort(key=lambda block: _rank(record_by_id[block["id"]], _terms(action), scene_character_ids | matched_actor_ids) if block["id"] in record_by_id else (0, block["id"]))
     if len(optional_blocks) > MAX_SELECTED_OPTIONAL:
         for block in optional_blocks[MAX_SELECTED_OPTIONAL:]:
             omitted.append({"id": block["id"], "reason": "Optional selection limit is 20 records."})
         optional_blocks = optional_blocks[:MAX_SELECTED_OPTIONAL]
         candidate_blocks = [*required_blocks, *optional_blocks]
+    optional_memory_blocks = optional_blocks
+    dependency_blocks = {}
+    for block in optional_memory_blocks:
+        memory = record_by_id[block["id"]]
+        dependency_blocks[block["id"]] = [{"id": profile["id"], "type": "character", "text": profile["text"], "source_ids": profile["source_ids"], "mandatory": False, "why": "Profile required by selected memory actor.", "dependent_memory_id": block["id"]} for actor_id in memory["entity_ids"] if (profile := profile_by_actor.get(actor_id)) is not None and profile["id"] not in selected_profile_ids]
     budget = evaluate_budget(required_blocks, budget_config, counter=context_counter, counter_id=counter_id)
     selected_block_ids = {block["id"] for block in required_blocks}
     if budget["fits"]:
         selected_blocks = list(required_blocks)
-        for block in optional_blocks:
-            trial = evaluate_budget([*selected_blocks, block], budget_config, counter=context_counter, counter_id=counter_id)
+        for block in optional_memory_blocks:
+            dependencies = [dependency for dependency in dependency_blocks[block["id"]] if dependency["id"] not in selected_block_ids]
+            trial = evaluate_budget([*selected_blocks, *dependencies, block], budget_config, counter=context_counter, counter_id=counter_id)
             if trial["fits"]:
-                selected_blocks.append(block)
-                selected_block_ids.add(block["id"])
+                selected_blocks.extend([*dependencies, block])
+                selected_block_ids.update(item["id"] for item in [*dependencies, block])
             else:
-                omitted.append({"id": block["id"], "reason": "Optional block omitted to fit the verified input budget."})
-        blocks = [block for block in candidate_blocks if block["id"] in selected_block_ids]
+                omitted.append({"id": block["id"], "reason": "Optional block and its dependent actor profile omitted to fit the verified input budget."})
+                omitted.extend({"id": dependency["id"], "actor_id": dependency["id"], "reason": "Dependent actor profile omitted with its optional memory."} for dependency in dependencies)
+        blocks = [block for block in [*required_blocks, *selected_blocks[len(required_blocks):]] if block["id"] in selected_block_ids]
         budget = evaluate_budget(blocks, budget_config, counter=context_counter, counter_id=counter_id)
     else:
         blocks = required_blocks
-        omitted.extend({"id": block["id"], "reason": "Optional block omitted because required context already exceeds the verified input budget."} for block in optional_blocks)
+        omitted.extend({"id": block["id"], "reason": "Optional block and its dependent actor profile omitted because required context already exceeds the verified input budget."} for block in optional_memory_blocks)
     selected_summary_ids = emitted & {block["id"] for block in blocks}
+    included_ids = {block["id"] for block in blocks}
+    omitted = [entry for entry in omitted if entry["id"] not in included_ids]
     selected_replacements = {revision_id: summary_id for revision_id, summary_id in covered.items() if summary_id in selected_summary_ids}
     payload_hash = _canonical_hash({"blocks": blocks, "action": action, "config": model_config, "counter_id": counter_id, "counter_mode": budget["counter_mode"]})
     current = get_branch_head(connection, campaign_id, branch_id, owner_id)
