@@ -10,6 +10,8 @@
 
 **Spec:** [Personal Playroom design](../specs/2026-10-12-personal-playroom-design.md).
 
+**Runtime contract:** [Quality/economy/free context policy](../specs/2026-10-12-runtime-ai-context-policy.md). **Style/evaluation reference:** [Playrooom sample](../../references/playrooom-style-and-evaluation.md). These contracts are required reading for every affected task; model names in them are trial candidates, not hardcoded application constants.
+
 ## Global Constraints
 
 - Mobile first, accessible anywhere via private HTTPS link; local development at `127.0.0.1`, production UI/API under the same origin with owner login.
@@ -19,9 +21,10 @@
 - No public registration; all story/context/config/stream/export endpoints require the owner session. Browser disconnect does not automatically cancel a generation job.
 - Repository: `rua-den/playroom`, created by the user; current local checkout `D:\stu\repo\playroom`. All implementation file paths are relative to its root.
 - Python 3.12+; Node 22.12+ on branch 22 or a later version supported by the locked Vite release.
-- Input cap defaults to 12.000 tokens; output reservation 4.000; wrapper reservation 512. Effective limits must respect model config.
+- Starting caps: input 12.000, total output allowance 4.000, wrapper buffer 512 tokens; configurable per role/profile, bounded by verified model capabilities. Reasoning/formatting may consume output allowance; no promise of 4.000 visible narrative tokens.
+- Quality/economy share story data and StyleProfile. First-run economy/free_only; quality can use either free or paid profiles with sufficient capability. Free quota failure cannot silently switch mode/provider or dispatch paid fallback.
 - Suggest memory review when required/selected input reaches 75% of its effective cap or a scene ends; keep the most recent committed turn verbatim. Do not wait for a fixed five-turn cadence.
-- Maximum two provider jobs concurrently across narrative/consolidation; one narrative generation per branch; default per-attempt overall timeout 300 seconds. Persist an attempt before dispatch, disable automatic provider retries, and never replay ambiguous in-flight work after restart.
+- Maximum two provider attempts concurrently across context/narrative/consolidation; one generation pipeline per branch; default per-attempt timeout 300 seconds. Persist attempts before dispatch, disable implicit retries, and never replay ambiguous dispatched work after restart.
 - Never silently truncate required canon/current action or use unapproved memory as fact.
 - All stored/retrieved context is scoped to campaign, branch ancestry, selected revisions and effective turn.
 - No provider secrets in frontend reads, exports, context snapshots or logs.
@@ -40,7 +43,7 @@ Required coding model `gpt-5.6-luna` is not present in the currently advertised 
 | Checkpoint | Tasks | Evidence |
 |---|---|---|
 | Context works without paid AI | 1–2 | 120-turn fixture with approved summary coverage; relevant source IDs and budget checks |
-| First playable phone link | 3–4 plus essential deployment steps of 8 | Owner login, manual canon/scene/summary, real provider trial and reconnect; no claim of finished MVP |
+| First playable phone link | 3–4 plus essential deployment steps of 8 | Owner login, manual canon/scene/summary, quality/economy fake trials and configured real provider trial/reconnect; no claim of finished MVP |
 | Long-play MVP | 5–7 plus remaining release/backup automation in 8 | Reviewed consolidation, exact fork state, long import, restore and user quality trial |
 
 Task 8 essential staging steps (live inventory, isolated app root/service, private Caddy site, auth/HTTPS/persistence/reconnect checks) can run after Task 4. Advanced transfer tests, release automation and final acceptance wait for Tasks 5–7. This gives the user a useful phone trial before investing in all branch/import controls.
@@ -51,13 +54,14 @@ Task 8 essential staging steps (live inventory, isolated app root/service, priva
 |---|---|
 | `backend/playroom/app.py` | App wiring, session/origin/host checks, API mount, static frontend |
 | `backend/playroom/auth.py`, `api/auth.py` | Owner setup, password hashing, login/session/logout and rate limiting |
-| `backend/playroom/settings.py` | Server config, model limits, job limits and masked provider settings |
+| `backend/playroom/settings.py`, `model_profiles.py` | Role bindings, capability/billing verification, settings revision, limits and masked secrets |
 | `backend/playroom/db.py`, `migrations/001_initial.sql` | Connections, transactions, migrations |
 | `backend/playroom/domain.py` | Validated records and error contracts |
 | `backend/playroom/campaigns.py`, `api/campaigns.py` | World, cast, persona and campaign operations |
 | `backend/playroom/timeline.py` | Turns, revisions, branch ancestry and fork |
 | `backend/playroom/memory.py`, `api/memory.py` | Memory versions, approval, conflict presentation |
 | `backend/playroom/context.py`, `token_budget.py`, `api/context.py` | Selection, budget and immutable previews |
+| `backend/playroom/context_director.py` | Candidate-pool semantic selection and validated SelectionPlan, no canon mutation |
 | `backend/playroom/providers/base.py`, `fake.py`, `http_chat.py` | Provider contract, deterministic fake, configured HTTP adapter |
 | `backend/playroom/generation.py`, `api/generation.py` | Idempotent generation, stream persistence, commit and cancel |
 | `backend/playroom/consolidation.py` | Durable proposal/summarization jobs |
@@ -72,6 +76,7 @@ Task 8 essential staging steps (live inventory, isolated app root/service, priva
 | `frontend/package.json`, `backend/pyproject.toml`, runtime/dependency lockfiles | Reproducible dev/build/test dependencies |
 | `backend/tests/`, `frontend/src/**/__tests__/` | Data/context regressions and user interaction tests |
 | `fixtures/context-campaign.json`, `fixtures/context-expectations.json` | 120-turn replay fixture and expected context source IDs |
+| `fixtures/style-cases.json`, `backend/tests/test_runtime_modes.py`, `test_model_switch.py`, `test_provider_failures.py` | Synthetic style/scene/knowledge cases, mode counts, quota/cost/failure regressions |
 | `scripts/start.ps1`, `README.md`, `.gitignore` | One-command local startup and operating instructions |
 | `deploy/playroom.service`, `deploy/playroom.caddyfile`, `deploy/release.sh`, `deploy/README.md` | Compatible service/release, existing Caddy site, separate shared data and restore |
 | `.github/workflows/ci.yml`, `.github/workflows/deploy-production.yml` | Build/quality gates and deliberately enabled release deployment |
@@ -82,16 +87,18 @@ Keep each module focused; API handlers call domain services rather than implemen
 
 - IDs are UUID strings; turn sequence is an integer local to the logical branch timeline.
 - `Turn` is one player-action/narrative-response pair; response candidates are revisions of that pair. Job drafts retain the action/partial output before commit. A fixture of 120 turns therefore has 120 pairs, not 120 individual chat bubbles.
-- `StateCursor` contains committed turn/revision IDs and a monotonic branch state version. Every effective mutation creates an immutable `StateCheckpoint` enumerating selected revision/profile/memory/scene/summary version IDs.
+- `StateCursor` contains committed turn/revision IDs and a monotonic branch story-state version. Every story mutation creates an immutable `StateCheckpoint` enumerating revision/profile/style/memory/scene/summary/retrieval-policy version IDs. Provider/model/mode settings use separate settings_revision, recorded per job but not rewriting story checkpoints.
 - `BranchHead` contains campaign ID, branch ID, committed turn/revision head, state version and checkpoint ID. Readers consume that exact checkpoint, not the latest mutable values.
-- `MemoryVersion` contains memory ID/version, kind, text, entity IDs, origin, approval state, source turn/revision IDs, branch and effective StateCursor. Typed facts can add subject ID, predicate, value/object ID and supersedes ID; these define single-valued-slot conflicts.
+- `MemoryVersion` contains memory ID/version, kind, text, entity IDs, origin, approval state (including deleted tombstone), pinned flag, source revisions, knowledge_scope/known_by and effective StateCursor. Typed facts add subject ID, predicate, value/object ID and supersedes ID. `SceneVersion` has focus_scene_id and scene records with location/time/present IDs; knowledge and presence are distinct.
+- `StyleProfile` is checkpoint-versioned narration language/length/format/tone/viewpoint/agency rules; never contains provider credentials or implies imported sample canon.
 - `SummaryVersion` additionally contains the exact ordered source revision IDs for its covered interval.
-- `ContextPreview` contains preview ID, expected branch head/state version, prompt messages, selected source IDs, omission reasons, token-count mode, input estimate/count, model config hash and payload hash.
+- `ModelProfile` and `SelectionPlan` use the exact fields/limits in runtime policy. `ContextPreview` includes checkpoint/state version, settings hash, deterministic source IDs/omissions/budget and payload hash; it makes no network request. Quality derives a final `ContextRun` after validated director selection, with both source provenance and role-profile snapshots.
 - `GenerationRequest` contains preview ID, user action and idempotency key. Action must match the preview payload.
-- `GenerationEvent` is one of `started`, `delta`, `completed`, `cancelled`, `failed`, `interrupted`; it includes job ID and monotonic event offset. `completed` carries candidate revision ID and actual usage when supplied by provider.
-- `GenerationJob` records owner/branch/operation, idempotency key, payload hash, expected state version, attempt state and partial content. Lookup by idempotency key is authenticated; reusing a key with another payload is 409.
+- `GenerationEvent` is one of `started`, `phase_changed`, `delta`, `completed`, `cancelled`, `failed`, `interrupted`; includes job ID/offset. Phases are selecting_context/generating_narrative; `completed` is emitted only for a complete narrator candidate, not a completed director stage.
+- `GenerationJob` records owner/branch/key/action/checkpoint/mode/policy/settings hash and partial content; `ProviderAttempt` records context/narration stage, derived stage key, profile/payload/usage/outcome. Lookup by parent key is authenticated; same key with different payload is 409. Quality normal path has two attempts, economy one; reconnect must not duplicate either.
 - `MemoryProposal` contains proposed changes, sources and conflicts; it cannot mutate approved memory before approval.
 - HTTP failures: validation 422; unknown resource 404; stale preview/concurrent generation 409; oversized required context 422 with block sizes; provider/config failures have a stable app error code and retain player drafts.
+- Normalize quota, model unavailable/refusal, schema invalid, output truncated and timeout using runtime policy codes. No auto-commit from partial output, local JSON repair or a transport end without terminal provider success.
 
 ## Task 1: Campaign storage and explicit memory
 
@@ -108,8 +115,10 @@ Also produce `create_state_checkpoint` and `load_state_checkpoint`; imported tra
 - [ ] Add owner/session schema, an administrative owner-creation command, Argon2id password hashing and server-managed sessions. Production cookies require HttpOnly, Secure and SameSite; no public owner registration route.
 - [ ] Write auth regressions: absent/revoked sessions cannot read story/context/export or start a stream; wrong passwords create no session; repeated failures hit a rate limit; cross-origin mutation is rejected. A stream already open closes within one 15-second session-check interval after revoke; the generation job remains private and may complete. Apply the guard to every feature router and test its endpoint inventory.
 - [ ] Define schema for campaigns, character/profile versions, branches, turns, turn revisions, selected revisions, memory versions, scene versions, summaries, state checkpoints, context runs and jobs. Add FK constraints, uniqueness for owner/branch/operation/idempotency key, and migration version. Every effective state mutation must check expected state version and create a new checkpoint atomically.
+- [ ] Add StyleProfile versions, focus/parallel scene records, knowledge_scope/known_by, event pins/tombstones and retrieval policy to checkpoints. Keep model profile/settings_revision in configuration scope, not story-state scope. A delete/hide changes future visibility but does not erase past snapshot sources.
 - [ ] Write regressions: two campaigns with the same character name cannot see each other's memory; pending memory is absent from approved results; a profile edit affects new requests but leaves an earlier profile version unchanged.
 - [ ] Add single-valued-slot conflict and ambiguous-alias tests. Two different values for the same effective slot require review/supersession; two NPC IDs sharing a normalized alias must never be merged automatically. Free-text semantic detection is advisory, not a guaranteed validator.
+- [ ] Add scene/knowledge regressions: mention != presence, viewpoint switch does not move an actor, narrator_only fact is not labelled public knowledge, and a later known_by update does not alter earlier snapshots. Test pin/edit/delete and auto/important_only/disabled retrieval without turning off mandatory canon/scene.
 - [ ] Run the focused tests and confirm failure due to missing behavior; implement minimal persistence and domain validation.
 - [ ] Implement profile/canon/scene editing and memory approval/rejection with revision history. AI origin cannot directly create approved records.
 - [ ] Run focused tests against an on-disk temporary DB, close/reopen it, and verify campaign/profile/memory state persists.
@@ -119,41 +128,53 @@ Also produce `create_state_checkpoint` and `load_state_checkpoint`; imported tra
 
 ## Task 2: Context preview with provenance and budget
 
-**Files:** `context.py`, `token_budget.py`, `api/context.py`; `backend/tests/test_context_selection.py`, `test_context_budget.py`; fixture files.
+**Files:** `context.py`, `token_budget.py`, `api/context.py`, selection-plan validation in `context_director.py`; `backend/tests/test_context_selection.py`, `test_context_budget.py`, `test_selection_plan.py`; context/style fixture files.
 
 **Consumes:** effective profiles/memory, branch head and committed transcript from Task 1.
 
 **Produces:** `build_context_preview(campaign_id, branch_id, action, model_config)` and `load_context_preview(preview_id)`. No provider call occurs during preview.
 
+Also produce `build_candidate_pool(checkpoint_id, action)` and `validate_selection_plan(checkpoint_id, action_hash, pool, plan)`, for Task 3's director. Pool defaults to 64 optional records; selected optional IDs at most 20. Mandatory is separate and cannot be deselected.
+
 - [ ] Define a 120-turn fixture with Henn and distinct NPCs, approved interval summaries, aliases, location changes, a milk-promise event far back, and a character mentioned without entering the scene. Mark facts as synthetic test data. Coverage checks must show older turns replaced by valid summaries while the latest committed turn remains verbatim.
 - [ ] Add expected source IDs: scene cast, pinned Henn agency rule, old unresolved promise and relevant lore. Add excluded IDs for another campaign, pending facts and irrelevant side lore.
+- [ ] Ensure the pool includes unresolved old events and related actor/scene records beyond the most recent 64; add an indirect-reference/pronoun case. Deduplicate full recent-source overlap by record/version/span without dropping a pinned obligation just because a compressed summary covers its source.
+- [ ] Write SelectionPlan tests rejecting out-of-pool, wrong-branch, pending, duplicate or invented IDs and nonexistent scenes; a plan that omits mandatory cannot remove those blocks. Keep selected explanations short and sourced; generated “new facts” cannot enter context as truth.
 - [ ] Write failing tests for relevance, alias match, deterministic ordering, provenance and exclusion. Add one exact-counter fake and one estimated-counter fake to verify labeling.
 - [ ] Implement mandatory/optional blocks, normalized keyword/alias matching and stable ranking; show omission reasons and source links.
 - [ ] Implement the budget formula from the spec; record every block cost. Required overflow returns a structured failure before network use. Unsupported model limits cannot fall back to guessed values.
 - [ ] Ensure recent unsummarized committed turns remain required; only approved, nonstale summaries can replace covered turns. Request memory review when mandatory recent turns no longer fit.
+- [ ] Annotate dynamic memory/scene as-of cursors and distinguish them from canon invariants. Test a pinned old promise plus a newer committed change: both source/history remain visible with correct temporal precedence, not a frozen old value. A wrong height in narration cannot silently overwrite a user-approved invariant.
 - [ ] Implement the 75%-budget/scene-end review hint; test with one very long chapter that five-turn scheduling would miss. Do not discard an unsummarized turn to make the test pass. Add manual user-authored approved summary creation so the first playable checkpoint does not depend on Task 5 extraction.
 - [ ] Save immutable preview and payload/config hashes; add stale-state detection for changed profile, memory or branch head.
+- [ ] Label preview as deterministic/preflight, retain knowledge-by-character and StyleProfile blocks, and verify it consumes zero provider calls. Quality's actual selection is stored later as final ContextRun; a settings hash change rebuilds preview without rewriting earlier story state.
 - [ ] Orchestrator runs focused context tests and checks that preview source IDs can be traced back to real DB rows; commit reviewed deliverable.
 
 **Acceptance:** Without AI, an engineer can inspect exactly which data the next turn would use, why, and whether the budget fits.
 
 ## Task 3: Real narrative loop through an isolated provider
 
-**Files:** provider modules, `settings.py`, `generation.py`, `api/generation.py`; `backend/tests/test_generation.py`, `test_provider_contract.py`.
+**Files:** provider modules, `settings.py`, `model_profiles.py`, `context_director.py`, `generation.py`, `api/generation.py`; `backend/tests/test_generation.py`, `test_provider_contract.py`, `test_runtime_modes.py`, `test_model_switch.py`, `test_provider_failures.py`.
 
 **Consumes:** immutable preview and expected branch head from Task 2.
 
 **Produces:** a streamed candidate revision plus generation status/usage; `commit_candidate` accepts the selected candidate exactly once.
 
 - [ ] Define provider capabilities: configured endpoint/model, context/output limits, streaming, usage reporting and token-count mode. Make a deterministic fake that can stop, fail, emit malformed frames and complete.
+- [ ] Implement ModelProfile/three role bindings, separate settings revision and free_only/capped_paid preflight. Free eligibility includes the credential tier, not just a catalog's “free tier” label. Unknown pricing/billing eligibility fails closed before dispatch; no paid tools/plugins/fallback on free_only.
+- [ ] Bind immutable credential versions to attempt/profile snapshots; rotating a key cannot silently change the tier used by a queued attempt. Implement aggregate parent/batch cap: reject an estimated quality director+narrator sum over the confirmed cap before stage one; check remaining allowance again at each stage. Show that settings changes affect future requests and existing jobs retain their original policy until cancelled.
+- [ ] Add configurable quality/economy pipeline: reserve parent; in quality dispatch director, validate SelectionPlan, pack/save final context, then dispatch narrator; economy dispatches narrator from deterministic selection. Parent phase_changed events do not count as a completed story candidate. No director DB writes or automatic conflict approval.
 - [ ] Write tests: a complete stream creates one candidate; cancellation/failure does not commit a narrative turn; duplicate idempotency keys return the existing job; the same key with a different payload returns 409; a stale preview returns 409; two concurrent requests on one branch cannot both advance it. Reserve the job in a transaction before dispatch to the provider.
 - [ ] Implement provider contract and generation/job states. Persist useful partial output as a draft, never approved history or memory.
 - [ ] Run provider execution independently of browser stream lifetime. Add an authenticated job-state/content endpoint for reconnect; never auto-resubmit AI work when the tab resumes. Server restart marks in-flight jobs interrupted while retaining their drafts.
-- [ ] Write disconnect/resume tests: one generation request continues on the backend, reconnect returns the same job/candidate, and the fake provider call count stays at one. An expired session cannot fetch the job.
-- [ ] Add the lost-initial-response test: simulate connection loss before receiving job ID, recover via the UI-persisted idempotency key, and verify one upstream call. Delta offsets make repeated stream frames safe. Disable implicit HTTP/SDK retries; ambiguous dispatched jobs become interrupted, while never-dispatched queued jobs can resume.
-- [ ] Implement explicit candidate commit and per-branch concurrency guard plus global two-provider-job semaphore/queue and 300-second default timeout. Validate head/checkpoint/state version at preview, start and commit. Active generation blocks effective canon/scene/memory mutations with 409; editing drafts stays possible. A complete stale candidate remains readable but cannot commit to another state.
+- [ ] Write disconnect/resume tests in both modes: economy has one narration attempt, quality has one context + one narration attempt, reconnect creates no duplicates. Interrupt at each stage and after context completion; completed context never replays just because narration transport disconnects. Expired session cannot fetch the job.
+- [ ] Add lost-initial-response tests before job ID in both modes, recovering by persisted key with exact per-stage counts. Delta offsets prevent duplicate text. Disable implicit retries; ambiguous dispatched attempts are interrupted, queued never-dispatched attempts may resume. Provider changes never append to an old partial candidate.
+- [ ] Implement explicit candidate commit and per-branch pipeline guard plus global two-attempt semaphore/queue and 300-second timeout. Validate checkpoint/story version at preview, start and commit. Active pipeline blocks every effective story mutation including style/pins/retrieval; settings changes apply to future requests. Editing drafts stays possible. A complete story-stale candidate remains readable but cannot commit into another state.
 - [ ] Add backend-only provider configuration with masked reads. Never expose raw key in error responses, logs or context preview.
-- [ ] Implement one configured chat HTTP adapter; validate its request/stream format using mocked provider frames and official documentation of the endpoint selected at execution time. Providers lacking that exact contract must be rejected as unsupported rather than treated as compatible by name.
+- [ ] Implement verified generate_text/generate_structured adapter contracts for the initial provider/endpoint selected at execution time, using mocked real protocol frames and native schema support where available. Do not integrate multiple providers blindly. A text-only profile still works for narrator/economy/manual memory but is rejected for director/consolidator.
+- [ ] Test schema invalid/refusal/quota/model unavailable, unsupported reasoning parameters, token-limit completion and missing terminal frames. Partial/max-token results remain draft. Verify input reservation includes total output/hidden reasoning accounting and compare estimate vs actual usage labels.
+- [ ] Test changing paid/strong to eligible free profile: committed transcript, checkpoint, style and memory unchanged; settings/next preview changes; existing job/candidate still records its original profile. On quota exhaustion, app never dispatches a paid fallback; read/edit/export routes remain usable.
+- [ ] Add cost/credential regressions: two stages cannot each consume the whole parent cap; unknown pricing/tier or missing pinned secret version blocks dispatch; failed quota never activates paid mode; usage missing remains unknown rather than fabricated zero.
 - [ ] Record two candidate models available to the user, compare context/output support and quoted pricing from their official docs, and let the user configure the chosen endpoint. Run a paid trial only via an explicit user action.
 - [ ] Orchestrator runs generation/contract tests, reviews secret handling and failure paths, then commits reviewed deliverable.
 
@@ -170,9 +191,12 @@ Also produce `create_state_checkpoint` and `load_state_checkpoint`; imported tra
 - [ ] Build a one-column phone reader/composer with campaign drawer and memory sheet; expand to three panels on desktop. Keep labels in Vietnamese; render Markdown with raw HTML disabled.
 - [ ] Add login/session-expiry/logout UX; remove private in-memory API state on logout. Re-login can retrieve the existing backend job without starting another request.
 - [ ] Add world/cast/persona forms, scene and canon editing, masked provider setup and connection status.
+- [ ] Add mode/cost-policy/role bindings with capability/quota status and explicit model-switch controls. Show selecting-context vs writing-story phases, operation counts and estimated/actual/unknown cost. No automatic paid activation, paid fallback or silent style shortening in free mode.
+- [ ] Add event-library pin/edit/hide with provenance and auto/important_only/disabled optional retrieval, plus StyleProfile editor/preset. Scene sheet shows focus vs parallel scenes and NPC knowledge without forcing every detail into the normal play flow.
 - [ ] Add story input, automatic preview-then-send, streaming, cancel, candidate selection and “Dùng lượt này”. Keep “Xem context” optional during normal play. Sending the next action first commits the displayed complete candidate with expected state version, then creates a fresh preview; an incomplete/stale candidate cannot auto-commit.
 - [ ] Add context inspection with selected source, omission reasons and exact/estimated token labels. Use user-readable wording; keep raw payload in an optional details view.
 - [ ] Write interaction tests: a network failure preserves typed input; a required-budget failure opens context details; editing scene invalidates old preview; an unapproved fact is labeled and absent from approved memory.
+- [ ] Add UI regressions: quota/unsupported-model error keeps draft, free profile switch keeps story/voice settings, a failed quality director offers explicit economy retry and never silently sends narrator, and truncated/refused output cannot be auto-committed. Login/logout does not require a live AI call.
 - [ ] Use keyboard controls without submitting while IME composition is active. Keep focus and reader scroll stable during streaming; preserve manually scrolled reading position.
 - [ ] Check 360/390/430 CSS px widths, 44px touch targets, safe-area and virtual keyboard. Ensure composer stays visible without covering the latest text, no horizontal overflow, and drawer/sheet close controls remain reachable.
 - [ ] Add reconnect on foreground/network recovery: retrieve job status by ID or persisted idempotency key, resume content by offset, distinguish completed/interrupted/failed jobs, retain the player draft, and never auto-retry generation. Keep a pending-action key across reload until job state is resolved; clear private cached state on logout.
@@ -191,10 +215,12 @@ Also produce `create_state_checkpoint` and `load_state_checkpoint`; imported tra
 **Produces:** durable pending scene/fact/summary proposals and explicit approve/reject operations.
 
 - [ ] Define extraction output schema with typed slots where applicable, kinds, source IDs and candidate changes; validate source references against the selected checkpoint's transcript. Valid references do not prove semantic truth. Freeform conflict detection is advisory; an output cannot directly become approved memory.
+- [ ] Include source-grounded scene focus/presence and knowledge updates; unknown stays unknown. Consolidation role/profile capability and its own input/total-output cap are checked independently from narrator. Refusal/incomplete/schema failure cannot create a repair-guessed approved proposal.
 - [ ] Write tests: fabricated source ID is rejected; contradictory canon is a pending conflict; extraction failure does not undo a completed story turn; restarting recovers a queued job without duplicating proposals.
 - [ ] Implement consolidation as an explicit “Cập nhật bộ nhớ” action and a suggestion at scene end or 75% of effective input cap. Do not make undisclosed extra paid calls per turn. Show the bounded input/output plan before starting; use the global job quota/timeout.
 - [ ] Chunk long source intervals to fit the consolidation model budget at turn/paragraph boundaries; retain exact revision coverage and progress. Combine validated leaf summaries only if another bounded job is needed, keeping source mappings. Reject over-budget attempts before dispatch. Test restart of queued jobs versus interrupted dispatched jobs separately; the latter require an explicit new attempt.
 - [ ] Group proposals for quick review; allow text correction before approval. Display old/new facts side by side when a replacement is proposed.
+- [ ] Test legitimate promise supersession (e.g. one week becomes one month) versus unresolved contradiction; preserve old version at earlier checkpoint. No consolidation call occurs silently per turn in economy; attempts/cost appear before the explicit batch action.
 - [ ] Approve summaries only for exact committed revision intervals; record coverage, and detect overlap/staleness before using them in context.
 - [ ] Test the unsummarized-history overflow path: prompt play pauses with a memory-review action rather than dropping old turns silently.
 - [ ] Orchestrator runs focused tests and simulates a model returning valid JSON with an incorrect fact to ensure correction/rejection works; commit reviewed deliverable.
@@ -211,6 +237,7 @@ Also produce `create_state_checkpoint` and `load_state_checkpoint`; imported tra
 
 - [ ] Write tests with branches A/B: A wins a match and B loses it; each branch context contains only its own outcome. A fork before the match includes neither future outcome.
 - [ ] Add tests that a later profile edit and summary do not alter the snapshot of an earlier turn. Selecting an uncommitted reroll cannot keep memory sourced from a discarded candidate.
+- [ ] Add style, retrieval-mode, pin/tombstone and known_by versions to fork tests. Changing runtime provider/mode alone does not fork or mutate historical story state. Quality cached SelectionPlan cannot be reused at a different action/checkpoint/settings hash.
 - [ ] Add the same-turn-version test: approve two memory/profile changes at the same turn, fork from the first checkpoint, and exclude the second mutation even if it cites an old source turn. Imported archive turns lacking a playable state checkpoint cannot be fork targets.
 - [ ] Implement branch ancestry and checkpoint/version cutoffs for inherited transcript/profile/memory/scene/summary. Every retrieval path applies the selected checkpoint before ranking; source timestamp alone cannot determine visibility.
 - [ ] Implement reroll on uncommitted candidates in the same branch. Reroll of any committed turn, including the last one, forks from its preceding checkpoint and leaves old memory/history intact in the old branch.
@@ -229,12 +256,14 @@ Also produce `create_state_checkpoint` and `load_state_checkpoint`; imported tra
 **Produces:** versioned JSON transfer, transcript import preview and documented single-command local operation.
 
 - [ ] Define export schema version 1 with turns/revisions, branch ancestry, state checkpoints, memory/profile/scene versions, summary sources and context-run metadata. Reject unsupported versions/invalid source references before writes. File limit is 20 MiB; enforce it before reading the complete body.
+- [ ] Include StyleProfile, scene/knowledge/pin/tombstone/retrieval versions and sanitized role-run provenance in export. Never include model secrets, owner/session credentials or provider billing-account secrets. Restored campaign requires re-binding usable profiles; past provenance remains read-only.
 - [ ] Write round-trip tests: export/import reconstructs context source text and branch outcomes; secrets are excluded; invalid references reject the entire import with no partially created campaign.
 - [ ] Preflight export against the configured transfer limit so the app never claims to create a restorable export it will reject on import. Test the oversized-campaign path: explain changing the limit after resource checks or using administrative DB backup, without truncation. Fresh campaign imports remap entity/version/reference IDs consistently instead of colliding with an existing campaign; compare normalized context/source text, not remapped UUID equality.
 - [ ] Implement JSON transcript import and TXT/Markdown preview with explicit user correction of speaker/order; retain original text and identify partial imports.
+- [ ] Keep validated raw import transactional but short: create a provisional importing campaign, then perform chunked proposals as separate jobs outside the write transaction. It is readable/editable but not playable until the checkpoint is approved; provider/quota failure preserves progress. Manual checkpoint completion remains available without an AI call. Full app-export import stays one validated DB transaction and needs no model generation.
 - [ ] Split raw historical imports into bounded consolidation chunks, provide progress and review the initial playable canon/scene/summary checkpoint. Mark missing history unknown. Historical raw transcript stays searchable but cannot be forked before a verified state checkpoint; full app-export imports preserve their historical checkpoints. Test an import exceeding 12.000 tokens without sending one oversized model request.
 - [ ] Prepare a `playrooom` import worksheet with persona, cast, canon, current scene and unresolved events. Fill only verified facts from available material; ask the player to complete missing initial history instead of inventing it.
-- [ ] Implement SQLite backup using the DB backup API and restore into a new validated file before replacing the active DB. Test backup while the app has an open connection.
+- [ ] Implement SQLite backup using the DB backup API and restore into a new validated file before replacing the active DB. Test backup while the app has an open connection. Restore/import starts a new execution epoch, revokes old sessions and disables automatic dispatch for all restored job records, including queued; those may have run since the backup. Test that a backup showing queued work cannot cause a second upstream call after restore.
 - [ ] Implement PowerShell startup without visible helper consoles, bind only localhost, serve built frontend, and preserve existing DB across launches. Startup must stop cleanly with an actionable port/runtime error instead of deleting data.
 - [ ] Document install/build/start, key setup, memory review, branch behavior, export/restore and where local data lives. Ignore DBs, local provider config/secrets, caches and generated exports.
 - [ ] Orchestrator runs backend suite, frontend tests/build, export/restore check and final browser smoke from a fresh launch. Review all changes against spec, then commit reviewed deliverable.
@@ -264,6 +293,7 @@ Essential private staging can consume Tasks 1–4; retain the release/transfer/r
 - [ ] Select a domain/subdomain controlled by the user for this app and confirm DNS. No new VPS purchase is part of this plan; separately record any actual domain/AI costs and obtain missing access through the appropriate secure setup flow.
 - [ ] Configure DNS/domain using existing Caddy HTTPS. Save current full config, validate/adapt using the deployed adapter/environment when supported, then reload the running instance within user-authorized deployment scope. Account for modules whose validation contends with the running process; never replace validation failures with a forced restart. A failed reload must preserve the active configuration.
 - [ ] Verify login/logout including open-stream revocation, blocked unauthenticated story/context/export, SSE, lost-response idempotency recovery and resume through the real HTTPS origin. Check all existing site health before/after. On activation failure restore only Playroom's changed app/config; do not auto-restore DB or modify wedding data/releases/secrets.
+- [ ] Verify free-only/mode controls through HTTPS with mocked quota/failure outcomes before a user-controlled provider trial. Check parent/director/narrator attempts and masked settings; production must not enable paid mode merely because a key exists.
 - [ ] Test a 20-turn play loop on the user's phone/browser, including keyboard opening, app background/resume and one network disconnect; check another mobile engine when available. Document which checks used a real device and which used emulation.
 - [ ] Orchestrator reviews deployment diff, runs production/auth tests, verifies shared-directory persistence and restore, and records the real URL only after successful deployment.
 
@@ -273,9 +303,25 @@ Essential private staging can consume Tasks 1–4; retain the release/transfer/r
 
 - [ ] Record deterministic replay results separately from live model quality. Passing fake-provider tests says nothing about storytelling quality.
 - [ ] With the chosen model and user-controlled API calls, play at least 20 additional turns around the 120-turn fixture or a reviewed imported campaign.
+- [ ] Compare quality vs economy using the same checkpoint/action/style and fixed narrator; compare free vs stronger narrator separately. Exercise all seven style-reference cases, including NPC knowledge and legitimate promise updates. Record the actual number of trials if free quota stops the run; do not claim the 20-turn gate passed from a smaller sample.
 - [ ] Grade: Henn agency, NPC identity/voice, scene continuity, old promise retrieval, branch outcome, cost/latency visibility and ability to correct errors.
 - [ ] Include mobile keyboard/readability, owner login, foreground resume and hosted persistence in user acceptance. PWA home-screen installation is tested only through browser-supported flows.
 - [ ] If failures come from missing/wrong retrieval, fix retrieval before increasing context or changing model. If retrieval is correct but narrative ignores it, revise prompt/model configuration and repeat only the affected trials.
 - [ ] User accepts play quality; orchestrator reports test evidence, remaining model limitations and actual file/project locations.
+
+## Requirement-to-task review matrix
+
+| Requirement | Implemented by future task | Verification |
+|---|---|---|
+| Provenance, state/checkpoints, pins, scene/knowledge/style | 1, 2, 6 | Campaign isolation, snapshots, tombstones and exact source/annotation tests |
+| Context selection and budget | 2, 3 | 120-pair fixture, approved coverage, SelectionPlan rejection, mandatory retention |
+| Strong/free-compatible runtime and cost controls | 3, 4, 5 | quality 2/economy 1 attempt, free-only blocking, quota and model-switch tests |
+| Phone interaction and recoverable stream | 3, 4, 8 | Per-stage idempotency, keyboard/viewport, authenticated SSE through Caddy |
+| Whif reference applied without claiming its backend | 1, 2, 4, 5 | Event library, pins/modes, dedup source coverage; reference limitation retained |
+| Playrooom voice and user agency | 1, 2, 4, final trial | Synthetic style cases plus human evaluation, no raw private transcript in Git |
+| Long import/export and restore | 5, 7, 8 | Chunk caps, checkpoint validity, remap/round-trip, secrets exclusion and backup |
+| Existing VPS/wedding preservation | 8 | Audited layout, independent service/shared data, Caddy config/health rollback |
+
+Pre-code gate: docs consistent and reviewed; required coding-agent dispatch available; runtime/dependencies verified. Provider/domain/live VPS gates can be completed at their tasks and do not block fake-provider/storage work. No routing exception is implied by this review.
 
 Do not mark the MVP done merely after scaffolding, mock UI, an API smoke call or a frontend build. No elapsed-time estimate is committed before a real provider and initial trial are selected.
