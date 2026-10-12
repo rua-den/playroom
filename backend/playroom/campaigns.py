@@ -201,8 +201,8 @@ def remove_profile(connection: sqlite3.Connection, campaign_id: str, branch_id: 
             raise StateConflict("Character is referenced by the current scene; remove those references first")
         memory_ids = [*checkpoint.snapshot.get("memory_versions", {}).values(), *checkpoint.snapshot.get("pending_memory_versions", {}).values()]
         for memory_version_id in memory_ids:
-            memory = connection.execute("SELECT entity_ids_json, known_by_json, subject_id, object_id FROM memory_versions WHERE id = ? AND campaign_id = ?", (memory_version_id, campaign_id)).fetchone()
-            if memory and (character_id in json.loads(memory["entity_ids_json"]) or character_id in json.loads(memory["known_by_json"]) or character_id in {memory["subject_id"], memory["object_id"]}):
+            memory = connection.execute("SELECT entity_ids_json, known_by_json, subject_id, object_id, status FROM memory_versions WHERE id = ? AND campaign_id = ?", (memory_version_id, campaign_id)).fetchone()
+            if memory and memory["status"] != "deleted" and (character_id in json.loads(memory["entity_ids_json"]) or character_id in json.loads(memory["known_by_json"]) or character_id in {memory["subject_id"], memory["object_id"]}):
                 raise StateConflict("Character is referenced by effective memory; remove those references first")
         snapshot = dict(checkpoint.snapshot)
         snapshot["profile_versions"] = dict(snapshot["profile_versions"])

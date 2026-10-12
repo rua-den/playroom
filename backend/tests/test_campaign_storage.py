@@ -155,3 +155,18 @@ def test_character_alias_validation_readd_versions_and_referenced_removal(db, ow
     with pytest.raises(StateConflict, match="referenced"):
         remove_profile(db, campaign.id, branch, f"character:{character_id}", expected_state_version=known.state_version, owner_id=owner.id)
     assert get_branch_head(db, campaign.id, branch).state_version == known.state_version
+
+
+def test_deleted_memory_tombstone_no_longer_blocks_character_removal(db, owner):
+    from playroom.memory import append_memory_version, delete_memory, list_memory_history
+    campaign = create_campaign(db, owner.id, "Deleted reference", {"name": "World"}, [{"id": str(uuid4()), "name": "Actor"}], {"name": "Player"})
+    branch, actor_id = campaign.initial_branch_id, campaign.character_ids[0]
+    head = get_branch_head(db, campaign.id, branch)
+    memory = append_memory_version(db, campaign.id, branch, "event", "Actor knows", origin="user", expected_state_version=head.state_version, source_revision_ids=[], known_by=[actor_id], knowledge_scope="known_by")
+    tombstone = delete_memory(db, campaign.id, branch, memory.memory_id, expected_state_version=memory.state_version)
+    removed = remove_profile(db, campaign.id, branch, f"character:{actor_id}", expected_state_version=tombstone.state_version, owner_id=owner.id)
+    history = list_memory_history(db, campaign.id, branch, memory.memory_id, tombstone.checkpoint_id)
+    old = list_memory_history(db, campaign.id, branch, memory.memory_id, memory.checkpoint_id)
+    assert removed.state_version == tombstone.state_version + 1
+    assert old[-1].status == "approved" and old[-1].known_by == (actor_id,)
+    assert history[-1].status == "deleted" and history[-1].known_by == (actor_id,)
