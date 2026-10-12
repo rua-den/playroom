@@ -11,9 +11,10 @@ Repo hiện chứa tài liệu thiết kế, kế hoạch triển khai và revie
 ## Đọc theo thứ tự
 
 1. [Thiết kế sản phẩm và context](docs/superpowers/specs/2026-10-12-personal-playroom-design.md).
-2. [Plan triển khai và các mốc nghiệm thu](docs/superpowers/plans/2026-10-12-personal-playroom-implementation-plan.md).
-3. [Review plan và các vấn đề đã sửa](docs/superpowers/reviews/2026-10-12-personal-playroom-plan-review.md).
-4. [Phân tích Whif APK — nguồn tham khảo](docs/references/whif-apk-analysis.md).
+2. [Runtime AI: quality, economy và free](docs/superpowers/specs/2026-10-12-runtime-ai-context-policy.md).
+3. [Plan triển khai và các mốc nghiệm thu](docs/superpowers/plans/2026-10-12-personal-playroom-implementation-plan.md).
+4. [Review plan và các vấn đề đã sửa](docs/superpowers/reviews/2026-10-12-personal-playroom-plan-review.md).
+5. [Phân tích Whif APK](docs/references/whif-apk-analysis.md) và [mẫu kể chuyện playrooom](docs/references/playrooom-style-and-evaluation.md).
 
 Agent đọc [AGENTS.md](AGENTS.md) trước khi thay đổi repo.
 
@@ -24,13 +25,14 @@ Agent đọc [AGENTS.md](AGENTS.md) trước khi thay đổi repo.
 - Dữ liệu: SQLite trên thư mục lưu trữ bền, có nguồn dữ kiện và checkpoint của từng trạng thái.
 - Deploy: VPS hiện có của người dùng, qua **Caddy đang hoạt động**; Playroom có service, thư mục, database và subdomain riêng.
 - AI: endpoint/model qua API được chọn khi triển khai; tài khoản ChatGPT hiện tại không được giả định là API access.
+- Quality có AI hỗ trợ chọn context; economy giảm số call. Cả hai giữ nguyên dữ liệu/style, có free-only policy và không tự chuyển paid khi hết quota.
 
 ## Các mốc
 
 | Mốc | Kết quả cần có |
 |---|---|
 | Kiểm chứng context | Fixture 120 cặp lượt có summary coverage; chọn đúng nguồn, đúng nhánh và đúng budget |
-| Bản chơi thử trên điện thoại | Đăng nhập, đọc/nhập truyện, cấu hình AI, sửa hồ sơ/bộ nhớ, khôi phục sau mất mạng |
+| Bản chơi thử trên điện thoại | Đăng nhập, tạo/chơi chiến dịch, cấu hình AI/mode, sửa hồ sơ/bộ nhớ, khôi phục sau mất mạng; import lịch sử đầy đủ ở mốc sau |
 | MVP chơi dài | Duyệt tóm tắt, tạo lại/rẽ nhánh, nhập phiên cũ, sao lưu/khôi phục và nghiệm thu model thật |
 
 ## Quyết định đã chốt
