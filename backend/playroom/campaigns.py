@@ -4,7 +4,7 @@ import json
 import sqlite3
 from uuid import uuid4
 
-from .db import transaction
+from .db import assert_branch_mutable, transaction
 from .domain import Campaign, NotFound, StateConflict, ValidationError, require_uuid
 from .timeline import _advance_checkpoint, _branch_row, load_state_checkpoint, utc_now
 
@@ -122,6 +122,7 @@ def update_profile(connection: sqlite3.Connection, campaign_id: str, branch_id: 
     if not isinstance(data, dict):
         raise ValidationError("Profile data must be an object")
     with transaction(connection):
+        assert_branch_mutable(connection, branch_id)
         branch = _branch_row(connection, campaign_id, branch_id, owner_id)
         if branch["state_version"] != expected_state_version:
             raise StateConflict("Campaign state changed; reload before saving")
@@ -144,6 +145,7 @@ def rename_campaign(connection: sqlite3.Connection, campaign_id: str, branch_id:
     if not title.strip():
         raise ValidationError("Campaign title is required")
     with transaction(connection):
+        assert_branch_mutable(connection, branch_id)
         branch = _branch_row(connection, campaign_id, branch_id, owner_id)
         if branch["state_version"] != expected_state_version:
             raise StateConflict("Campaign state changed; reload before saving")
@@ -155,6 +157,7 @@ def rename_campaign(connection: sqlite3.Connection, campaign_id: str, branch_id:
 
 def archive_campaign(connection: sqlite3.Connection, campaign_id: str, branch_id: str, *, expected_state_version: int, owner_id: str) -> dict:
     with transaction(connection):
+        assert_branch_mutable(connection, branch_id)
         branch = _branch_row(connection, campaign_id, branch_id, owner_id)
         if branch["state_version"] != expected_state_version:
             raise StateConflict("Campaign state changed; reload before saving")
@@ -168,6 +171,7 @@ def add_character(connection: sqlite3.Connection, campaign_id: str, branch_id: s
     character = _validate_character(character)
     character_id = character["id"]
     with transaction(connection):
+        assert_branch_mutable(connection, branch_id)
         branch = _branch_row(connection, campaign_id, branch_id, owner_id)
         if branch["state_version"] != expected_state_version:
             raise StateConflict("Campaign state changed; reload before saving")
@@ -189,6 +193,7 @@ def remove_profile(connection: sqlite3.Connection, campaign_id: str, branch_id: 
     if not profile_key.startswith("character:"):
         raise ValidationError("Only optional character profiles can be removed")
     with transaction(connection):
+        assert_branch_mutable(connection, branch_id)
         branch = _branch_row(connection, campaign_id, branch_id, owner_id)
         if branch["state_version"] != expected_state_version:
             raise StateConflict("Campaign state changed; reload before saving")

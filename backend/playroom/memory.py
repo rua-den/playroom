@@ -4,7 +4,7 @@ import json
 import sqlite3
 from uuid import uuid4
 
-from .db import transaction
+from .db import assert_branch_mutable, transaction
 from .domain import MemoryVersion, NotFound, StateConflict, ValidationError, require_uuid
 from .timeline import _advance_checkpoint, _branch_row, load_state_checkpoint, utc_now, validate_source_revisions
 
@@ -183,6 +183,7 @@ def _append_memory_in_transaction(
 
 def append_memory_version(connection: sqlite3.Connection, campaign_id: str, branch_id: str, kind: str, text: str, *, origin: str, expected_state_version: int, source_revision_ids: list[str], memory_id: str | None = None, entity_ids: list[str] | None = None, status: str | None = None, pinned: bool = False, mandatory: bool = False, knowledge_scope: str | None = None, known_by: list[str] | None = None, subject_id: str | None = None, predicate: str | None = None, value: str | None = None, object_id: str | None = None, supersedes_id: str | None = None) -> MemoryVersion:
     with transaction(connection):
+        assert_branch_mutable(connection, branch_id)
         return _append_memory_in_transaction(connection, campaign_id, branch_id, kind, text, origin=origin, expected_state_version=expected_state_version, source_revision_ids=source_revision_ids, memory_id=memory_id, entity_ids=entity_ids, status=status, pinned=pinned, mandatory=mandatory, knowledge_scope=knowledge_scope, known_by=known_by, subject_id=subject_id, predicate=predicate, value=value, object_id=object_id, supersedes_id=supersedes_id)
 
 
@@ -235,6 +236,7 @@ def list_memory_proposals(connection: sqlite3.Connection, campaign_id: str, bran
 
 def approve_memory(connection: sqlite3.Connection, campaign_id: str, branch_id: str, memory_id: str, *, expected_state_version: int) -> MemoryVersion:
     with transaction(connection):
+        assert_branch_mutable(connection, branch_id)
         head = load_state_checkpoint(connection, campaign_id, branch_id, None)
         version_id = head.snapshot.get("pending_memory_versions", {}).get(require_uuid(memory_id, "memory_id"))
         if not version_id:
@@ -247,6 +249,7 @@ def approve_memory(connection: sqlite3.Connection, campaign_id: str, branch_id: 
 
 def reject_memory(connection: sqlite3.Connection, campaign_id: str, branch_id: str, memory_id: str, *, expected_state_version: int) -> MemoryVersion:
     with transaction(connection):
+        assert_branch_mutable(connection, branch_id)
         head = load_state_checkpoint(connection, campaign_id, branch_id, None)
         version_id = head.snapshot.get("pending_memory_versions", {}).get(require_uuid(memory_id, "memory_id"))
         if not version_id:
@@ -259,6 +262,7 @@ def reject_memory(connection: sqlite3.Connection, campaign_id: str, branch_id: s
 
 def delete_memory(connection: sqlite3.Connection, campaign_id: str, branch_id: str, memory_id: str, *, expected_state_version: int) -> MemoryVersion:
     with transaction(connection):
+        assert_branch_mutable(connection, branch_id)
         head = load_state_checkpoint(connection, campaign_id, branch_id, None)
         version_id = head.snapshot["memory_versions"].get(require_uuid(memory_id, "memory_id"))
         if not version_id:
@@ -269,6 +273,7 @@ def delete_memory(connection: sqlite3.Connection, campaign_id: str, branch_id: s
 
 def update_memory(connection: sqlite3.Connection, campaign_id: str, branch_id: str, memory_id: str, *, expected_state_version: int, text: str | None = None, pinned: bool | None = None, entity_ids: list[str] | None = None, knowledge_scope: str | None = None, known_by: list[str] | None = None) -> MemoryVersion:
     with transaction(connection):
+        assert_branch_mutable(connection, branch_id)
         head = load_state_checkpoint(connection, campaign_id, branch_id, None)
         version_id = head.snapshot["memory_versions"].get(require_uuid(memory_id, "memory_id"))
         if version_id is None:
@@ -281,6 +286,7 @@ def set_retrieval_policy(connection: sqlite3.Connection, campaign_id: str, branc
     if policy not in RETRIEVAL_POLICIES:
         raise ValidationError("Retrieval policy must be auto, important_only or disabled")
     with transaction(connection):
+        assert_branch_mutable(connection, branch_id)
         branch = _branch_row(connection, campaign_id, branch_id)
         if branch["state_version"] != expected_state_version:
             raise StateConflict("Campaign state changed; reload before saving")
@@ -308,6 +314,7 @@ def update_scene(connection: sqlite3.Connection, campaign_id: str, branch_id: st
         if focus_id not in scenes:
             raise ValidationError("Focus scene must exist in this scene state")
     with transaction(connection):
+        assert_branch_mutable(connection, branch_id)
         branch = _branch_row(connection, campaign_id, branch_id)
         if branch["state_version"] != expected_state_version:
             raise StateConflict("Campaign state changed; reload before saving")

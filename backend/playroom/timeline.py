@@ -6,7 +6,7 @@ import unicodedata
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from .db import transaction
+from .db import assert_branch_mutable, transaction
 from .domain import BranchHead, NotFound, StateCheckpoint, StateConflict, ValidationError
 
 
@@ -142,6 +142,7 @@ def create_state_checkpoint(
     expected_state_version: int,
 ) -> StateCheckpoint:
     with transaction(connection):
+        assert_branch_mutable(connection, branch_id)
         head = get_branch_head(connection, campaign_id, branch_id)
         current = load_state_checkpoint(connection, campaign_id, branch_id, head.checkpoint_id)
         for membership_key in ("profile_versions", "memory_versions", "pending_memory_versions", "reviewed_memory_versions", "scene_version_id", "selected_revision_ids"):
@@ -151,25 +152,30 @@ def create_state_checkpoint(
 
 
 def create_committed_revision(connection: sqlite3.Connection, campaign_id: str, branch_id: str, action_text: str, narrative_text: str, *, expected_state_version: int) -> tuple[str, str]:
+    with transaction(connection):
+        assert_branch_mutable(connection, branch_id)
+        return _create_committed_revision_in_transaction(connection, campaign_id, branch_id, action_text, narrative_text, expected_state_version=expected_state_version)
+
+
+def _create_committed_revision_in_transaction(connection: sqlite3.Connection, campaign_id: str, branch_id: str, action_text: str, narrative_text: str, *, expected_state_version: int) -> tuple[str, str]:
     if not action_text.strip() or not narrative_text.strip():
         raise ValidationError("A committed turn needs both player action and complete narrative")
-    with transaction(connection):
-        branch = _branch_row(connection, campaign_id, branch_id)
-        if branch["state_version"] != expected_state_version:
-            raise StateConflict("Campaign state changed; reload before committing the turn")
-        head = load_state_checkpoint(connection, campaign_id, branch_id, branch["head_checkpoint_id"])
-        sequence = connection.execute("SELECT COALESCE(MAX(sequence), 0) + 1 FROM turns WHERE branch_id = ?", (branch_id,)).fetchone()[0]
-        turn_id, revision_id = str(uuid4()), str(uuid4())
-        now = utc_now()
-        connection.execute("INSERT INTO turns(id, campaign_id, branch_id, sequence, action_text, created_at) VALUES (?, ?, ?, ?, ?, ?)", (turn_id, campaign_id, branch_id, sequence, action_text, now))
-        connection.execute("INSERT INTO turn_revisions(id, turn_id, revision, narrative_text, complete, selected, created_at) VALUES (?, ?, 1, ?, 1, 1, ?)", (revision_id, turn_id, narrative_text, now))
-        connection.execute("INSERT INTO selected_revisions(branch_id, turn_id, revision_id) VALUES (?, ?, ?)", (branch_id, turn_id, revision_id))
-        snapshot = dict(head.snapshot)
-        snapshot["turn_id"] = turn_id
-        snapshot["revision_id"] = revision_id
-        snapshot["selected_revision_ids"] = list(snapshot.get("selected_revision_ids", [])) + [revision_id]
-        _advance_checkpoint(connection, campaign_id, branch_id, head.state_version, snapshot, turn_id=turn_id, revision_id=revision_id)
-        return turn_id, revision_id
+    branch = _branch_row(connection, campaign_id, branch_id)
+    if branch["state_version"] != expected_state_version:
+        raise StateConflict("Campaign state changed; reload before committing the turn")
+    head = load_state_checkpoint(connection, campaign_id, branch_id, branch["head_checkpoint_id"])
+    sequence = connection.execute("SELECT COALESCE(MAX(sequence), 0) + 1 FROM turns WHERE branch_id = ?", (branch_id,)).fetchone()[0]
+    turn_id, revision_id = str(uuid4()), str(uuid4())
+    now = utc_now()
+    connection.execute("INSERT INTO turns(id, campaign_id, branch_id, sequence, action_text, created_at) VALUES (?, ?, ?, ?, ?, ?)", (turn_id, campaign_id, branch_id, sequence, action_text, now))
+    connection.execute("INSERT INTO turn_revisions(id, turn_id, revision, narrative_text, complete, selected, created_at) VALUES (?, ?, 1, ?, 1, 1, ?)", (revision_id, turn_id, narrative_text, now))
+    connection.execute("INSERT INTO selected_revisions(branch_id, turn_id, revision_id) VALUES (?, ?, ?)", (branch_id, turn_id, revision_id))
+    snapshot = dict(head.snapshot)
+    snapshot["turn_id"] = turn_id
+    snapshot["revision_id"] = revision_id
+    snapshot["selected_revision_ids"] = list(snapshot.get("selected_revision_ids", [])) + [revision_id]
+    _advance_checkpoint(connection, campaign_id, branch_id, head.state_version, snapshot, turn_id=turn_id, revision_id=revision_id)
+    return turn_id, revision_id
 
 
 def validate_source_revisions(connection: sqlite3.Connection, campaign_id: str, branch_id: str, revision_ids: list[str]) -> None:

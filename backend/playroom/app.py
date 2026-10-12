@@ -78,7 +78,13 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        initial_runtime = getattr(app.state, "generation_runtime", None)
+        if initial_runtime is not None:
+            initial_runtime.start()
         yield
+        runtime = getattr(app.state, "generation_runtime", None)
+        if runtime is not None:
+            runtime.stop()
         if app.state.memory_keeper is not None:
             app.state.memory_keeper.close()
 
@@ -147,6 +153,7 @@ def create_app(
     app.include_router(memory.router)
     app.include_router(context_api.router)
     app.state.generation_provider = None
+    app.state.generation_runtime = None
     app.include_router(generation.router)
     app.include_router(configuration.router)
     return app

@@ -222,6 +222,29 @@ CREATE TABLE IF NOT EXISTS provider_attempts (
     finished_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS generation_branch_guards (
+    branch_id TEXT PRIMARY KEY REFERENCES branches(id) ON DELETE CASCADE,
+    generation_job_id TEXT NOT NULL REFERENCES generation_jobs(id) ON DELETE CASCADE,
+    acquired_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS generation_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    generation_job_id TEXT NOT NULL REFERENCES generation_jobs(id) ON DELETE CASCADE,
+    stage TEXT,
+    event_type TEXT NOT NULL,
+    offset INTEGER,
+    content TEXT NOT NULL DEFAULT '',
+    payload_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_generation_events_job ON generation_events(generation_job_id, id);
+CREATE TABLE IF NOT EXISTS execution_epochs (
+    id INTEGER PRIMARY KEY CHECK(id = 1),
+    epoch TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+INSERT OR IGNORE INTO execution_epochs(id, epoch, created_at) VALUES (1, lower(hex(randomblob(16))), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+
 CREATE TRIGGER IF NOT EXISTS prevent_checkpoint_update
 BEFORE UPDATE ON state_checkpoints BEGIN SELECT RAISE(ABORT, 'state checkpoints are immutable'); END;
 CREATE TRIGGER IF NOT EXISTS prevent_checkpoint_delete

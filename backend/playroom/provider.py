@@ -94,6 +94,8 @@ class FakeProvider(ProviderAdapter):
 
     def generate_structured(self, request: dict, schema: dict) -> ProviderResult | ProviderFailure:
         self.calls.append(dict(request))
+        stage = str(request.get("stage", "context"))
+        self.stage_counts[stage] = self.stage_counts.get(stage, 0) + 1
         output = self.outputs.pop(0) if self.outputs else ProviderFailure("MODEL_REFUSED", "No deterministic structured fixture")
         if isinstance(output, ProviderFailure):
             return output
