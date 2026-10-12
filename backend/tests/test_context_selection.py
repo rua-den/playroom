@@ -295,6 +295,31 @@ def test_preview_adds_off_scene_memory_actor_profile_and_omits_dependency_as_pai
     assert any(entry["id"] == memory.memory_id and "profile" in entry["reason"].casefold() for entry in tight["omission_reasons"])
 
 
+def test_required_known_by_memory_keeps_off_scene_actor_profile(story):
+    head = get_branch_head(story["connection"], story["campaign"].id, story["branch"])
+    memory = append_memory_version(story["connection"], story["campaign"].id, story["branch"], "event", "Bao knows the sealed archive location.", origin="user", expected_state_version=head.state_version, source_revision_ids=[], entity_ids=[], pinned=True, mandatory=True, knowledge_scope="known_by", known_by=[story["mentioned"]])
+    preview = build_context_preview(story["connection"], story["campaign"].id, story["branch"], "Continue at the clinic", _model_config(), owner_id=story["owner"].id)
+    assert memory.memory_id in {block["id"] for block in preview["blocks"]}
+    assert any(block["type"] == "character" and story["mentioned"] in block["text"] for block in preview["blocks"])
+    assert story["mentioned"] not in next(iter(preview["scene"]["scenes"].values()))["present_ids"]
+    overflow = build_context_preview(story["connection"], story["campaign"].id, story["branch"], "Continue at the clinic", {**_model_config(), "input_limit": 300}, owner_id=story["owner"].id)
+    assert overflow["status"] == "blocked"
+    assert memory.memory_id in {block["id"] for block in overflow["blocks"]}
+    assert any(block["type"] == "character" and story["mentioned"] in block["text"] for block in overflow["blocks"])
+
+
+def test_optional_known_by_dependency_omits_memory_and_profile_while_required_context_fits(story):
+    head = get_branch_head(story["connection"], story["campaign"].id, story["branch"])
+    memory = append_memory_version(story["connection"], story["campaign"].id, story["branch"], "lore", "Archive " * 900, origin="user", expected_state_version=head.state_version, source_revision_ids=[], entity_ids=[], knowledge_scope="known_by", known_by=[story["mentioned"]])
+    preview = build_context_preview(story["connection"], story["campaign"].id, story["branch"], "Tell me about the archive", {**_model_config(), "input_limit": 700}, owner_id=story["owner"].id)
+    block_ids = {block["id"] for block in preview["blocks"]}
+    assert preview["status"] == "ready"
+    assert memory.memory_id not in block_ids
+    assert not any(block["type"] == "character" and story["mentioned"] in block["text"] for block in preview["blocks"])
+    assert any(entry["id"] == memory.memory_id and "dependent actor profile" in entry["reason"] for entry in preview["omission_reasons"])
+    assert any(entry.get("actor_id") == story["mentioned"] and "Dependent actor profile" in entry["reason"] for entry in preview["omission_reasons"])
+
+
 def test_fixture_expectations_and_style_cases_drive_preview_assertions(story):
     spec = story["fixture_spec"]
     symbolic_sources = spec["symbolic_sources"]

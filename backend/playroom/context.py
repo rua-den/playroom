@@ -187,7 +187,7 @@ def build_context_preview(connection: sqlite3.Connection, campaign_id: str, bran
     required_memory_ids = {memory["id"] for memory in memories if memory["mandatory"] or memory["pinned"]}
     required_memory_ids.update(covered.values())
     required_actor_ids = set(scene_character_ids) | set(matched_actor_ids)
-    required_actor_ids.update(actor_id for memory in memories if memory["id"] in required_memory_ids for actor_id in memory["entity_ids"])
+    required_actor_ids.update(actor_id for memory in memories if memory["id"] in required_memory_ids for actor_id in {*memory["entity_ids"], *memory["known_by"]})
     selected_profile_ids = {profile["id"] for profile in profiles if profile["kind"] in {"world", "persona", "style"} or (profile["kind"] == "character" and profile["key"].partition(":")[2] in required_actor_ids)}
     selected_profiles = [profile for profile in profiles if profile["id"] in selected_profile_ids]
     blocks = []
@@ -244,7 +244,7 @@ def build_context_preview(connection: sqlite3.Connection, campaign_id: str, bran
     dependency_blocks = {}
     for block in optional_memory_blocks:
         memory = record_by_id[block["id"]]
-        dependency_blocks[block["id"]] = [{"id": profile["id"], "type": "character", "text": profile["text"], "source_ids": profile["source_ids"], "mandatory": False, "why": "Profile required by selected memory actor.", "dependent_memory_id": block["id"]} for actor_id in memory["entity_ids"] if (profile := profile_by_actor.get(actor_id)) is not None and profile["id"] not in selected_profile_ids]
+        dependency_blocks[block["id"]] = [{"id": profile["id"], "type": "character", "text": profile["text"], "source_ids": profile["source_ids"], "mandatory": False, "why": "Profile required by selected memory actor.", "dependent_memory_id": block["id"], "actor_id": actor_id} for actor_id in {*memory["entity_ids"], *memory["known_by"]} if (profile := profile_by_actor.get(actor_id)) is not None and profile["id"] not in selected_profile_ids]
     budget = evaluate_budget(required_blocks, budget_config, counter=context_counter, counter_id=counter_id)
     selected_block_ids = {block["id"] for block in required_blocks}
     if budget["fits"]:
@@ -257,7 +257,7 @@ def build_context_preview(connection: sqlite3.Connection, campaign_id: str, bran
                 selected_block_ids.update(item["id"] for item in [*dependencies, block])
             else:
                 omitted.append({"id": block["id"], "reason": "Optional block and its dependent actor profile omitted to fit the verified input budget."})
-                omitted.extend({"id": dependency["id"], "actor_id": dependency["id"], "reason": "Dependent actor profile omitted with its optional memory."} for dependency in dependencies)
+                omitted.extend({"id": dependency["id"], "actor_id": dependency["actor_id"], "reason": "Dependent actor profile omitted with its optional memory."} for dependency in dependencies)
         blocks = [block for block in [*required_blocks, *selected_blocks[len(required_blocks):]] if block["id"] in selected_block_ids]
         budget = evaluate_budget(blocks, budget_config, counter=context_counter, counter_id=counter_id)
     else:
