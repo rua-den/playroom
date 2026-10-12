@@ -84,7 +84,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         initial_runtime = getattr(app.state, "generation_runtime", None)
-        if initial_runtime is None and app.state.generation_provider is not None:
+        if initial_runtime is None and (app.state.generation_provider is not None or app.state.generation_provider_factory is not None):
             initial_runtime = GenerationRuntime(app.state.database_url, app.state.generation_provider, provider_factory=app.state.generation_provider_factory, credential_resolver=app.state.generation_credential_resolver)
             app.state.generation_runtime = initial_runtime
         if initial_runtime is None:
@@ -110,6 +110,7 @@ def create_app(
     app.state.login_failure_limit = login_failure_limit
     app.state.login_failure_window_seconds = login_failure_window_seconds
     app.state.context_model_profiles = context_model_profiles if context_model_profiles is not None else {DEFAULT_TEST_CONTEXT_PROFILE["profile_id"]: dict(DEFAULT_TEST_CONTEXT_PROFILE)}
+    app.state.context_model_profiles_explicit = context_model_profiles is not None
     app.state.context_counter = context_counter
     app.state.context_counter_id = context_counter_id
     app.state.credential_store = CredentialStore(credential_root or os.getenv("PLAYROOM_CREDENTIAL_ROOT", "./data/secrets"))

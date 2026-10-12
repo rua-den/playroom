@@ -174,7 +174,7 @@ def test_context_preview_routes_require_owner_and_select_only_server_configured_
     from playroom.app import create_app
     from playroom.auth import create_session
     path = story["connection"].execute("PRAGMA database_list").fetchone()[2]
-    app = create_app(database_url=path, allowed_hosts={"testserver"}, secure_cookies=False)
+    app = create_app(database_url=path, allowed_hosts={"testserver"}, secure_cookies=False, context_model_profiles={"fake-context-test": _model_config()})
     client = TestClient(app, base_url="https://testserver")
     route = f"/api/campaigns/{story['campaign'].id}/context/previews"
     payload = {"branch_id": story["branch"], "action": "Remember the milk promise", "profile_id": "fake-context-test", "input_limit": 1}
@@ -199,6 +199,38 @@ def test_context_preview_routes_require_owner_and_select_only_server_configured_
     assert rebuilt["payload_hash"] != preview["payload_hash"]
     assert rebuilt["state_version"] == story_state_version
     assert client.get(f"/api/context/previews/{preview['id']}").status_code == 409
+
+
+def test_context_preview_normal_path_uses_owned_persisted_role_profile(story):
+    from fastapi.testclient import TestClient
+    from playroom.app import create_app
+    from playroom.auth import create_session
+    from playroom.model_profiles import persist_model_profile
+    from playroom.settings import save_owner_settings
+
+    profile = persist_model_profile(story["connection"], story["owner"].id, {
+        "id": "owned-context",
+        "provider": "openrouter",
+        "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+        "model": "example/context",
+        "context_limit": 16384,
+        "output_limit": 4096,
+        "credential_tier": "free",
+        "pricing_verified": True,
+        "secret_version": "credential-v1",
+        "native_structured_output": True,
+        "structured_output": True,
+        "structured_schema_parameter": "response_format",
+    })
+    save_owner_settings(story["connection"], story["owner"].id, {"roles": {"narrator": {"id": profile["id"], "version": profile["version"]}, "context": {"id": profile["id"], "version": profile["version"]}}, "mode": "quality", "policy": "free_only"})
+    path = story["connection"].execute("PRAGMA database_list").fetchone()[2]
+    app = create_app(database_url=path, allowed_hosts={"testserver"}, secure_cookies=False)
+    client = TestClient(app, base_url="https://testserver")
+    client.cookies.set("playroom_session", create_session(story["connection"], story["owner"].id))
+    response = client.post(f"/api/campaigns/{story['campaign'].id}/context/previews", json={"branch_id": story["branch"], "action": "Remember the milk promise", "profile_id": profile["id"]}, headers={"origin": "https://testserver"})
+    assert response.status_code == 201, response.text
+    assert response.json()["profile_id"] == profile["id"]
+    assert response.json()["budget"]["input_limit"] == 16384
 
 
 def test_noncontiguous_summary_never_replaces_raw_turns_and_missing_limits_block(story):

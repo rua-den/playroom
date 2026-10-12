@@ -128,22 +128,32 @@ class GenerationService:
             raise ValidationError("Aggregate generation estimate exceeds the confirmed USD cap")
         return {"policy": policy, "cap": str(cap) if cap is not None else None, "stages": entries, "reserved_total_usd": str(total), "actual_total_usd": None}
 
-    def _request_hash(self, campaign_id, branch_id, action, checkpoint_id, idempotency_key, mode, policy, cap):
+    def _request_hash(self, campaign_id, branch_id, action, checkpoint_id, preview_id, idempotency_key, mode, policy, cap):
         # Recovery identity is derived only from the submitted request. Live
         # settings/profiles/keys are intentionally absent and may change later.
-        return _hash({"campaign_id": campaign_id, "branch_id": branch_id, "action": action, "checkpoint_id": checkpoint_id, "idempotency_key": idempotency_key, "mode": mode, "policy": policy, "cap": str(cap) if cap is not None else None})
+        return _hash({"campaign_id": campaign_id, "branch_id": branch_id, "action": action, "checkpoint_id": checkpoint_id, "preview_id": preview_id, "idempotency_key": idempotency_key, "mode": mode, "policy": policy, "cap": str(cap) if cap is not None else None})
 
-    def generate(self, owner_id: str, campaign_id: str, branch_id: str, action: str, *, idempotency_key: str, expected_checkpoint_id: str, mode: str = "economy", policy: str = "free_only", cap=None, execute: bool = True) -> dict:
+    def generate(self, owner_id: str, campaign_id: str, branch_id: str, action: str, *, idempotency_key: str, expected_checkpoint_id: str, preview_id: str | None = None, mode: str = "economy", policy: str = "free_only", cap=None, execute: bool = True) -> dict:
         if mode not in {"economy", "quality"}:
             raise ValidationError("Unknown generation mode")
         if not action.strip() or not idempotency_key.strip():
             raise ValidationError("Action and idempotency key are required")
-        request_hash = self._request_hash(campaign_id, branch_id, action, expected_checkpoint_id, idempotency_key, mode, policy, cap)
+        request_hash = self._request_hash(campaign_id, branch_id, action, expected_checkpoint_id, preview_id, idempotency_key, mode, policy, cap)
         existing = self.connection.execute("SELECT id,request_hash FROM generation_jobs WHERE owner_id=? AND branch_id=? AND operation='generation' AND idempotency_key=?", (owner_id, branch_id, idempotency_key)).fetchone()
         if existing:
             if existing["request_hash"] != request_hash:
                 raise StateConflict("Conflicting idempotency payload")
             return self._job(existing["id"])
+        preview_snapshot = None
+        if preview_id is not None:
+            preview_row = self.connection.execute("SELECT payload_json FROM context_previews WHERE id=? AND owner_id=?", (preview_id, owner_id)).fetchone()
+            if preview_row is None:
+                raise NotFound("Context preview not found")
+            preview_snapshot = json.loads(preview_row["payload_json"])
+            if (preview_snapshot.get("campaign_id"), preview_snapshot.get("branch_id"), preview_snapshot.get("action"), preview_snapshot.get("checkpoint_id")) != (campaign_id, branch_id, action, expected_checkpoint_id):
+                raise StateConflict("Submitted context preview does not match generation identity")
+            if preview_snapshot.get("status") != "ready":
+                raise ValidationError("Only a ready context preview can be submitted")
         profiles = self._profiles()
         settings = _copy(self.settings)
         settings.update({"mode": mode, "policy": policy, "confirmed_usd_cap": str(cap) if cap is not None else settings.get("confirmed_usd_cap")})
@@ -163,8 +173,16 @@ class GenerationService:
             count = self.connection.execute("SELECT COUNT(*) AS n FROM provider_attempts WHERE status='dispatched'").fetchone()["n"]
             if count >= 2:
                 raise StateConflict("Provider concurrency limit reached")
+            if preview_snapshot is None:
+                narrator = profiles["narrator"]
+                preview_config = {"profile_id": narrator.get("id"), "context_window": narrator.get("context_limit", 12000), "input_limit": narrator.get("context_limit", 12000), "output_limit": narrator.get("output_limit", 4000), "wrapper_buffer": narrator.get("wrapper_buffer", 512), "requested_output": min(4000, narrator.get("output_limit", 4000)), "is_test_profile": bool(narrator.get("is_test_profile")), "capabilities_verified": bool(narrator.get("capabilities_verified", True))}
+                preview_snapshot = build_context_preview(self.connection, campaign_id, branch_id, action, preview_config, owner_id=owner_id, settings_hash=_hash(settings))
+            if preview_snapshot.get("checkpoint_id") != expected_checkpoint_id or preview_snapshot.get("action") != action:
+                raise StateConflict("Submitted context preview is stale")
+            if preview_snapshot.get("status") == "blocked":
+                raise ValidationError(preview_snapshot.get("failure") or "Required context exceeds the verified input budget")
             reservation = self._reservation(profiles, mode, policy, cap)
-            self.connection.execute("INSERT INTO generation_jobs(id,owner_id,campaign_id,branch_id,operation,idempotency_key,request_hash,checkpoint_id,action,status,mode,policy,created_at,settings_snapshot_json,profile_snapshot_json,execution_epoch,cancel_requested,reserved_cost_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (job_id, owner_id, campaign_id, branch_id, "generation", idempotency_key, request_hash, expected_checkpoint_id, action, "queued", mode, policy, created, json.dumps(settings, sort_keys=True), json.dumps(profiles, sort_keys=True), self._epoch(), 0, json.dumps(reservation, sort_keys=True)))
+            self.connection.execute("INSERT INTO generation_jobs(id,owner_id,campaign_id,branch_id,operation,idempotency_key,request_hash,checkpoint_id,action,status,mode,policy,created_at,settings_snapshot_json,profile_snapshot_json,execution_epoch,cancel_requested,reserved_cost_json,preview_id,preview_snapshot_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (job_id, owner_id, campaign_id, branch_id, "generation", idempotency_key, request_hash, expected_checkpoint_id, action, "queued", mode, policy, created, json.dumps(settings, sort_keys=True), json.dumps(profiles, sort_keys=True), self._epoch(), 0, json.dumps(reservation, sort_keys=True), preview_id, json.dumps(preview_snapshot, ensure_ascii=False, sort_keys=True)))
             planned = ["narration"] if mode == "economy" else ["context", "narration"]
             for stage in planned:
                 stage_profile = profiles["context" if stage == "context" else "narrator"]
@@ -199,8 +217,12 @@ class GenerationService:
     def _execute(self, job) -> None:
         profiles, settings = json.loads(job["profile_snapshot_json"]), json.loads(job["settings_snapshot_json"])
         narrator, context = profiles["narrator"], profiles["context"]
-        config = {"profile_id": narrator.get("id"), "context_window": narrator.get("context_limit", 12000), "input_limit": narrator.get("context_limit", 12000), "output_limit": narrator.get("output_limit", 4000), "wrapper_buffer": narrator.get("wrapper_buffer", 512), "requested_output": min(4000, narrator.get("output_limit", 4000)), "is_test_profile": bool(narrator.get("is_test_profile")), "capabilities_verified": bool(narrator.get("capabilities_verified", True))}
-        preview = build_context_preview(self.connection, job["campaign_id"], job["branch_id"], job["action"], config, owner_id=job["owner_id"], settings_hash=_hash(settings))
+        saved_preview = job["preview_snapshot_json"] if "preview_snapshot_json" in job.keys() else None
+        if saved_preview:
+            preview = json.loads(saved_preview)
+        else:
+            config = {"profile_id": narrator.get("id"), "context_window": narrator.get("context_limit", 12000), "input_limit": narrator.get("context_limit", 12000), "output_limit": narrator.get("output_limit", 4000), "wrapper_buffer": narrator.get("wrapper_buffer", 512), "requested_output": min(4000, narrator.get("output_limit", 4000)), "is_test_profile": bool(narrator.get("is_test_profile")), "capabilities_verified": bool(narrator.get("capabilities_verified", True))}
+            preview = build_context_preview(self.connection, job["campaign_id"], job["branch_id"], job["action"], config, owner_id=job["owner_id"], settings_hash=_hash(settings))
         if preview["checkpoint_id"] != job["checkpoint_id"] or preview["status"] == "stale":
             raise StateConflict("Generation checkpoint is stale")
         if preview["status"] == "blocked":

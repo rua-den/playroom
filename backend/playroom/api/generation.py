@@ -19,7 +19,8 @@ router = APIRouter(prefix="/api", tags=["generation"])
 
 def _service(request: Request, connection: sqlite3.Connection, owner: Owner) -> GenerationService:
     provider = getattr(request.app.state, "generation_provider", None)
-    if provider is None:
+    provider_factory = getattr(request.app.state, "generation_provider_factory", None)
+    if provider is None and provider_factory is None:
         raise ValidationError("Narrative generation is not configured")
     settings = get_owner_settings(connection, owner.id)
     roles = {}
@@ -28,7 +29,7 @@ def _service(request: Request, connection: sqlite3.Connection, owner: Owner) -> 
             continue
         roles[role] = get_model_profile(connection, owner.id, binding["id"], binding.get("version"))
     if getattr(request.app.state, "generation_runtime", None) is None:
-        request.app.state.generation_runtime = GenerationRuntime(request.app.state.database_url, provider, provider_factory=request.app.state.generation_provider_factory, credential_resolver=request.app.state.generation_credential_resolver)
+        request.app.state.generation_runtime = GenerationRuntime(request.app.state.database_url, provider, provider_factory=provider_factory, credential_resolver=request.app.state.generation_credential_resolver)
         request.app.state.generation_runtime.start()
     # Keep explicit fake/demo injection usable without requiring a credential
     # file; production profiles still pin their immutable secret version.
@@ -40,6 +41,7 @@ class GenerateRequest(BaseModel):
     action: str = Field(min_length=1, max_length=20000)
     idempotency_key: str = Field(min_length=1, max_length=256)
     checkpoint_id: str
+    preview_id: str | None = None
     mode: str | None = None
     policy: str | None = None
     cap: Decimal | None = Field(default=None, gt=0)
@@ -55,7 +57,7 @@ def generate(campaign_id: str, payload: GenerateRequest, request: Request, conne
     mode = payload.mode or configured.get("mode", "economy")
     policy = payload.policy or configured.get("policy", "free_only")
     cap = payload.cap if payload.cap is not None else configured.get("confirmed_usd_cap")
-    return _service(request, connection, owner).generate(owner.id, campaign_id, payload.branch_id, payload.action, idempotency_key=payload.idempotency_key, expected_checkpoint_id=payload.checkpoint_id, mode=mode, policy=policy, cap=cap, execute=False)
+    return _service(request, connection, owner).generate(owner.id, campaign_id, payload.branch_id, payload.action, idempotency_key=payload.idempotency_key, expected_checkpoint_id=payload.checkpoint_id, preview_id=payload.preview_id, mode=mode, policy=policy, cap=cap, execute=False)
 
 
 @router.get("/generation/jobs/by-key")
