@@ -28,8 +28,31 @@ Chưa có lý do để thêm vector DB, Redis, nhiều AI agent/NPC hoặc nativ
 - Chỉ năm lượt gần nhất của playrooom đã được đọc. Nhập phiên thật cần raw nội dung và người chơi duyệt hồ sơ/cảnh; không tự dựng toàn bộ quá khứ.
 - Routing code bắt buộc theo AGENTS: `gpt-5.6-luna`, medium, orchestrator review/verify. Model này không xuất hiện trong danh sách spawn đang công bố; phải xác nhận dispatch khi được yêu cầu triển khai, dừng nếu không khả dụng. Không đổi model ngầm.
 
+## Review vòng hai trước code
+
+Nguồn thay đổi: người dùng ưu tiên model mạnh khi có thể, cần tiếp tục chơi bằng free models, và muốn học cơ chế Whif/giọng kể playrooom. Repo trước vòng này chưa mô tả các lựa chọn đó đủ để coding agent hiện thực đúng.
+
+| ID | Mức | Vấn đề tìm thấy | Sửa và nhiệm vụ kiểm chứng |
+|---|---|---|---|
+| R9 | P1 | Keyword-only plan chưa thể hiện context director mạnh vừa được bàn | Thêm runtime policy, SelectionPlan được validate, hai mode; Task 2/3 kiểm tra ID/nguồn/mandatory và đúng stage counts. |
+| R10 | P1 | Free fallback chưa có quyền chi phí hoặc xử lý quota/model unavailable | Free-only/capped-paid độc lập mode, kiểm tra credential tier và pricing, không silent paid/provider fallback; Task 3/4/8 có quota/billing regressions. |
+| R11 | P1 | Đổi model có thể bị lẫn với đổi story state, ảnh hưởng memory/candidate | Tách settings_revision khỏi checkpoint truyện, job ghi role/profile snapshot; Task 3/6 kiểm tra switch không đổi canon/style/history. |
+| R12 | P1 | Output 4.000 dễ bị hiểu là 4.000 token truyện, không có quy tắc terminal refusal/max-token | Total-output accounting theo adapter; incomplete/refusal giữ draft; Task 3/4 test finish reasons/schema/hidden reasoning. |
+| R13 | P2 | Một cảnh phẳng và memory chung không phân biệt góc cảnh/kiến thức NPC | Focus/parallel scene và knowledge_scope/known_by có nguồn; Task 1/2/5/6 và model trial kiểm tra không teleport/biết chuyện chưa nghe. |
+| R14 | P2 | Event memory Whif và style playrooom còn ở chat, thiếu trong repo | Bổ sung reference và StyleProfile, pins/edit/tombstone/retrieval modes, dedup không làm mất pinned promise; task coverage matrix cụ thể. |
+| R15 | P2 | Phone trial, import và nghiệm thu model lẫn mức độ hoàn thành | Chỉnh README đúng task, giữ import đầy đủ ở Task 7; ghi số lượt thử thật, quality/economy cần benchmark riêng; chưa claim app/model pass. |
+| R16 | P2 | Logout bị diễn đạt “ngay” trong khi stream chỉ kiểm tra theo chu kỳ | Ghi đúng bound 15 giây cho stream, request mới chặn ngay; không hứa thu hồi bytes đã gửi. |
+| R17 | P1 | Quality/batch nhiều stage có thể nhân cost cap; đổi secret mutable có thể đổi billing tier của job cũ | Cap tổng parent/batch, preflight aggregate/remaining và credential version snapshot; Task 3 có pricing/tier/key/cost regressions. |
+| R18 | P1 | “Import atomic” có thể bị hiểu là giữ transaction SQLite xuyên nhiều AI calls | Tách raw import transaction ngắn và campaign importing, job chunk sau đó; checkpoint thủ công được, chuyển playable sau approve; Task 7 kiểm tra quota failure/progress. |
+| R19 | P1 | Restore một backup có job queued có thể dispatch lại việc đã chạy sau backup, gây gọi API trùng | Execution epoch mới và restored jobs không dispatchable kể cả queued; Task 7 kiểm tra tình huống backup-before-dispatch/restore. |
+| R20 | P1 | Ghim/approved scene cũ dễ bị xem là hiện tại tuyệt đối, đóng băng diễn biến mới đã chốt | Dynamic blocks có as-of cursor, pin không đóng băng giá trị; raw committed updates khác canon invariants; Task 2 test promise thay đổi và invariant không bị retcon. |
+
+Đã thêm [runtime AI contract](../specs/2026-10-12-runtime-ai-context-policy.md) và [style/evaluation reference](../../references/playrooom-style-and-evaluation.md), nối vào spec, plan, README và AGENTS. Mô tả kỹ thuật đã đối chiếu với tài liệu provider về schema, quota và output-token accounting; chưa có paid API trial.
+
+Model cụ thể vẫn là candidate, availability/cost phải xác minh khi cấu hình. Required coding model gpt-5.6-luna vẫn không được tool list hiện tại công bố; review không tự cho phép đổi model hay bắt đầu code với orchestrator.
+
 ## Kết quả review
 
-Các lỗi thiết kế xác định ở R1–R8 đã được sửa trong tài liệu. Plan có mốc để dựng/test lõi và thử trên điện thoại sớm. Đây chưa phải bằng chứng app giữ context tốt: cần test deterministic, thử model thật và nghiệm thu người chơi như plan quy định.
+Các lỗi thiết kế xác định ở R1–R20 đã được sửa trong tài liệu. Có coverage matrix cho từng yêu cầu và mốc dựng/test lõi, thử điện thoại rồi chơi dài. Chưa phát hiện thêm mâu thuẫn tài liệu trong lượt rà này; đây không phải bằng chứng app giữ context tốt. Vẫn cần deterministic tests, thử model thật, nghiệm thu người chơi và gate routing trước code.
 
 Đã kiểm tra cấu trúc task, liên kết spec, thuật ngữ/checkpoint/budget/Caddy và các regression scenario trong hai tài liệu. Không có test app, build, paid AI call hoặc production deploy nào được chạy trong lượt review tài liệu này.
