@@ -31,9 +31,7 @@ Ba role binding gồm `context_profile_id`, `narrator_profile_id`, `consolidatio
 - Free hết quota/model unavailable: giữ draft và state, báo lựa chọn đợi hoặc chọn profile khác. Không tự đổi provider, paid model hoặc mode. Nếu không còn model khả dụng, xem/sửa/lưu/xuất vẫn hoạt động nhưng không sinh truyện mới.
 - Model profile có cấu hình/giá/capability theo thời điểm; không hardcode availability hoặc quota trong logic app.
 
-Candidate để thử, chưa phải lựa chọn đã nghiệm thu: `gpt-6.1-sol` cho quality director/consolidator; đối chiếu `gpt-6-astra` nếu cần; Gemini API free-tier hoặc một OpenRouter free variant cụ thể cho economy/quality tùy capability. Không dùng router chọn ngẫu nhiên model cho chiến dịch vì dễ đổi giọng không rõ nguyên nhân. Snapshot/model ID, tier và capability thực phải kiểm tra tại lúc cấu hình.
-
-Nguồn hiện có: [OpenAI Sol](https://developers.openai.com/api/docs/models/gpt-6.1-sol), [Astra](https://developers.openai.com/api/docs/models/gpt-6-astra), [Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing), [Gemini quota](https://ai.google.dev/gemini-api/docs/rate-limits), [OpenRouter free variant](https://openrouter.ai/docs/guides/routing/model-variants/free). Các nguồn mô tả capability/giá, chưa chứng minh chất lượng roleplay tiếng Việt.
+Integration đã chọn là OpenRouter. Hai candidate kiểm tra metadata ngày 12/10/2026: nvidia/nemotron-3-super-120b-a12b:free và anthropic/claude-sonnet-4.6. Xem [đối chiếu endpoint và giá](../../references/openrouter-candidate-profiles.md). Đây là candidate cho thử nghiệm, chưa chứng minh chất lượng roleplay tiếng Việt hoặc eligibility của key người dùng. Không tự chọn model/paid mode; xác minh endpoint, credential version, capability và giá khi cấu hình.
 
 ## 3. Candidate pool và SelectionPlan
 
