@@ -27,6 +27,9 @@ Có thể xây một app riêng với các luồng chơi tương tự Whif. APK 
 | Nhân vật | `character-form-CvHy1Nt9.js` | Có trường nhân vật, tính cách, lời mở đầu, lorebook; lời mở đầu có prompt và điều kiện. |
 | Người chơi và dàn nhân vật | `persona-edit-page-BCHXUuJ_.js`, `chat-v2-create-group-page-C0UJ0E-P.js`, `chat-v2-room-page-B6f0nsh9.js` | Có persona người chơi và phòng nhiều nhân vật. |
 | Ghi nhớ | `memory-page-esvFZI0a.js` | Có sửa `summary_text`, yêu cầu AI tóm tắt, lựa chọn `full` và `recent20`. Không chứng minh được cách máy chủ chọn toàn bộ ngữ cảnh. |
+| Ký ức sự kiện | `memory-multiplier-slider-B8Y5TlJs.js`, `index-D0BwWbx2.js` | Có service list/edit/delete/pin, các mode auto/important_only/disabled và field lossless_restatement/keywords. |
+| Hướng dẫn ký ức | `resource-rest-CHVqvDJ8.js` | UI tiếng Việt mô tả tự lưu sự kiện, gọi lại tối đa 20 ký ức liên quan, ghim để luôn tham khảo và cửa sổ cũ để tránh lặp với phần gần đây. Đây là mô tả UI, không là chứng minh retrieval backend. |
+| Hệ số nhớ | `memory-multiplier-slider-B8Y5TlJs.js` | Slider có giá trị 1, 1.5, 2, 2.5, áp dụng theo phòng hoặc mọi phòng; có tính giá phía UI. Chưa xác định ý nghĩa token/window phía server. |
 | Lorebook | `lorebook.transformer-B5A1flxv.js` | Client gửi nội dung, từ khóa kích hoạt, trạng thái bật, cờ quan trọng và công khai. Chỉ xác nhận cấu trúc dữ liệu gửi đi. |
 | Trả lời và biến thể | `ai.client-HE4jkZeP.js`, `chat-v2-room-page-B6f0nsh9.js` | Có nhận trả lời theo stream, reroll, dữ liệu branch và lựa chọn branch. |
 | Trạng thái truyện | `chat-v2-room-page-B6f0nsh9.js` | Client xử lý HUD, cửa sổ trạng thái, lệnh playroom, gợi ý lượt tiếp và cờ hoàn thành scenario. |
@@ -34,6 +37,12 @@ Có thể xây một app riêng với các luồng chơi tương tự Whif. APK 
 | AI phía máy chủ | `ai.client-HE4jkZeP.js` | Client POST tin nhắn với Bearer token tới máy chủ LLM, gồm các route `/v2beta/chats` và `/v2alpha/narrative/chat/{roomId}`. |
 
 Các file JavaScript được liệt kê nằm dưới `whif/analysis/assets/public/assets/` trong workspace gốc `D:\Tool\platform-tools-latest-windows\platform-tools\mindgraph-apk`. Chúng là code đã bundle/minify, không phải source project gốc; các đường dẫn này không phải file trong repo Playroom.
+
+## Cơ chế bộ nhớ đáng tham khảo sau khi đọc sâu
+
+Whif client có cả tóm tắt hội thoại, event-memory riêng, ghim quan trọng và lorebook. UI mô tả ký ức cũ vẫn được gọi khi liên quan; các bản tiếng Nhật/Korean ghi chỉ gọi phần được trích từ trước 40 messages gần nhất để giảm lặp. Translation Việt diễn đạt cửa sổ này ít rõ hơn. Client lấy pin limit qua entitlement, fallback 20, nên không coi số 20 là invariant cho mọi account/mode.
+
+Điều mình học cho Playroom: lưu event có nguồn riêng khỏi summary, ghim dữ kiện, retrieval theo diễn biến, tránh gửi cùng sự kiện lặp cả trong raw recent/summary/event. Không sao chép máy móc giới hạn 20/40 hoặc multiplier. Chưa có chứng cứ backend dùng vector DB, model cụ thể, relevance formula hoặc prompt nào; các phần đó phải thiết kế và thử riêng.
 
 ## Đối chiếu với phiên chơi hiện tại
 
@@ -53,4 +62,4 @@ Bản đầu nên tập trung vào tạo thế giới và dàn nhân vật, pers
 
 Luồng dự kiến: hành động người chơi → chọn hồ sơ/lore liên quan và trạng thái cảnh → AI viết tiếp → lưu lượt trả lời và cập nhật dữ kiện. Dữ kiện do AI đề xuất phải có cách kiểm tra và sửa; không nên để tóm tắt tự động ghi đè sự kiện đã chốt mà người chơi không biết.
 
-Backend AI và cách chạy/lưu dữ liệu chưa được chọn. Chưa quyết định nhà cung cấp, model, chi phí hay hạ tầng. Việc chuyển toàn bộ phiên `playrooom` cần thêm lịch sử và hồ sơ đầu truyện; 5 lượt cuối chỉ đủ để hiểu mẫu chơi và một phần trạng thái hiện tại.
+Hạ tầng đã chọn trong thiết kế hiện tại: VPS của người dùng và Caddy. Provider/model runtime vẫn cần cấu hình và thử, với cả quality/economy và free-only policy; xem [runtime context policy](../superpowers/specs/2026-10-12-runtime-ai-context-policy.md). Việc chuyển toàn bộ phiên `playrooom` cần thêm lịch sử và hồ sơ đầu truyện; năm lượt cuối chỉ đủ để hiểu mẫu chơi và một phần trạng thái hiện tại. Xem [mẫu giọng kể và đánh giá](playrooom-style-and-evaluation.md).
