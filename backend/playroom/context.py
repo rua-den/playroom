@@ -244,7 +244,7 @@ def build_context_preview(connection: sqlite3.Connection, campaign_id: str, bran
     dependency_blocks = {}
     for block in optional_memory_blocks:
         memory = record_by_id[block["id"]]
-        dependency_blocks[block["id"]] = [{"id": profile["id"], "type": "character", "text": profile["text"], "source_ids": profile["source_ids"], "mandatory": False, "why": "Profile required by selected memory actor.", "dependent_memory_id": block["id"], "actor_id": actor_id} for actor_id in {*memory["entity_ids"], *memory["known_by"]} if (profile := profile_by_actor.get(actor_id)) is not None and profile["id"] not in selected_profile_ids]
+        dependency_blocks[block["id"]] = [{"id": profile["id"], "type": "character", "text": profile["text"], "source_ids": profile["source_ids"], "mandatory": False, "why": "Profile required by selected memory actor.", "dependent_memory_id": block["id"], "actor_id": actor_id} for actor_id in sorted({*memory["entity_ids"], *memory["known_by"]}) if (profile := profile_by_actor.get(actor_id)) is not None and profile["id"] not in selected_profile_ids]
     budget = evaluate_budget(required_blocks, budget_config, counter=context_counter, counter_id=counter_id)
     selected_block_ids = {block["id"] for block in required_blocks}
     if budget["fits"]:

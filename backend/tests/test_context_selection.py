@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 from uuid import uuid4
 
 import pytest
@@ -318,6 +321,55 @@ def test_optional_known_by_dependency_omits_memory_and_profile_while_required_co
     assert not any(block["type"] == "character" and story["mentioned"] in block["text"] for block in preview["blocks"])
     assert any(entry["id"] == memory.memory_id and "dependent actor profile" in entry["reason"] for entry in preview["omission_reasons"])
     assert any(entry.get("actor_id") == story["mentioned"] and "Dependent actor profile" in entry["reason"] for entry in preview["omission_reasons"])
+
+
+def test_multi_actor_optional_dependencies_are_deterministic_across_hash_seeds(story):
+    head = get_branch_head(story["connection"], story["campaign"].id, story["branch"])
+    memory = append_memory_version(
+        story["connection"],
+        story["campaign"].id,
+        story["branch"],
+        "lore",
+        "The archive has a sealed letter for Bao and Bex.",
+        origin="user",
+        expected_state_version=head.state_version,
+        source_revision_ids=[],
+        entity_ids=[story["mentioned"], story["ambiguous"]],
+    )
+    database_path = story["connection"].execute("PRAGMA database_list").fetchone()[2]
+    script = """
+import json
+import sys
+from playroom.context import build_context_preview
+from playroom.db import connect
+
+connection = connect(sys.argv[1])
+preview = build_context_preview(
+    connection,
+    sys.argv[2],
+    sys.argv[3],
+    "Tell me about the archive",
+    json.loads(sys.argv[4]),
+    owner_id=sys.argv[5],
+)
+print(json.dumps({"ids": [block["id"] for block in preview["blocks"]], "hash": preview["payload_hash"]}))
+"""
+    config = json.dumps(_model_config(), sort_keys=True)
+    results = []
+    for hash_seed in ("1", "2", "3", "4", "5", "6", "7", "8"):
+        environment = {**os.environ, "PYTHONHASHSEED": hash_seed}
+        result = subprocess.run(
+            [sys.executable, "-c", script, database_path, story["campaign"].id, story["branch"], config, story["owner"].id],
+            cwd=Path(__file__).parents[1],
+            env=environment,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        results.append(json.loads(result.stdout))
+    assert memory.memory_id in results[0]["ids"]
+    assert all(result["ids"] == results[0]["ids"] for result in results[1:])
+    assert all(result["hash"] == results[0]["hash"] for result in results[1:])
 
 
 def test_fixture_expectations_and_style_cases_drive_preview_assertions(story):
