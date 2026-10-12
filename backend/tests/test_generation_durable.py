@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import http.client
 import threading
 import time
 
 import pytest
+import uvicorn
 from fastapi.testclient import TestClient
 
 from playroom.auth import create_owner
@@ -27,6 +29,42 @@ def _story(tmp_path):
     owner = create_owner(db, "durable@example.test", "durable password")
     campaign = create_campaign(db, owner.id, "Durable", {"name": "World"}, [], {"name": "Player"})
     return db, owner, campaign
+
+
+def _start_local_http(app):
+    """Run the ASGI app on an ephemeral loopback port for streaming tests."""
+    config = uvicorn.Config(app, host="127.0.0.1", port=0, log_level="error", access_log=False, lifespan="on")
+    server = uvicorn.Server(config)
+    server.install_signal_handlers = lambda: None
+    thread = threading.Thread(target=server.run, name="playroom-test-uvicorn", daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 5
+    while not server.started and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert server.started and server.servers
+    port = server.servers[0].sockets[0].getsockname()[1]
+    return server, thread, port
+
+
+def _stop_local_http(server, thread):
+    server.should_exit = True
+    thread.join(5)
+    assert not thread.is_alive()
+
+
+def _http_request(connection, method, path, *, cookie=None, body=None):
+    headers = {"Host": "127.0.0.1", "Origin": "http://127.0.0.1"}
+    payload = None
+    if body is not None:
+        payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    if cookie:
+        headers["Cookie"] = cookie
+    connection.request(method, path, body=payload, headers=headers)
+    response = connection.getresponse()
+    raw = response.read()
+    value = json.loads(raw.decode("utf-8")) if raw else None
+    return response.status, response.getheaders(), value
 
 
 def test_quality_dispatches_real_director_then_narrator_and_saves_context_run(tmp_path):
@@ -245,6 +283,51 @@ def test_http_request_only_reserves_and_runtime_finishes_without_request_lifetim
         lookup = client.get(f"/api/generation/jobs/by-key?branch_id={campaign.initial_branch_id}&idempotency_key=http-1")
         assert lookup.status_code == 200
         assert lookup.json()["id"] == job_id
+
+
+@pytest.mark.parametrize("mode", ["economy", "quality"])
+def test_local_http_lost_response_runs_each_mode_once(tmp_path, mode):
+    database = tmp_path / f"lost-{mode}.sqlite3"
+    db = connect(database)
+    migrate(db)
+    owner = create_owner(db, f"lost-{mode}@example.test", "lost response password")
+    campaign = create_campaign(db, owner.id, f"Lost {mode}", {"name": "World"}, [], {"name": "Player"})
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    if mode == "quality":
+        pool = build_candidate_pool(db, campaign.id, campaign.initial_branch_id, "Look", checkpoint_id=head.checkpoint_id, owner_id=owner.id)
+        plan = {"checkpoint_id": pool["checkpoint_id"], "action_hash": pool["action_hash"], "selected_memory_ids": [], "reasons": {}, "reason_sources": {}, "scene_ids": pool["scene_ids"], "conflict_flags": []}
+        provider = FakeProvider([json.dumps(plan), "HTTP quality result"])
+    else:
+        provider = FakeProvider(["HTTP economy result"])
+    app = create_app(database_url=str(database), allowed_hosts={"127.0.0.1"}, secure_cookies=False, generation_provider=provider, credential_root=tmp_path / "secrets")
+    server, server_thread, port = _start_local_http(app)
+    try:
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        status, headers, _ = _http_request(connection, "POST", "/api/auth/login", body={"email": owner.email, "password": "lost response password"})
+        assert status == 200
+        cookie = next(value.split(";", 1)[0] for key, value in headers if key.casefold() == "set-cookie")
+        connection.close()
+
+        dropped = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        request_body = {"branch_id": campaign.initial_branch_id, "action": "Look", "idempotency_key": f"lost-{mode}", "checkpoint_id": head.checkpoint_id, "mode": mode}
+        dropped.request("POST", f"/api/campaigns/{campaign.id}/generate", body=json.dumps(request_body).encode(), headers={"Host": "127.0.0.1", "Origin": "http://127.0.0.1", "Cookie": cookie, "Content-Type": "application/json"})
+        response = dropped.getresponse()
+        assert response.status == 201
+        response.close()
+        dropped.close()
+
+        current = None
+        for _ in range(100):
+            poll = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            status, _, current = _http_request(poll, "GET", f"/api/generation/jobs/by-key?branch_id={campaign.initial_branch_id}&idempotency_key=lost-{mode}", cookie=cookie)
+            poll.close()
+            if status == 200 and current["status"] == "candidate":
+                break
+            time.sleep(0.05)
+        assert current and current["status"] == "candidate"
+        assert provider.stage_counts == ({"narration": 1} if mode == "economy" else {"context": 1, "narration": 1})
+    finally:
+        _stop_local_http(server, server_thread)
 
 
 class _BlockingDirector(ProviderAdapter):
@@ -746,3 +829,179 @@ def test_authenticated_sse_stream_replays_events_with_resume_cursor(tmp_path):
             resumed_text = "".join(resumed.iter_text())
             assert "event: reserved" not in resumed_text
             assert "event: completed" in resumed_text
+
+
+def test_local_http_sse_reconstructs_vietnamese_astral_text_and_resumes(tmp_path):
+    database = tmp_path / "sse-unicode.sqlite3"
+    db = connect(database)
+    migrate(db)
+    owner = create_owner(db, "sse-unicode@example.test", "sse unicode password")
+    campaign = create_campaign(db, owner.id, "SSE Unicode", {"name": "World"}, [], {"name": "Player"})
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    text = "Xin chào 👋 — tiếp tục"
+    provider = FakeProvider([text])
+    app = create_app(database_url=str(database), allowed_hosts={"127.0.0.1"}, secure_cookies=False, generation_provider=provider, credential_root=tmp_path / "secrets")
+    server, server_thread, port = _start_local_http(app)
+    try:
+        login = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        status, headers, _ = _http_request(login, "POST", "/api/auth/login", body={"email": owner.email, "password": "sse unicode password"})
+        assert status == 200
+        cookie = next(value.split(";", 1)[0] for key, value in headers if key.casefold() == "set-cookie")
+        login.close()
+        submit = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        body = {"branch_id": campaign.initial_branch_id, "action": "Look", "idempotency_key": "sse-unicode", "checkpoint_id": head.checkpoint_id}
+        status, _, current = _http_request(submit, "POST", f"/api/campaigns/{campaign.id}/generate", cookie=cookie, body=body)
+        assert status == 201
+        submit.close()
+        job_id = current["id"]
+        for _ in range(100):
+            poll = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            status, _, current = _http_request(poll, "GET", f"/api/generation/jobs/{job_id}", cookie=cookie)
+            poll.close()
+            if current["status"] == "candidate":
+                break
+            time.sleep(0.05)
+        assert current["status"] == "candidate"
+
+        stream = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        stream.request("GET", f"/api/generation/jobs/{job_id}/events/stream", headers={"Host": "127.0.0.1", "Cookie": cookie})
+        response = stream.getresponse()
+        raw = response.read()
+        response.close()
+        stream.close()
+        decoded = raw.decode("utf-8")
+        frames = [json.loads(line.removeprefix("data: ")) for line in decoded.splitlines() if line.startswith("data: ")]
+        assert "event: delta" in decoded
+        assert "".join(frame["content"] for frame in frames if frame["event_type"] == "delta") == text
+
+        events_connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        status, _, event_payload = _http_request(events_connection, "GET", f"/api/generation/jobs/{job_id}/events", cookie=cookie)
+        events_connection.close()
+        assert status == 200
+        first_cursor = event_payload["events"][0]["id"]
+        resumed = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        resumed.request("GET", f"/api/generation/jobs/{job_id}/events/stream?after={first_cursor}", headers={"Host": "127.0.0.1", "Cookie": cookie})
+        resumed_response = resumed.getresponse()
+        resumed_text = resumed_response.read().decode("utf-8")
+        resumed_response.close()
+        resumed.close()
+        assert "event: reserved" not in resumed_text
+        assert "event: completed" in resumed_text
+        assert provider.stage_counts == {"narration": 1}
+    finally:
+        _stop_local_http(server, server_thread)
+
+
+def test_local_http_active_sse_disconnect_does_not_resend_provider(tmp_path):
+    database = tmp_path / "sse-disconnect.sqlite3"
+    db = connect(database)
+    migrate(db)
+    owner = create_owner(db, "sse-disconnect@example.test", "sse disconnect password")
+    campaign = create_campaign(db, owner.id, "SSE disconnect", {"name": "World"}, [], {"name": "Player"})
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    provider = _BlockingNarrator()
+    app = create_app(database_url=str(database), allowed_hosts={"127.0.0.1"}, secure_cookies=False, generation_provider=provider, credential_root=tmp_path / "secrets")
+    server, server_thread, port = _start_local_http(app)
+    sse = None
+    try:
+        login = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        status, headers, _ = _http_request(login, "POST", "/api/auth/login", body={"email": owner.email, "password": "sse disconnect password"})
+        assert status == 200
+        cookie = next(value.split(";", 1)[0] for key, value in headers if key.casefold() == "set-cookie")
+        login.close()
+        submit = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        body = {"branch_id": campaign.initial_branch_id, "action": "Look", "idempotency_key": "sse-disconnect", "checkpoint_id": head.checkpoint_id}
+        status, _, current = _http_request(submit, "POST", f"/api/campaigns/{campaign.id}/generate", cookie=cookie, body=body)
+        submit.close()
+        assert status == 201
+        job_id = current["id"]
+        assert provider.started.wait(2)
+        sse = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        sse.request("GET", f"/api/generation/jobs/{job_id}/events/stream", headers={"Host": "127.0.0.1", "Cookie": cookie})
+        response = sse.getresponse()
+        assert response.status == 200
+        assert response.readline().startswith(b"id:")
+        response.close()
+        sse.close()
+        sse = None
+        provider.release.set()
+        for _ in range(100):
+            poll = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            status, _, current = _http_request(poll, "GET", f"/api/generation/jobs/{job_id}", cookie=cookie)
+            poll.close()
+            if current["status"] == "candidate":
+                break
+            time.sleep(0.05)
+        assert current["status"] == "candidate"
+        assert provider.calls == 1
+    finally:
+        if sse is not None:
+            sse.close()
+        provider.release.set()
+        _stop_local_http(server, server_thread)
+
+
+def test_local_http_session_revocation_ends_active_sse_without_private_bytes(tmp_path):
+    database = tmp_path / "sse-revoke.sqlite3"
+    db = connect(database)
+    migrate(db)
+    owner = create_owner(db, "sse-revoke@example.test", "sse revoke password")
+    campaign = create_campaign(db, owner.id, "SSE revoke", {"name": "World"}, [], {"name": "Player"})
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    provider = _BlockingNarrator()
+    app = create_app(database_url=str(database), allowed_hosts={"127.0.0.1"}, secure_cookies=False, generation_provider=provider, credential_root=tmp_path / "secrets")
+    server, server_thread, port = _start_local_http(app)
+    sse = None
+    response = None
+    try:
+        login = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        status, headers, _ = _http_request(login, "POST", "/api/auth/login", body={"email": owner.email, "password": "sse revoke password"})
+        assert status == 200
+        cookie = next(value.split(";", 1)[0] for key, value in headers if key.casefold() == "set-cookie")
+        login.close()
+        submit = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        body = {"branch_id": campaign.initial_branch_id, "action": "Look", "idempotency_key": "sse-revoke", "checkpoint_id": head.checkpoint_id}
+        status, _, current = _http_request(submit, "POST", f"/api/campaigns/{campaign.id}/generate", cookie=cookie, body=body)
+        submit.close()
+        assert status == 201
+        job_id = current["id"]
+        assert provider.started.wait(2)
+
+        sse = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        sse.request("GET", f"/api/generation/jobs/{job_id}/events/stream", headers={"Host": "127.0.0.1", "Cookie": cookie})
+        response = sse.getresponse()
+        assert response.status == 200
+        chunks = [response.readline()]
+        reader_done = threading.Event()
+
+        def read_until_revoked():
+            try:
+                while True:
+                    line = response.readline()
+                    if not line:
+                        return
+                    chunks.append(line)
+                    if b"event: session_expired" in line:
+                        return
+            finally:
+                reader_done.set()
+
+        reader = threading.Thread(target=read_until_revoked, name="playroom-test-sse-reader", daemon=True)
+        reader.start()
+        revoke = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        status, _, _ = _http_request(revoke, "POST", "/api/auth/logout", cookie=cookie)
+        revoke.close()
+        assert status == 204
+        assert reader_done.wait(5)
+        wire = b"".join(chunks)
+        marker = b"event: session_expired"
+        assert marker in wire
+        assert b"late narrator" not in wire[wire.index(marker):]
+        provider.release.set()
+    finally:
+        if response is not None:
+            response.close()
+        if sse is not None:
+            sse.close()
+        provider.release.set()
+        _stop_local_http(server, server_thread)
