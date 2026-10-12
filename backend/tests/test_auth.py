@@ -135,4 +135,3 @@ def test_authenticated_campaign_and_memory_lifecycle_api(tmp_path):
     assert len(client.get(f"/api/campaigns/{campaign['id']}/memory?branch_id={branch}").json()) == 1
     archived = client.post(f"/api/campaigns/{campaign['id']}/archive", json={"branch_id": branch, "expected_state_version": 5}, headers=headers)
     assert archived.status_code == 200
-
