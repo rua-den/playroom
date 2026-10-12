@@ -230,7 +230,44 @@ def test_context_preview_normal_path_uses_owned_persisted_role_profile(story):
     response = client.post(f"/api/campaigns/{story['campaign'].id}/context/previews", json={"branch_id": story["branch"], "action": "Remember the milk promise", "profile_id": profile["id"]}, headers={"origin": "https://testserver"})
     assert response.status_code == 201, response.text
     assert response.json()["profile_id"] == profile["id"]
-    assert response.json()["budget"]["input_limit"] == 16384
+    assert response.json()["budget"]["input_limit"] == 12000
+
+
+def test_economy_preview_uses_narrator_role_when_context_role_is_unbound(story):
+    from fastapi.testclient import TestClient
+    from playroom.app import create_app
+    from playroom.auth import create_session
+    from playroom.model_profiles import persist_model_profile
+    from playroom.settings import save_owner_settings
+
+    profile = persist_model_profile(story["connection"], story["owner"].id, {
+        "id": "owned-narrator-only",
+        "provider": "openrouter",
+        "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+        "model": "example/narrator",
+        "context_limit": 32768,
+        "output_limit": 4096,
+        "credential_tier": "free",
+        "pricing_verified": True,
+        "secret_version": "credential-v1",
+    })
+    save_owner_settings(story["connection"], story["owner"].id, {
+        "roles": {"narrator": {"id": profile["id"], "version": profile["version"]}},
+        "mode": "economy",
+        "policy": "free_only",
+    })
+    path = story["connection"].execute("PRAGMA database_list").fetchone()[2]
+    app = create_app(database_url=path, allowed_hosts={"testserver"}, secure_cookies=False)
+    client = TestClient(app, base_url="https://testserver")
+    client.cookies.set("playroom_session", create_session(story["connection"], story["owner"].id))
+    response = client.post(
+        f"/api/campaigns/{story['campaign'].id}/context/previews",
+        json={"branch_id": story["branch"], "action": "Remember the milk promise", "profile_id": profile["id"]},
+        headers={"origin": "https://testserver"},
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["profile_id"] == profile["id"]
+    assert response.json()["budget"]["input_limit"] == 12000
 
 
 def test_noncontiguous_summary_never_replaces_raw_turns_and_missing_limits_block(story):

@@ -104,13 +104,24 @@ class PhysicalAttemptRegistry:
                     except TypeError:
                         values.put(result)
                     else:
-                        first = True
-                        for item in iterator:
-                            if first and invocation_gate is not None and not invocation_gate(handle):
+                        # ``generate_text`` may return a lazy iterator whose
+                        # first ``next`` opens the provider connection.  Keep
+                        # the durable gate immediately before every advance;
+                        # a gate that changes after iterator creation must
+                        # prevent that first physical side effect.
+                        while True:
+                            if cancel_event.is_set() or time.monotonic() >= deadline:
                                 handle.cancel()
                                 values.put(ProviderFailure("CANCELLED", "Generation attempt is no longer active"))
                                 return
-                            first = False
+                            if invocation_gate is not None and not invocation_gate(handle):
+                                handle.cancel()
+                                values.put(ProviderFailure("CANCELLED", "Generation attempt is no longer active"))
+                                return
+                            try:
+                                item = next(iterator)
+                            except StopIteration:
+                                return
                             values.put(item)
             except Exception:
                 values.put(ProviderFailure("PROVIDER_ERROR", "Provider execution failed"))
@@ -125,7 +136,7 @@ class PhysicalAttemptRegistry:
         handle = self._start(key, provider, request, timeout, lambda selected: selected.generate_structured(request, schema), provider_factory=provider_factory, invocation_gate=invocation_gate, pre_invocation_gate=pre_invocation_gate)
         deadline = time.monotonic() + timeout
         while True:
-            if handle.cancel_event.is_set():
+            if handle.cancel_event.is_set() and handle.queue.empty():
                 handle.cancel()
                 raise TimeoutError("cancelled")
             remaining = deadline - time.monotonic()
@@ -146,7 +157,7 @@ class PhysicalAttemptRegistry:
         handle = self._start(key, provider, request, timeout, lambda selected: selected.generate_text(request), provider_factory=provider_factory, invocation_gate=invocation_gate, pre_invocation_gate=pre_invocation_gate)
         deadline = time.monotonic() + timeout
         while True:
-            if handle.cancel_event.is_set():
+            if handle.cancel_event.is_set() and handle.queue.empty():
                 handle.cancel()
                 raise TimeoutError("cancelled")
             remaining = deadline - time.monotonic()

@@ -9,7 +9,7 @@ handles (events, locks and provider instances) never enter the wire hash.
 
 import hashlib
 import json
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Callable
 
 from .domain import ValidationError
@@ -116,3 +116,60 @@ def count_provider_wire(request: dict, profile: dict, *, schema: dict | None = N
 
 def stage_cost(profile: dict, input_tokens: int, output_tokens: int) -> Decimal:
     return estimate_cost_usd(profile, input_tokens, output_tokens)
+
+
+def valid_cost(value) -> Decimal | None:
+    """Normalize a provider or ledger USD value without trusting junk data."""
+    try:
+        result = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    return result if result.is_finite() and result >= 0 else None
+
+
+def provider_reported_cost(usage: dict | None) -> Decimal | None:
+    """Read only an explicitly provider-reported billing amount.
+
+    Token usage is not billing.  Providers may expose one of these common
+    names in their usage metadata; anything else remains unknown and falls
+    back to the conservative reservation.
+    """
+    if not isinstance(usage, dict):
+        return None
+    for key in ("provider_cost_usd", "billing_cost_usd", "cost_usd", "cost"):
+        if key in usage:
+            value = valid_cost(usage.get(key))
+            if value is not None:
+                return value
+    return None
+
+
+def calculated_usage_cost(profile: dict, usage: dict | None) -> Decimal | None:
+    """Calculate a local price-times-usage value with explicit provenance."""
+    if not isinstance(usage, dict):
+        return None
+    input_tokens = usage.get("input_tokens", usage.get("prompt_tokens"))
+    output_tokens = usage.get("output_tokens", usage.get("completion_tokens"))
+    if input_tokens is None or output_tokens is None:
+        return None
+    try:
+        input_tokens, output_tokens = int(input_tokens), int(output_tokens)
+    except (TypeError, ValueError):
+        return None
+    if input_tokens < 0 or output_tokens < 0:
+        return None
+    try:
+        return valid_cost(stage_cost(profile, input_tokens, output_tokens))
+    except (TypeError, ValueError, ValidationError):
+        return None
+
+
+def conservative_ledger_cost(entry: dict) -> Decimal | None:
+    """Choose the most trustworthy known amount, retaining a reservation."""
+    if not isinstance(entry, dict):
+        return None
+    for key in ("provider_reported_cost_usd", "calculated_cost_usd", "estimated_cost_usd"):
+        value = valid_cost(entry.get(key))
+        if value is not None:
+            return value
+    return None

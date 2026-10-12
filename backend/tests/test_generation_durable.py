@@ -41,6 +41,35 @@ def test_quality_dispatches_real_director_then_narrator_and_saves_context_run(tm
     assert job["attempts"] == ["context", "narration"]
     assert provider.stage_counts == {"context": 1, "narration": 1}
     assert db.execute("SELECT COUNT(*) FROM context_runs").fetchone()[0] == 1
+    attempts = db.execute("SELECT stage, status, output_text, usage_json FROM provider_attempts WHERE generation_job_id=? ORDER BY stage", (job["id"],)).fetchall()
+    assert [(row["stage"], row["status"]) for row in attempts] == [("context", "completed"), ("narration", "completed")]
+    assert json.loads(attempts[0]["output_text"])["selected_memory_ids"] == []
+    assert json.loads(attempts[0]["usage_json"])
+    assert db.execute("SELECT COUNT(*) FROM provider_attempts WHERE status='dispatched'").fetchone()[0] == 0
+
+
+def test_multiple_quality_jobs_release_all_global_capacity(tmp_path):
+    db, owner, _ = _story(tmp_path)
+    for index in range(3):
+        campaign = create_campaign(db, owner.id, f"Quality {index}", {"name": "World"}, [], {"name": "Player"})
+        head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+        pool = build_candidate_pool(db, campaign.id, campaign.initial_branch_id, "Look", checkpoint_id=head.checkpoint_id, owner_id=owner.id)
+        plan = {
+            "checkpoint_id": pool["checkpoint_id"],
+            "action_hash": pool["action_hash"],
+            "selected_memory_ids": [],
+            "reasons": {},
+            "reason_sources": {},
+            "scene_ids": pool["scene_ids"],
+            "conflict_flags": [],
+        }
+        provider = FakeProvider([json.dumps(plan), f"Narrator output {index}."])
+        service = GenerationService(db, provider, profile={"roles": {"context": {**DEFAULT_PROFILE, "id": f"director-{index}"}, "narrator": DEFAULT_PROFILE}})
+        job = service.generate(owner.id, campaign.id, campaign.initial_branch_id, "Look", idempotency_key=f"quality-capacity-{index}", expected_checkpoint_id=head.checkpoint_id, mode="quality")
+        assert job["status"] == "candidate"
+        assert [attempt["status"] for attempt in job["attempt_details"]] == ["completed", "completed"]
+    assert db.execute("SELECT COUNT(*) FROM provider_attempts WHERE status='dispatched'").fetchone()[0] == 0
+    assert db.execute("SELECT COUNT(*) FROM generation_branch_guards").fetchone()[0] == 0
 
 
 def test_quality_schema_failure_never_calls_narrator(tmp_path):

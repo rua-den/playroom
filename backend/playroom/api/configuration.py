@@ -85,22 +85,36 @@ def settings(connection: sqlite3.Connection = Depends(request_connection), owner
 @router.put("/settings")
 def update_settings(payload: SettingsRequest, connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
     existing = get_owner_settings(connection, owner.id)
-    narrator_id = payload.narrator_profile_id or ((existing.get("roles") or {}).get("narrator") or {}).get("id")
+    existing_roles = existing.get("roles") or {}
+    narrator_binding = existing_roles.get("narrator") or {}
+    narrator_id = payload.narrator_profile_id or narrator_binding.get("id")
     if not narrator_id:
         raise ValidationError("A narrator profile is required")
-    narrator_profile = get_model_profile(connection, owner.id, narrator_id)
+
+    def load_binding(role: str, requested_id: str | None):
+        previous = existing_roles.get(role) or {}
+        profile_id = requested_id or previous.get("id")
+        if not profile_id:
+            return None
+        # A budget/mode-only update keeps the exact immutable version already
+        # selected.  An explicit profile id is the user's intentional switch
+        # and may resolve the latest verified version for that id.
+        version = None if requested_id else previous.get("version")
+        return get_model_profile(connection, owner.id, profile_id, version)
+
+    narrator_profile = load_binding("narrator", payload.narrator_profile_id)
     def binding(profile):
         return {"id": profile["id"], "version": profile["version"], "profile_hash": profile.get("profile_hash") or profile_hash({key: value for key, value in profile.items() if key not in {"version", "profile_hash"}})}
     roles = {"narrator": binding(narrator_profile)}
-    context_id = payload.context_profile_id or ((existing.get("roles") or {}).get("context") or {}).get("id")
+    context_id = payload.context_profile_id or ((existing_roles.get("context") or {}).get("id"))
     if context_id:
-        context_profile = get_model_profile(connection, owner.id, context_id)
+        context_profile = load_binding("context", payload.context_profile_id)
         if not context_profile.get("structured_output") or not context_profile.get("native_structured_output") or not context_profile.get("structured_schema_parameter"):
             raise ValidationError("Context role requires native strict schema support")
         roles["context"] = binding(context_profile)
-    consolidation_id = payload.consolidation_profile_id or ((existing.get("roles") or {}).get("consolidation") or {}).get("id")
+    consolidation_id = payload.consolidation_profile_id or ((existing_roles.get("consolidation") or {}).get("id"))
     if consolidation_id:
-        consolidation_profile = get_model_profile(connection, owner.id, consolidation_id)
+        consolidation_profile = load_binding("consolidation", payload.consolidation_profile_id)
         if not consolidation_profile.get("structured_output") or not consolidation_profile.get("native_structured_output") or not consolidation_profile.get("structured_schema_parameter"):
             raise ValidationError("Consolidation role requires native strict schema support")
         roles["consolidation"] = binding(consolidation_profile)

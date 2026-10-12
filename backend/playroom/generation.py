@@ -11,7 +11,7 @@ import json
 import logging
 import sqlite3
 import time
-from threading import Event
+from threading import Event, RLock
 from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import uuid4
@@ -30,9 +30,12 @@ from .timeline import _create_committed_revision_in_transaction, get_branch_head
 from .attempt_runtime import PhysicalAttemptRegistry
 from .wire_cost import (
     DEFAULT_COUNTER_ID,
+    calculated_usage_cost,
     count_provider_wire,
+    conservative_ledger_cost,
     effective_input_cap,
     normalized_budget,
+    provider_reported_cost,
     stage_cost,
 )
 
@@ -100,6 +103,11 @@ class GenerationService:
         self._context_counter = context_counter
         self._context_counter_id = context_counter_id
         self._attempt_cancel_events: dict[str, Event] = {}
+        # Provider worker callbacks and the request/worker thread share one
+        # SQLite connection in local execution.  Serialize the small durable
+        # claim/output transitions so a lazy stream advance cannot interleave
+        # a cursor or transaction with a main-thread append.
+        self._db_lock = RLock()
         self._ensure_tables()
 
     def _ensure_tables(self) -> None:
@@ -161,7 +169,11 @@ class GenerationService:
         return settings, {"narrator": _copy(narrator), "context": _copy(roles.get("context") or narrator)}
 
     def _epoch(self) -> str:
-        return self.connection.execute("SELECT epoch FROM execution_epochs WHERE id=1").fetchone()["epoch"]
+        with self._db_lock:
+            row = self.connection.execute("SELECT epoch FROM execution_epochs WHERE id=1").fetchone()
+            if row is None:
+                raise RuntimeError("Execution epoch is unavailable")
+            return row["epoch"]
 
     def _reservation(self, profiles: dict, mode: str, policy: str, cap, settings: dict | None = None) -> dict:
         settings = settings or self.settings
@@ -188,6 +200,12 @@ class GenerationService:
                 "reserved_input_tokens": input_tokens,
                 "reserved_output_tokens": output_tokens,
                 "estimated_cost_usd": str(estimate_cost_usd(profile, input_tokens, output_tokens)),
+                "estimated_status": "estimated",
+                "provider_reported_cost_usd": None,
+                "provider_reported_status": "unknown",
+                "calculated_cost_usd": None,
+                "calculated_status": "unknown",
+                "cost_provenance": "estimated",
                 "actual_cost_usd": None,
                 "actual_status": "unknown",
                 "usage": None,
@@ -379,15 +397,32 @@ class GenerationService:
         omissions = list(pool.get("omission_reasons", []))
         optional = list(pool.get("optional", []))
         included = []
+
+        def add_omission(item, reason):
+            entry = {"id": item.get("id"), "reason": reason}
+            if entry not in omissions:
+                omissions.append(entry)
+
+        def trial_metadata(items):
+            payload = _copy(base_payload)
+            payload["candidate_pool"]["optional"] = list(items)
+            payload["candidate_pool"]["omission_reasons"] = list(omissions)
+            return self._wire_metadata(make_request(payload), profile, schema=schema, role="context", budget=budget)
+
         for item in optional:
-            trial_payload = _copy(base_payload)
-            trial_payload["candidate_pool"]["optional"] = [*included, item]
-            trial_request = make_request(trial_payload)
-            trial_meta = self._wire_metadata(trial_request, profile, schema=schema, role="context", budget=budget)
+            trial_meta = trial_metadata([*included, item])
             if trial_meta["fits"]:
                 included.append(item)
             else:
-                omissions.append({"id": item.get("id"), "reason": "Optional director candidate omitted to fit the context role wire budget."})
+                add_omission(item, "Optional director candidate omitted to fit the context role wire budget.")
+            # Omission metadata is part of the counted user wire.  If adding
+            # its reason made the final request too large, evict the least
+            # recently included optional item and record that eviction too.
+            while not trial_metadata(included)["fits"]:
+                if not included:
+                    raise ValidationError("Required director context exceeds the configured input budget")
+                removed = included.pop()
+                add_omission(removed, "Optional director candidate omitted to fit the context role wire budget.")
         payload = _copy(base_payload)
         payload["candidate_pool"]["optional"] = included
         payload["candidate_pool"]["omission_reasons"] = omissions
@@ -444,26 +479,48 @@ class GenerationService:
             raise ValidationError("Required narrator context exceeds the configured input budget")
         selected = list(required)
         omissions = list(preview.get("omission_reasons", []))
-        optional_units = []
-        consumed = set()
-        for block in optional:
-            if block.get("id") in consumed or block.get("dependent_memory_id"):
-                continue
+        selected_ids = {block.get("id") for block in selected}
+        memory_blocks = [block for block in optional if block.get("type") == "memory"]
+        actor_blocks = [block for block in optional if block.get("type") == "character" and (block.get("required_by_memory_ids") or block.get("dependent_memory_id"))]
+        other_blocks = [block for block in optional if block not in memory_blocks and block not in actor_blocks]
+        actor_by_memory = {}
+        for actor in actor_blocks:
+            references = actor.get("required_by_memory_ids") or [actor.get("dependent_memory_id")]
+            for memory_id in references:
+                actor_by_memory.setdefault(memory_id, []).append(actor)
+
+        # Fit each memory together with any actor profiles it depends on. A
+        # shared actor is attached to every dependent memory logically, but is
+        # emitted once. Thus dropping one reference cannot orphan the profile
+        # while dropping all references removes it from the wire entirely.
+        for block in memory_blocks:
             unit = [block]
-            unit.extend(child for child in optional if child.get("dependent_memory_id") == block.get("id"))
-            consumed.update(item.get("id") for item in unit)
-            optional_units.append(unit)
-        optional_units.extend([[block] for block in optional if block.get("id") not in consumed])
-        # Remove complete optional units from least-relevant/latest first. A
-        # dependent actor profile is removed with its memory.
-        for unit in optional_units:
+            for actor in actor_by_memory.get(block.get("id"), []):
+                if actor.get("id") not in selected_ids:
+                    unit.append(actor)
             trial = make_request([*selected, *unit])
             trial_meta = self._wire_metadata(trial, profile, role="narrator", budget=budget)
             if trial_meta["fits"]:
                 selected.extend(unit)
+                selected_ids.update(item.get("id") for item in unit)
             else:
                 for block in unit:
                     omissions.append({"id": block.get("id"), "reason": "Optional narrator block and its dependent profile omitted to fit the final provider wire budget."})
+        for block in other_blocks:
+            if block.get("id") in selected_ids:
+                continue
+            trial = make_request([*selected, block])
+            trial_meta = self._wire_metadata(trial, profile, role="narrator", budget=budget)
+            if trial_meta["fits"]:
+                selected.append(block)
+                selected_ids.add(block.get("id"))
+            else:
+                omissions.append({"id": block.get("id"), "reason": "Optional narrator block and its dependent profile omitted to fit the final provider wire budget."})
+        for actor in actor_blocks:
+            if actor.get("id") not in selected_ids:
+                reason = "Dependent actor profile omitted because all associated optional memories were omitted."
+                if not any(item.get("id") == actor.get("id") and item.get("reason") == reason for item in omissions):
+                    omissions.append({"id": actor.get("id"), "reason": reason})
         request = make_request(selected)
         metadata = self._wire_metadata(request, profile, role="narrator", budget=budget)
         if not metadata["fits"]:
@@ -515,12 +572,15 @@ class GenerationService:
         saved_context = job["final_context_json"] if "final_context_json" in job.keys() else None
         director_request = None
         director_meta = None
+        director_key = None
+        director_result = None
         if job["mode"] == "quality" and context_attempt and context_attempt["status"] == "completed" and saved_context:
             final_preview = json.loads(saved_context)
         elif job["mode"] == "quality":
             director_request, director_meta, director_omissions, bounded_pool = self._director_request(job, pool, context, settings)
             self._check_dispatch(job, context, narrator, preview, aggregate=True, stage_meta=director_meta, stage="context")
             key = f"{job['id']}:context"
+            director_key = key
             self._insert_attempt(job, "context", key, director_meta["payload_hash"], context, director_request)
             if not self._mark_dispatched(key):
                 raise _ProviderError(ProviderFailure("CANCELLED", "Generation attempt was claimed by another worker"))
@@ -571,8 +631,7 @@ class GenerationService:
             final_preview = self._pack_selected(preview, plan, narrator, director_selected_only=True)
             final_preview["omission_reasons"] = [*final_preview.get("omission_reasons", []), *[item for item in director_omissions if item not in final_preview.get("omission_reasons", [])]]
             director_meta["usage"] = result.usage or {"status": "unknown"}
-            self._record_usage(job["id"], "context", result)
-            self._event(job["id"], "context", "phase_changed", None, "", {"phase": "context_completed", "selected_memory_ids": plan["selected_memory_ids"]})
+            director_result = result
         else:
             final_preview = self._pack_selected(preview, plan, narrator)
         final_preview, narrator_request, narrator_meta = self._narrator_request(job, narrator, final_preview, settings)
@@ -584,8 +643,24 @@ class GenerationService:
                 narrator_meta = dict(persisted_request.get("wire_metadata") or {})
                 narrator_meta["wire"] = persisted_request.get("prepared_wire")
                 narrator_meta.setdefault("payload_hash", final_preview.get("payload_hash"))
-        self._check_dispatch(job, context, narrator, final_preview, aggregate=False, stage_meta=narrator_meta, stage="narration")
-        self._save_context_run(job, final_preview, director_meta, narrator_meta)
+        if director_result is not None:
+            # The validated selection, immutable final context, usage ledger,
+            # and completed director attempt form one durable boundary.  The
+            # narrator claim is made only after this transaction commits, so
+            # a cancel/restart cannot leave a successful director disguised
+            # as dispatched or let a late writer advance the next stage.
+            with transaction(self.connection):
+                self._require_active(director_key, job["id"])
+                self._record_usage(job["id"], "context", director_result)
+                self._save_context_run(job, final_preview, director_meta, narrator_meta)
+                changed = self._finish_attempt(director_key, "completed", director_result, director_result.text or "")
+                if changed != 1:
+                    raise _ProviderError(ProviderFailure("CANCELLED", "Generation attempt is no longer active"))
+                self._event(job["id"], "context", "phase_changed", None, "", {"phase": "context_completed", "selected_memory_ids": plan["selected_memory_ids"]})
+            self._check_dispatch(job, context, narrator, final_preview, aggregate=False, stage_meta=narrator_meta, stage="narration")
+        else:
+            self._check_dispatch(job, context, narrator, final_preview, aggregate=False, stage_meta=narrator_meta, stage="narration")
+            self._save_context_run(job, final_preview, director_meta, narrator_meta)
         self._narrate(job, narrator, final_preview, request=narrator_request)
 
     def _check_dispatch(self, job, context, narrator, preview, *, aggregate: bool, stage_meta=None, stage="narration"):
@@ -617,7 +692,7 @@ class GenerationService:
             else:
                 for name, entry in (ledger.get("stages") or {}).items():
                     if name != stage:
-                        reserved += Decimal(str(entry.get("actual_cost_usd") or entry.get("estimated_cost_usd") or "0"))
+                        reserved += conservative_ledger_cost(entry) or Decimal("0")
             current = stage_cost(profile, tokens, out)
             if aggregate and reserved > Decimal(str(cap)):
                 raise ValidationError("Aggregate generation estimate exceeds the confirmed USD cap")
@@ -652,18 +727,28 @@ class GenerationService:
 
     def _pack_selected(self, preview, plan, profile, *, director_selected_only=False):
         base = [b for b in preview.get("blocks", []) if b.get("mandatory")] if director_selected_only else list(preview.get("blocks", []))
-        blocks, known = base, {b["id"] for b in base}
+        blocks, known = list(base), {b["id"] for b in base}
         by_id = {item["id"]: item for item in plan.get("optional", [])}
+        selected_memories = []
+        shared_actors = {}
+        checkpoint = load_state_checkpoint(self.connection, preview["campaign_id"], preview["branch_id"], preview["checkpoint_id"])
+        actor_profiles = {actor["key"].partition(":")[2]: actor for actor in _profiles(self.connection, preview["campaign_id"], checkpoint.snapshot) if actor["kind"] == "character"}
         for memory_id in plan.get("selected_memory_ids", []):
             item = by_id.get(memory_id)
             if item and memory_id not in known:
-                blocks.append({"id": memory_id, "type": "memory", "text": item["text"], "source_ids": [item.get("version_id"), *item.get("source_revision_ids", [])], "mandatory": False, "why": plan["reasons"][memory_id], "knowledge_scope": item.get("knowledge_scope"), "known_by": item.get("known_by", []), "as_of_cursor": item.get("effective_cursor")})
+                selected_memories.append({"id": memory_id, "type": "memory", "text": item["text"], "source_ids": [item.get("version_id"), *item.get("source_revision_ids", [])], "mandatory": False, "why": plan["reasons"][memory_id], "knowledge_scope": item.get("knowledge_scope"), "known_by": item.get("known_by", []), "as_of_cursor": item.get("effective_cursor")})
                 actor_ids = {*item.get("entity_ids", []), *item.get("known_by", [])}
-                checkpoint = load_state_checkpoint(self.connection, preview["campaign_id"], preview["branch_id"], preview["checkpoint_id"])
-                for actor in _profiles(self.connection, preview["campaign_id"], checkpoint.snapshot):
-                    if actor["kind"] == "character" and actor["key"].partition(":")[2] in actor_ids and actor["id"] not in known:
-                        blocks.append({"id": actor["id"], "type": "character", "text": actor["text"], "source_ids": actor["source_ids"], "mandatory": False, "why": "Character profile required by selected memory association.", "actor_id": actor["key"].partition(":")[2], "dependent_memory_id": memory_id})
-                        known.add(actor["id"])
+                for actor_id in sorted(actor_ids):
+                    actor = actor_profiles.get(actor_id)
+                    if actor is None or actor["id"] in known:
+                        continue
+                    shared = shared_actors.setdefault(actor["id"], {"id": actor["id"], "type": "character", "text": actor["text"], "source_ids": actor["source_ids"], "mandatory": False, "why": "Character profile required by selected memory association.", "actor_id": actor_id, "required_by_memory_ids": []})
+                    if memory_id not in shared["required_by_memory_ids"]:
+                        shared["required_by_memory_ids"].append(memory_id)
+        blocks.extend(selected_memories)
+        for actor in shared_actors.values():
+            actor["dependent_memory_id"] = actor["required_by_memory_ids"][0]
+            blocks.append(actor)
         packed = _copy(preview)
         packed["blocks"], packed["selected_memory_ids"] = blocks, list(plan.get("selected_memory_ids", []))
         packed["payload_hash"] = _hash({"blocks": blocks, "action": preview["action"], "profile": profile})
@@ -769,60 +854,66 @@ class GenerationService:
             raise
 
     def _append_output(self, job_id, stage, text, parts):
-        parts.append(text)
-        output = "".join(parts)
-        row = self.connection.execute("SELECT stage_key FROM provider_attempts WHERE generation_job_id=? AND stage=?", (job_id, stage)).fetchone()
-        self._require_active(row["stage_key"], job_id)
-        self.connection.execute("UPDATE provider_attempts SET output_text=?,output_offset=? WHERE stage_key=? AND status='dispatched'", (output, self._offset(output), row["stage_key"]))
-        self.connection.execute("UPDATE generation_jobs SET draft=? WHERE id=?", (output, job_id))
-        self._event(job_id, stage, "delta", self._offset(output), text, {"offset_unit": "utf16_code_units"})
+        with self._db_lock:
+            parts.append(text)
+            output = "".join(parts)
+            row = self.connection.execute("SELECT stage_key FROM provider_attempts WHERE generation_job_id=? AND stage=?", (job_id, stage)).fetchone()
+            self._require_active(row["stage_key"], job_id)
+            self.connection.execute("UPDATE provider_attempts SET output_text=?,output_offset=? WHERE stage_key=? AND status='dispatched'", (output, self._offset(output), row["stage_key"]))
+            self.connection.execute("UPDATE generation_jobs SET draft=? WHERE id=?", (output, job_id))
+            self._event(job_id, stage, "delta", self._offset(output), text, {"offset_unit": "utf16_code_units"})
 
     def _insert_attempt(self, job, stage, key, payload_hash, profile, request):
-        updated = self.connection.execute("UPDATE provider_attempts SET profile_snapshot_json=?,payload_hash=?,request_json=? WHERE generation_job_id=? AND stage=? AND status='queued'", (json.dumps(_copy(profile), sort_keys=True), payload_hash, json.dumps(_serializable_request(request), ensure_ascii=False, sort_keys=True), job["id"], stage))
-        if updated.rowcount == 0:
-            self.connection.execute("INSERT INTO provider_attempts(id,generation_job_id,stage,stage_key,profile_snapshot_json,payload_hash,status,request_json,output_text,output_offset,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)", (str(uuid4()), job["id"], stage, key, json.dumps(_copy(profile), sort_keys=True), payload_hash, "queued", json.dumps(_serializable_request(request), ensure_ascii=False, sort_keys=True), "", 0, _now()))
+        with self._db_lock:
+            updated = self.connection.execute("UPDATE provider_attempts SET profile_snapshot_json=?,payload_hash=?,request_json=? WHERE generation_job_id=? AND stage=? AND status='queued'", (json.dumps(_copy(profile), sort_keys=True), payload_hash, json.dumps(_serializable_request(request), ensure_ascii=False, sort_keys=True), job["id"], stage))
+            if updated.rowcount == 0:
+                self.connection.execute("INSERT INTO provider_attempts(id,generation_job_id,stage,stage_key,profile_snapshot_json,payload_hash,status,request_json,output_text,output_offset,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)", (str(uuid4()), job["id"], stage, key, json.dumps(_copy(profile), sort_keys=True), payload_hash, "queued", json.dumps(_serializable_request(request), ensure_ascii=False, sort_keys=True), "", 0, _now()))
 
     def _mark_dispatched(self, key):
-        row = self.connection.execute("SELECT generation_job_id,stage FROM provider_attempts WHERE stage_key=? AND status='queued'", (key,)).fetchone()
-        if row is None:
-            return False
-        current = self._epoch()
-        changed = self.connection.execute("UPDATE provider_attempts SET status='claimed',claim_epoch=? WHERE stage_key=? AND status='queued' AND EXISTS (SELECT 1 FROM generation_jobs WHERE id=? AND status='running' AND cancel_requested=0 AND execution_epoch=?)", (current, key, row["generation_job_id"], current)).rowcount
-        if changed == 1:
-            self._event(row["generation_job_id"], row["stage"], "phase_changed", None, "", {"phase": f"{row['stage']}_claimed"})
-        return changed == 1
+        with self._db_lock:
+            row = self.connection.execute("SELECT generation_job_id,stage FROM provider_attempts WHERE stage_key=? AND status='queued'", (key,)).fetchone()
+            if row is None:
+                return False
+            current = self._epoch()
+            changed = self.connection.execute("UPDATE provider_attempts SET status='claimed',claim_epoch=? WHERE stage_key=? AND status='queued' AND EXISTS (SELECT 1 FROM generation_jobs WHERE id=? AND status='running' AND cancel_requested=0 AND execution_epoch=?)", (current, key, row["generation_job_id"], current)).rowcount
+            if changed == 1:
+                self._event(row["generation_job_id"], row["stage"], "phase_changed", None, "", {"phase": f"{row['stage']}_claimed"})
+            return changed == 1
 
     def _invocation_gate(self, job_id, key):
         """Durably activate an owned claim immediately before provider I/O."""
-        current = self._epoch()
-        row = self.connection.execute("SELECT a.stage,a.status,a.claim_epoch,j.status AS job_status,j.execution_epoch,j.cancel_requested FROM provider_attempts a JOIN generation_jobs j ON j.id=a.generation_job_id WHERE a.stage_key=? AND j.id=?", (key, job_id)).fetchone()
-        if row is None or row["claim_epoch"] != current or row["execution_epoch"] != current or row["job_status"] not in {"running", "queued"} or row["cancel_requested"]:
+        with self._db_lock:
+            current = self._epoch()
+            row = self.connection.execute("SELECT a.stage,a.status,a.claim_epoch,j.status AS job_status,j.execution_epoch,j.cancel_requested FROM provider_attempts a JOIN generation_jobs j ON j.id=a.generation_job_id WHERE a.stage_key=? AND j.id=?", (key, job_id)).fetchone()
+            if row is None or row["claim_epoch"] != current or row["execution_epoch"] != current or row["job_status"] not in {"running", "queued"} or row["cancel_requested"]:
+                return False
+            if row["status"] == "dispatched":
+                return True
+            if row["status"] != "claimed":
+                return False
+            changed = self.connection.execute("UPDATE provider_attempts SET status='dispatched',dispatched_at=? WHERE stage_key=? AND status='claimed' AND claim_epoch=? AND EXISTS (SELECT 1 FROM generation_jobs WHERE id=? AND status='running' AND execution_epoch=? AND cancel_requested=0)", (_now(), key, current, job_id, current)).rowcount
+            if changed == 1:
+                self._event(job_id, row["stage"], "phase_changed", None, "", {"phase": f"{row['stage']}_dispatched"})
+                return True
             return False
-        if row["status"] == "dispatched":
-            return True
-        if row["status"] != "claimed":
-            return False
-        changed = self.connection.execute("UPDATE provider_attempts SET status='dispatched',dispatched_at=? WHERE stage_key=? AND status='claimed' AND claim_epoch=? AND EXISTS (SELECT 1 FROM generation_jobs WHERE id=? AND status='running' AND execution_epoch=? AND cancel_requested=0)", (_now(), key, current, job_id, current)).rowcount
-        if changed == 1:
-            self._event(job_id, row["stage"], "phase_changed", None, "", {"phase": f"{row['stage']}_dispatched"})
-            return True
-        return False
 
     def _claim_gate(self, job_id, key):
         """Read-only post-slot eligibility check before credential resolution."""
-        current = self._epoch()
-        row = self.connection.execute("SELECT a.status,a.claim_epoch,j.status AS job_status,j.execution_epoch,j.cancel_requested FROM provider_attempts a JOIN generation_jobs j ON j.id=a.generation_job_id WHERE a.stage_key=? AND j.id=?", (key, job_id)).fetchone()
-        return bool(row and row["status"] == "claimed" and row["claim_epoch"] == current and row["execution_epoch"] == current and row["job_status"] in {"running", "queued"} and not row["cancel_requested"])
+        with self._db_lock:
+            current = self._epoch()
+            row = self.connection.execute("SELECT a.status,a.claim_epoch,j.status AS job_status,j.execution_epoch,j.cancel_requested FROM provider_attempts a JOIN generation_jobs j ON j.id=a.generation_job_id WHERE a.stage_key=? AND j.id=?", (key, job_id)).fetchone()
+            return bool(row and row["status"] == "claimed" and row["claim_epoch"] == current and row["execution_epoch"] == current and row["job_status"] in {"running", "queued"} and not row["cancel_requested"])
 
     @staticmethod
     def _offset(text: str) -> int:
         return len(text.encode("utf-16-le")) // 2
 
     def _require_active(self, key, job_id):
-        row = self.connection.execute("SELECT a.status,a.claim_epoch,j.execution_epoch,j.cancel_requested FROM provider_attempts a JOIN generation_jobs j ON j.id=a.generation_job_id WHERE a.stage_key=? AND j.id=?", (key, job_id)).fetchone()
-        current = self._epoch()
-        if row is None or row["status"] != "dispatched" or row["claim_epoch"] != current or row["execution_epoch"] != current or row["cancel_requested"]:
-            raise _ProviderError(ProviderFailure("CANCELLED", "Generation attempt is no longer active"))
+        with self._db_lock:
+            row = self.connection.execute("SELECT a.status,a.claim_epoch,j.execution_epoch,j.cancel_requested FROM provider_attempts a JOIN generation_jobs j ON j.id=a.generation_job_id WHERE a.stage_key=? AND j.id=?", (key, job_id)).fetchone()
+            current = self._epoch()
+            if row is None or row["status"] != "dispatched" or row["claim_epoch"] != current or row["execution_epoch"] != current or row["cancel_requested"]:
+                raise _ProviderError(ProviderFailure("CANCELLED", "Generation attempt is no longer active"))
 
     def _record_usage(self, job_id, stage, result):
         row = self.connection.execute("SELECT reserved_cost_json,profile_snapshot_json FROM generation_jobs WHERE id=?", (job_id,)).fetchone()
@@ -834,31 +925,37 @@ class GenerationService:
             return
         usage = result.usage if isinstance(result, ProviderResult) else None
         entry["usage"] = usage or {"status": "unknown"}
-        input_tokens = None
-        output_tokens = None
-        if isinstance(usage, dict):
-            input_tokens = usage.get("input_tokens", usage.get("prompt_tokens"))
-            output_tokens = usage.get("output_tokens", usage.get("completion_tokens"))
         profile_snapshot = json.loads(row["profile_snapshot_json"] or "{}").get("context" if stage == "context" else "narrator", {})
-        if input_tokens is not None and output_tokens is not None:
-            try:
-                actual = stage_cost(profile_snapshot, int(input_tokens), int(output_tokens))
-            except (TypeError, ValueError, ValidationError):
-                actual = None
-            if actual is not None:
-                entry["actual_cost_usd"] = str(actual)
-                entry["actual_status"] = "actual"
-            else:
-                entry["actual_status"] = "unknown"
+        reported = provider_reported_cost(usage)
+        calculated = calculated_usage_cost(profile_snapshot, usage)
+        entry["provider_reported_cost_usd"] = str(reported) if reported is not None else None
+        entry["provider_reported_status"] = "provider_reported" if reported is not None else "unknown"
+        entry["calculated_cost_usd"] = str(calculated) if calculated is not None else None
+        entry["calculated_status"] = "calculated" if calculated is not None else "unknown"
+        if reported is not None:
+            entry["actual_cost_usd"] = str(reported)
+            entry["actual_status"] = "provider_reported"
+            entry["cost_provenance"] = "provider_reported"
+        elif calculated is not None:
+            entry["actual_cost_usd"] = None
+            entry["actual_status"] = "calculated"
+            entry["cost_provenance"] = "calculated"
         else:
+            entry["actual_cost_usd"] = None
             entry["actual_status"] = "unknown"
-        known_total = Decimal("0")
+            entry["cost_provenance"] = "unknown"
+        provider_total = Decimal("0")
+        calculated_total = Decimal("0")
         stage_values = list((ledger.get("stages") or {}).values())
         for value in stage_values:
-            if value.get("actual_cost_usd") is not None:
-                known_total += Decimal(str(value["actual_cost_usd"]))
-        ledger["actual_total_usd"] = str(known_total) if stage_values and all(value.get("actual_cost_usd") is not None for value in stage_values) else None
-        ledger["actual_status"] = "actual" if ledger["actual_total_usd"] is not None else "unknown"
+            if value.get("provider_reported_cost_usd") is not None:
+                provider_total += Decimal(str(value["provider_reported_cost_usd"]))
+            if value.get("calculated_cost_usd") is not None:
+                calculated_total += Decimal(str(value["calculated_cost_usd"]))
+        ledger["provider_reported_total_usd"] = str(provider_total) if stage_values and all(value.get("provider_reported_cost_usd") is not None for value in stage_values) else None
+        ledger["calculated_total_usd"] = str(calculated_total) if stage_values and all(value.get("calculated_cost_usd") is not None for value in stage_values) else None
+        ledger["actual_total_usd"] = ledger["provider_reported_total_usd"]
+        ledger["actual_status"] = "provider_reported" if ledger["actual_total_usd"] is not None else "calculated" if ledger["calculated_total_usd"] is not None else "unknown"
         self.connection.execute("UPDATE generation_jobs SET reserved_cost_json=? WHERE id=?", (json.dumps(ledger, sort_keys=True), job_id))
 
     def _finish_attempt(self, key, status, result, output):
@@ -930,7 +1027,8 @@ class GenerationService:
     startup_recover = recover_after_restart
 
     def _event(self, job_id, stage, event_type, offset, content, payload):
-        self.connection.execute("INSERT INTO generation_events(generation_job_id,stage,event_type,offset,content,payload_json,created_at) VALUES(?,?,?,?,?,?,?)", (job_id, stage, event_type, offset, content, json.dumps(payload, ensure_ascii=False, sort_keys=True), _now()))
+        with self._db_lock:
+            self.connection.execute("INSERT INTO generation_events(generation_job_id,stage,event_type,offset,content,payload_json,created_at) VALUES(?,?,?,?,?,?,?)", (job_id, stage, event_type, offset, content, json.dumps(payload, ensure_ascii=False, sort_keys=True), _now()))
 
     def events(self, owner_id, job_id, *, after=0):
         self.get_job(owner_id, job_id)
@@ -982,7 +1080,7 @@ class GenerationService:
             return None
         remaining = Decimal(str(cap))
         for entry in (ledger.get("stages") or {}).values():
-            remaining -= Decimal(str(entry.get("actual_cost_usd") or entry.get("estimated_cost_usd") or "0"))
+            remaining -= conservative_ledger_cost(entry) or Decimal("0")
         return str(max(Decimal("0"), remaining))
 
     def get_job(self, owner_id, job_id):
