@@ -140,12 +140,13 @@ def _append_memory_in_transaction(
             if current and current["status"] == "approved" and current["subject_id"] == subject_id and current["predicate"] == predicate:
                 active_slot = current
                 break
+    reapplying_supersession = not (prior_row is not None and prior_row["status"] == "approved" and prior_row["supersedes_memory_id"] == supersedes_id)
     if active_slot and active_slot["memory_id"] != memory_id and active_slot["value"] != value:
         if supersedes_id != active_slot["memory_id"]:
             raise StateConflict("Conflicting value for single-valued memory slot; specify supersedes_id for review")
         if active_slot["memory_id"] not in checkpoint.snapshot["memory_versions"]:
             raise StateConflict("Superseded memory is not effective at this checkpoint")
-    elif supersedes_id and (active_slot is None or active_slot["memory_id"] != supersedes_id):
+    elif supersedes_id and reapplying_supersession and (active_slot is None or active_slot["memory_id"] != supersedes_id):
         raise StateConflict("supersedes_id must identify the currently effective value for this slot")
 
     version = prior_version + 1

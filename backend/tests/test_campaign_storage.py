@@ -121,3 +121,37 @@ def test_campaign_crud_and_optional_character_membership_preserve_history(db, ow
     result = get_campaign(db, campaign.id, owner.id)
     assert result["title"] == "After" and result["archived_at"]
     assert get_effective_profile(db, campaign.id, branch, old_checkpoint, "world")["name"] == "World"
+
+
+def test_character_alias_validation_readd_versions_and_referenced_removal(db, owner):
+    from playroom.memory import append_memory_version, update_scene
+    from playroom.domain import ValidationError
+    campaign = create_campaign(db, owner.id, "Actors", {"name": "World"}, [], {"name": "Player"})
+    branch = campaign.initial_branch_id
+    head = get_branch_head(db, campaign.id, branch)
+    character_id = str(uuid4())
+    with pytest.raises(ValidationError, match="aliases"):
+        add_character(db, campaign.id, branch, {"id": character_id, "name": "Bad", "aliases": None}, expected_state_version=head.state_version, owner_id=owner.id)
+    assert get_branch_head(db, campaign.id, branch).state_version == head.state_version
+    added = add_character(db, campaign.id, branch, {"id": character_id, "name": "Good", "aliases": ["G"]}, expected_state_version=head.state_version, owner_id=owner.id)
+    with pytest.raises(ValidationError, match="aliases"):
+        update_profile(db, campaign.id, branch, f"character:{character_id}", {"id": character_id, "name": "Bad edit", "aliases": [None]}, expected_state_version=added.state_version, owner_id=owner.id)
+    assert get_branch_head(db, campaign.id, branch).state_version == added.state_version
+    removed = remove_profile(db, campaign.id, branch, f"character:{character_id}", expected_state_version=added.state_version, owner_id=owner.id)
+    readded = add_character(db, campaign.id, branch, {"id": character_id, "name": "Good again", "aliases": ["G2"]}, expected_state_version=removed.state_version, owner_id=owner.id)
+    profile_version = readded.snapshot["profile_versions"][f"character:{character_id}"]
+    new_row = db.execute("SELECT version, supersedes_version_id FROM profile_versions WHERE id = ?", (profile_version,)).fetchone()
+    assert new_row["version"] == 2
+    assert new_row["supersedes_version_id"] == added.snapshot["profile_versions"][f"character:{character_id}"]
+
+    actor_head = get_branch_head(db, campaign.id, branch)
+    scene_id = str(uuid4())
+    scene = update_scene(db, campaign.id, branch, {"focus_scene_id": scene_id, "scenes": [{"id": scene_id, "present_ids": [character_id]}]}, expected_state_version=actor_head.state_version)
+    with pytest.raises(StateConflict, match="referenced"):
+        remove_profile(db, campaign.id, branch, f"character:{character_id}", expected_state_version=scene.state_version, owner_id=owner.id)
+    assert get_branch_head(db, campaign.id, branch).state_version == scene.state_version
+    cleared_scene = update_scene(db, campaign.id, branch, {"focus_scene_id": scene_id, "scenes": [{"id": scene_id, "present_ids": []}]}, expected_state_version=scene.state_version)
+    known = append_memory_version(db, campaign.id, branch, "event", "Character knows this", origin="user", expected_state_version=cleared_scene.state_version, source_revision_ids=[], knowledge_scope="known_by", known_by=[character_id])
+    with pytest.raises(StateConflict, match="referenced"):
+        remove_profile(db, campaign.id, branch, f"character:{character_id}", expected_state_version=known.state_version, owner_id=owner.id)
+    assert get_branch_head(db, campaign.id, branch).state_version == known.state_version

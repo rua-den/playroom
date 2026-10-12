@@ -178,6 +178,24 @@ def test_viewpoint_knowledge_switch_keeps_old_checkpoint_snapshot(db, owner):
     assert at_new.known_by == () and at_new.knowledge_scope == "public"
 
 
+def test_viewpoint_switch_changes_focus_without_changing_actor_presence(db, owner):
+    campaign, branch = _campaign(db, owner, "Scene viewpoint")
+    actor = campaign.character_ids[0]
+    head = get_branch_head(db, campaign.id, branch)
+    focus, parallel = str(uuid4()), str(uuid4())
+    first_scene = update_scene(db, campaign.id, branch, {"focus_scene_id": focus, "scenes": [{"id": focus, "present_ids": [], "location": "Station"}, {"id": parallel, "present_ids": [], "location": "Home"}]}, expected_state_version=head.state_version)
+    known = append_memory_version(db, campaign.id, branch, "event", "The actor knows the secret", origin="user", expected_state_version=first_scene.state_version, source_revision_ids=[], knowledge_scope="known_by", known_by=[actor])
+    switch = update_scene(db, campaign.id, branch, {"focus_scene_id": parallel, "scenes": [{"id": focus, "present_ids": [], "location": "Station"}, {"id": parallel, "present_ids": [], "location": "Home"}]}, expected_state_version=known.state_version)
+    later = append_memory_version(db, campaign.id, branch, "event", "The secret is public", origin="user", expected_state_version=switch.state_version, source_revision_ids=[], memory_id=known.memory_id, knowledge_scope="public", known_by=[])
+    scene_before = get_effective_scene(db, campaign.id, branch, known.checkpoint_id)
+    scene_after = get_effective_scene(db, campaign.id, branch, later.checkpoint_id)
+    assert scene_before["focus_scene_id"] == focus
+    assert scene_after["focus_scene_id"] == parallel
+    assert scene_before["scenes"][parallel]["present_ids"] == [] == scene_after["scenes"][parallel]["present_ids"]
+    assert list_memory_library(db, campaign.id, branch, known.checkpoint_id)[0].known_by == (actor,)
+    assert list_memory_library(db, campaign.id, branch, later.checkpoint_id)[0].known_by == ()
+
+
 def test_conflicting_pending_proposal_keeps_supersession_on_approve_and_reject(db, owner):
     campaign, branch = _campaign(db, owner, "Supersede"); actor = campaign.character_ids[0]
     head = get_branch_head(db, campaign.id, branch)
@@ -188,3 +206,5 @@ def test_conflicting_pending_proposal_keeps_supersession_on_approve_and_reject(d
     proposal2 = append_memory_version(db, campaign.id, branch, "fact", "180cm", origin="ai", expected_state_version=rejected.state_version, source_revision_ids=[], subject_id=actor, predicate="height", value="180", supersedes_id=original.memory_id)
     accepted = approve_memory(db, campaign.id, branch, proposal2.memory_id, expected_state_version=proposal2.state_version)
     assert [item.memory_id for item in list_memory_library(db, campaign.id, branch, accepted.checkpoint_id)] == [proposal2.memory_id]
+    edited = update_memory(db, campaign.id, branch, proposal2.memory_id, expected_state_version=accepted.state_version, text="180cm confirmed", pinned=True, knowledge_scope="public", known_by=[])
+    assert list_memory_library(db, campaign.id, branch, edited.checkpoint_id)[0].text == "180cm confirmed"

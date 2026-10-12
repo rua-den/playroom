@@ -30,6 +30,18 @@ def _new_profile(connection: sqlite3.Connection, campaign_id: str, profile_key: 
     return profile_id
 
 
+def _validate_character(data: dict, expected_id: str | None = None) -> dict:
+    if not isinstance(data, dict):
+        raise ValidationError("Character profile must be an object")
+    character_id = require_uuid(data.get("id"), "character id")
+    if expected_id is not None and character_id != expected_id:
+        raise ValidationError("A character profile cannot change its identity")
+    aliases = data.get("aliases", [])
+    if not isinstance(aliases, list) or any(not isinstance(alias, str) for alias in aliases):
+        raise ValidationError("Character aliases must be a list of strings")
+    return {**data, "id": character_id, "aliases": aliases}
+
+
 def create_campaign(connection: sqlite3.Connection, owner_id: str, title: str, world: dict, characters: list[dict], persona: dict, *, style: dict | None = None) -> Campaign:
     owner_id = require_uuid(owner_id, "owner_id")
     if not title.strip():
@@ -120,8 +132,7 @@ def update_profile(connection: sqlite3.Connection, campaign_id: str, branch_id: 
         old = connection.execute("SELECT kind, version FROM profile_versions WHERE id = ? AND campaign_id = ?", (old_id, campaign_id)).fetchone()
         if profile_key.startswith("character:"):
             char_id = require_uuid(profile_key.partition(":")[2], "character id")
-            if data.get("id") != char_id:
-                raise ValidationError("A character profile cannot change its identity")
+            data = _validate_character(data, char_id)
         new_id = _new_profile(connection, campaign_id, profile_key, old["kind"], data, old["version"] + 1, old_id)
         snapshot = dict(checkpoint.snapshot)
         snapshot["profile_versions"] = dict(snapshot["profile_versions"])
@@ -154,11 +165,8 @@ def archive_campaign(connection: sqlite3.Connection, campaign_id: str, branch_id
 
 
 def add_character(connection: sqlite3.Connection, campaign_id: str, branch_id: str, character: dict, *, expected_state_version: int, owner_id: str):
-    if not isinstance(character, dict):
-        raise ValidationError("Character profile must be an object")
-    character_id = require_uuid(character.get("id"), "character id")
-    if character.get("aliases", []) is not None and not isinstance(character.get("aliases", []), list):
-        raise ValidationError("Character aliases must be a list")
+    character = _validate_character(character)
+    character_id = character["id"]
     with transaction(connection):
         branch = _branch_row(connection, campaign_id, branch_id, owner_id)
         if branch["state_version"] != expected_state_version:
@@ -167,7 +175,8 @@ def add_character(connection: sqlite3.Connection, campaign_id: str, branch_id: s
         key = f"character:{character_id}"
         if key in checkpoint.snapshot["profile_versions"]:
             raise StateConflict("Character is already active in this campaign")
-        version_id = _new_profile(connection, campaign_id, key, "character", {**character, "id": character_id})
+        latest = connection.execute("SELECT id, version FROM profile_versions WHERE campaign_id = ? AND profile_key = ? ORDER BY version DESC LIMIT 1", (campaign_id, key)).fetchone()
+        version_id = _new_profile(connection, campaign_id, key, "character", character, (latest["version"] + 1) if latest else 1, latest["id"] if latest else None)
         snapshot = dict(checkpoint.snapshot)
         snapshot["profile_versions"] = dict(snapshot["profile_versions"])
         snapshot["profile_versions"][key] = version_id
@@ -186,6 +195,15 @@ def remove_profile(connection: sqlite3.Connection, campaign_id: str, branch_id: 
         checkpoint = load_state_checkpoint(connection, campaign_id, branch_id, branch["head_checkpoint_id"], owner_id)
         if profile_key not in checkpoint.snapshot["profile_versions"]:
             raise NotFound("Character profile is not active")
+        character_id = require_uuid(profile_key.partition(":")[2], "character id")
+        scene_row = connection.execute("SELECT data_json FROM scene_versions WHERE id = ? AND campaign_id = ?", (checkpoint.snapshot.get("scene_version_id"), campaign_id)).fetchone()
+        if scene_row and any(character_id in scene.get("present_ids", []) for scene in json.loads(scene_row["data_json"]).get("scenes", {}).values()):
+            raise StateConflict("Character is referenced by the current scene; remove those references first")
+        memory_ids = [*checkpoint.snapshot.get("memory_versions", {}).values(), *checkpoint.snapshot.get("pending_memory_versions", {}).values()]
+        for memory_version_id in memory_ids:
+            memory = connection.execute("SELECT entity_ids_json, known_by_json, subject_id, object_id FROM memory_versions WHERE id = ? AND campaign_id = ?", (memory_version_id, campaign_id)).fetchone()
+            if memory and (character_id in json.loads(memory["entity_ids_json"]) or character_id in json.loads(memory["known_by_json"]) or character_id in {memory["subject_id"], memory["object_id"]}):
+                raise StateConflict("Character is referenced by effective memory; remove those references first")
         snapshot = dict(checkpoint.snapshot)
         snapshot["profile_versions"] = dict(snapshot["profile_versions"])
         del snapshot["profile_versions"][profile_key]

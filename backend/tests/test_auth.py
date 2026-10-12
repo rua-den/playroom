@@ -119,6 +119,8 @@ def test_authenticated_campaign_and_memory_lifecycle_api(tmp_path):
     created = client.post("/api/campaigns", json={"title": "Private", "world": {"name": "World"}, "persona": {"name": "Player"}}, headers=headers)
     assert created.status_code == 201
     campaign = created.json(); branch = campaign["branch_id"]
+    invalid_character = client.post(f"/api/campaigns/{campaign['id']}/characters", json={"branch_id": branch, "expected_state_version": 1, "character": {"id": str(uuid4()), "name": "Bad", "aliases": None}}, headers=headers)
+    assert invalid_character.status_code == 422
     renamed = client.patch(f"/api/campaigns/{campaign['id']}", json={"branch_id": branch, "expected_state_version": 1, "title": "Renamed"}, headers=headers)
     assert renamed.status_code == 200
     memory = client.post(f"/api/campaigns/{campaign['id']}/memory", json={"branch_id": branch, "expected_state_version": 2, "kind": "event", "text": "Clue", "pinned": True}, headers=headers)
@@ -132,4 +134,5 @@ def test_authenticated_campaign_and_memory_lifecycle_api(tmp_path):
     assert policy.status_code == 200
     assert len(client.get(f"/api/campaigns/{campaign['id']}/memory?branch_id={branch}").json()) == 1
     archived = client.post(f"/api/campaigns/{campaign['id']}/archive", json={"branch_id": branch, "expected_state_version": 5}, headers=headers)
-    assert archived.status_code == 200\n
+    assert archived.status_code == 200
+
