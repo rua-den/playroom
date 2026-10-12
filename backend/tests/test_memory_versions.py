@@ -7,7 +7,7 @@ from playroom.campaigns import create_campaign
 from playroom.db import connect, migrate
 from playroom.domain import StateConflict
 from playroom.auth import create_owner
-from playroom.memory import append_memory_version, get_effective_scene, list_effective_memory, list_memory_proposals, reject_memory, approve_memory, set_retrieval_policy, update_scene
+from playroom.memory import append_memory_version, get_effective_scene, list_effective_memory, list_memory_history, list_memory_library, list_memory_proposals, reject_memory, approve_memory, set_retrieval_policy, update_memory, update_scene
 from playroom.timeline import get_branch_head, create_committed_revision
 
 
@@ -34,7 +34,7 @@ def test_campaign_and_branch_scope_and_pending_approval(db, owner):
     two, branch_two = _campaign(db, owner, "Two")
     head_one = get_branch_head(db, one.id, branch_one)
     head_two = get_branch_head(db, two.id, branch_two)
-    _, revision_id = create_committed_revision(db, one.id, branch_one, "Linh hứa sẽ trở lại", "Linh hứa sẽ trở lại.")
+    _, revision_id = create_committed_revision(db, one.id, branch_one, "Linh hứa sẽ trở lại", "Linh hứa sẽ trở lại.", expected_state_version=head_one.state_version)
     head_one = get_branch_head(db, one.id, branch_one)
     approved = append_memory_version(db, one.id, branch_one, "promise", "Linh sẽ trở lại", origin="user", expected_state_version=head_one.state_version, source_revision_ids=[revision_id])
     pending = append_memory_version(db, one.id, branch_one, "event", "Linh đang cân nhắc", origin="ai", expected_state_version=approved.state_version, source_revision_ids=[revision_id])
@@ -110,6 +110,16 @@ def test_memory_rejects_uncommitted_or_foreign_source_revision(db, owner):
     assert get_branch_head(db, campaign.id, branch).state_version == head.state_version
 
 
+def test_committed_revision_requires_current_expected_state_version(db, owner):
+    campaign, branch = _campaign(db, owner, "Stale turn")
+    head = get_branch_head(db, campaign.id, branch)
+    update_scene(db, campaign.id, branch, {"focus_scene_id": None, "scenes": []}, expected_state_version=head.state_version)
+    with pytest.raises(StateConflict, match="state changed"):
+        create_committed_revision(db, campaign.id, branch, "stale action", "stale narrative", expected_state_version=head.state_version)
+    assert get_branch_head(db, campaign.id, branch).state_version == head.state_version + 1
+    assert db.execute("SELECT count(*) FROM turns WHERE branch_id = ?", (branch,)).fetchone()[0] == 0
+
+
 def test_memory_versions_keep_their_original_effective_cursor_at_later_reads(db, owner):
     campaign, branch = _campaign(db, owner, "As of")
     head = get_branch_head(db, campaign.id, branch)
@@ -128,7 +138,7 @@ def test_pending_ai_replacement_preserves_approved_fact_until_explicit_review(db
     character_id = campaign.character_ids[0]
     head = get_branch_head(db, campaign.id, branch)
     approved = append_memory_version(db, campaign.id, branch, "fact", "Linh cao 170cm", origin="user", expected_state_version=head.state_version, source_revision_ids=[], subject_id=character_id, predicate="height", value="170cm")
-    _, revision_id = create_committed_revision(db, campaign.id, branch, "Linh cao lên", "Linh nói chiều cao mới là 180cm.")
+    _, revision_id = create_committed_revision(db, campaign.id, branch, "Linh cao lên", "Linh nói chiều cao mới là 180cm.", expected_state_version=get_branch_head(db, campaign.id, branch).state_version)
     after_turn = get_branch_head(db, campaign.id, branch)
     pending = append_memory_version(db, campaign.id, branch, "fact", "Linh cao 180cm", origin="ai", expected_state_version=after_turn.state_version, source_revision_ids=[revision_id], memory_id=approved.memory_id, subject_id=character_id, predicate="height", value="180cm")
     current = list_effective_memory(db, campaign.id, branch, pending.checkpoint_id)
@@ -142,3 +152,39 @@ def test_pending_ai_replacement_preserves_approved_fact_until_explicit_review(db
     next_pending = append_memory_version(db, campaign.id, branch, "fact", "Linh cao 180cm", origin="ai", expected_state_version=rejected.state_version, source_revision_ids=[revision_id], memory_id=approved.memory_id, subject_id=character_id, predicate="height", value="180cm")
     accepted = approve_memory(db, campaign.id, branch, approved.memory_id, expected_state_version=next_pending.state_version)
     assert [item.text for item in list_effective_memory(db, campaign.id, branch, accepted.checkpoint_id) if item.memory_id == approved.memory_id] == ["Linh cao 180cm"]
+
+
+def test_explicit_edits_clear_fields_and_history_ignores_retrieval_policy(db, owner):
+    campaign, branch = _campaign(db, owner, "Clear"); actor = campaign.character_ids[0]
+    head = get_branch_head(db, campaign.id, branch)
+    first = append_memory_version(db, campaign.id, branch, "event", "A clue", origin="user", expected_state_version=head.state_version, source_revision_ids=[], entity_ids=[actor], knowledge_scope="known_by", known_by=[actor], pinned=True)
+    cleared = update_memory(db, campaign.id, branch, first.memory_id, expected_state_version=first.state_version, pinned=False, entity_ids=[], knowledge_scope="public", known_by=[])
+    policy = set_retrieval_policy(db, campaign.id, branch, "disabled", expected_state_version=cleared.state_version)
+    assert list_effective_memory(db, campaign.id, branch, policy.id) == []
+    library = list_memory_library(db, campaign.id, branch, policy.id)
+    assert library[0].entity_ids == () and library[0].known_by == () and not library[0].pinned
+    assert [version.version for version in list_memory_history(db, campaign.id, branch, first.memory_id, policy.id)] == [1, 2]
+
+
+def test_viewpoint_knowledge_switch_keeps_old_checkpoint_snapshot(db, owner):
+    campaign, branch = _campaign(db, owner, "Viewpoint")
+    actor = campaign.character_ids[0]
+    head = get_branch_head(db, campaign.id, branch)
+    known = append_memory_version(db, campaign.id, branch, "event", "Linh learns the secret", origin="user", expected_state_version=head.state_version, source_revision_ids=[], knowledge_scope="known_by", known_by=[actor])
+    switched = append_memory_version(db, campaign.id, branch, "event", "The secret becomes public", origin="user", expected_state_version=known.state_version, source_revision_ids=[], memory_id=known.memory_id, knowledge_scope="public", known_by=[])
+    at_old = list_memory_library(db, campaign.id, branch, known.checkpoint_id)[0]
+    at_new = list_memory_library(db, campaign.id, branch, switched.checkpoint_id)[0]
+    assert at_old.known_by == (actor,) and at_old.knowledge_scope == "known_by"
+    assert at_new.known_by == () and at_new.knowledge_scope == "public"
+
+
+def test_conflicting_pending_proposal_keeps_supersession_on_approve_and_reject(db, owner):
+    campaign, branch = _campaign(db, owner, "Supersede"); actor = campaign.character_ids[0]
+    head = get_branch_head(db, campaign.id, branch)
+    original = append_memory_version(db, campaign.id, branch, "fact", "170cm", origin="user", expected_state_version=head.state_version, source_revision_ids=[], subject_id=actor, predicate="height", value="170")
+    proposal = append_memory_version(db, campaign.id, branch, "fact", "180cm", origin="ai", expected_state_version=original.state_version, source_revision_ids=[], subject_id=actor, predicate="height", value="180", supersedes_id=original.memory_id)
+    rejected = reject_memory(db, campaign.id, branch, proposal.memory_id, expected_state_version=proposal.state_version)
+    assert [item.memory_id for item in list_memory_library(db, campaign.id, branch, rejected.checkpoint_id)] == [original.memory_id]
+    proposal2 = append_memory_version(db, campaign.id, branch, "fact", "180cm", origin="ai", expected_state_version=rejected.state_version, source_revision_ids=[], subject_id=actor, predicate="height", value="180", supersedes_id=original.memory_id)
+    accepted = approve_memory(db, campaign.id, branch, proposal2.memory_id, expected_state_version=proposal2.state_version)
+    assert [item.memory_id for item in list_memory_library(db, campaign.id, branch, accepted.checkpoint_id)] == [proposal2.memory_id]

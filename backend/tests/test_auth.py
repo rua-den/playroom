@@ -110,3 +110,27 @@ def test_competing_profile_writes_serialize_and_leave_one_checkpoint(tmp_path):
     assert head["state_version"] == 2
     assert checkpoint_count == 2
     connection.close()
+
+
+def test_authenticated_campaign_and_memory_lifecycle_api(tmp_path):
+    client = TestClient(_app(tmp_path), base_url="https://testserver")
+    headers = {"origin": "https://testserver"}
+    assert client.post("/api/auth/login", json={"email": "owner@example.test", "password": "secret owner password"}, headers=headers).status_code == 200
+    created = client.post("/api/campaigns", json={"title": "Private", "world": {"name": "World"}, "persona": {"name": "Player"}}, headers=headers)
+    assert created.status_code == 201
+    campaign = created.json(); branch = campaign["branch_id"]
+    renamed = client.patch(f"/api/campaigns/{campaign['id']}", json={"branch_id": branch, "expected_state_version": 1, "title": "Renamed"}, headers=headers)
+    assert renamed.status_code == 200
+    memory = client.post(f"/api/campaigns/{campaign['id']}/memory", json={"branch_id": branch, "expected_state_version": 2, "kind": "event", "text": "Clue", "pinned": True}, headers=headers)
+    assert memory.status_code == 201
+    memory = memory.json()
+    edited = client.patch(f"/api/campaigns/{campaign['id']}/memory/{memory['memory_id']}", json={"branch_id": branch, "expected_state_version": 3, "pinned": False, "entity_ids": [], "known_by": [], "knowledge_scope": "public"}, headers=headers)
+    assert edited.status_code == 200 and edited.json()["pinned"] is False and edited.json()["entity_ids"] == []
+    assert client.get(f"/api/campaigns/{campaign['id']}/memory?branch_id={branch}").json()[0]["pinned"] is False
+    assert len(client.get(f"/api/campaigns/{campaign['id']}/memory/{memory['memory_id']}/history?branch_id={branch}").json()) == 2
+    policy = client.put(f"/api/campaigns/{campaign['id']}/retrieval-policy", json={"branch_id": branch, "expected_state_version": 4, "policy": "disabled"}, headers=headers)
+    assert policy.status_code == 200
+    assert len(client.get(f"/api/campaigns/{campaign['id']}/memory?branch_id={branch}").json()) == 1
+    archived = client.post(f"/api/campaigns/{campaign['id']}/archive", json={"branch_id": branch, "expected_state_version": 5}, headers=headers)
+    assert archived.status_code == 200
+

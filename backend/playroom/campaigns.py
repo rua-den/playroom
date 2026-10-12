@@ -59,7 +59,7 @@ def create_campaign(connection: sqlite3.Connection, owner_id: str, title: str, w
         connection.execute("INSERT INTO branches(id, campaign_id, name, state_version, created_at) VALUES (?, ?, 'main', 0, ?)", (branch_id, campaign_id, now))
         scene_id = str(uuid4())
         checkpoint_id = str(uuid4())
-        connection.execute("INSERT INTO scene_versions(id, campaign_id, branch_id, version, data_json, effective_state_version, effective_checkpoint_id, created_at) VALUES (?, ?, ?, 1, ?, 0, ?, ?)", (scene_id, campaign_id, branch_id, json.dumps({"focus_scene_id": None, "scenes": {}}, ensure_ascii=False), checkpoint_id, now))
+        connection.execute("INSERT INTO scene_versions(id, campaign_id, branch_id, version, data_json, effective_state_version, effective_checkpoint_id, created_at) VALUES (?, ?, ?, 1, ?, 1, ?, ?)", (scene_id, campaign_id, branch_id, json.dumps({"focus_scene_id": None, "scenes": {}}, ensure_ascii=False), checkpoint_id, now))
         snapshot = {
             "profile_versions": profile_versions,
             "memory_versions": {},
@@ -77,13 +77,13 @@ def create_campaign(connection: sqlite3.Connection, owner_id: str, title: str, w
 
 def list_campaigns(connection: sqlite3.Connection, owner_id: str) -> list[dict]:
     owner_id = require_uuid(owner_id, "owner_id")
-    rows = connection.execute("SELECT id, title, created_at, updated_at FROM campaigns WHERE owner_id = ? ORDER BY updated_at DESC, id", (owner_id,)).fetchall()
+    rows = connection.execute("SELECT id, title, created_at, updated_at, archived_at FROM campaigns WHERE owner_id = ? ORDER BY archived_at IS NOT NULL, updated_at DESC, id", (owner_id,)).fetchall()
     return [dict(row) for row in rows]
 
 
 def get_campaign(connection: sqlite3.Connection, campaign_id: str, owner_id: str) -> dict:
     campaign_id, owner_id = require_uuid(campaign_id, "campaign_id"), require_uuid(owner_id, "owner_id")
-    row = connection.execute("SELECT id, owner_id, title, created_at, updated_at FROM campaigns WHERE id = ? AND owner_id = ?", (campaign_id, owner_id)).fetchone()
+    row = connection.execute("SELECT id, owner_id, title, created_at, updated_at, archived_at FROM campaigns WHERE id = ? AND owner_id = ?", (campaign_id, owner_id)).fetchone()
     if row is None:
         raise NotFound("Campaign not found")
     branch = connection.execute("SELECT id, name, state_version, head_checkpoint_id FROM branches WHERE campaign_id = ? ORDER BY created_at LIMIT 1", (campaign_id,)).fetchone()
@@ -126,4 +126,67 @@ def update_profile(connection: sqlite3.Connection, campaign_id: str, branch_id: 
         snapshot = dict(checkpoint.snapshot)
         snapshot["profile_versions"] = dict(snapshot["profile_versions"])
         snapshot["profile_versions"][profile_key] = new_id
+        return _advance_checkpoint(connection, campaign_id, branch_id, expected_state_version, snapshot)
+
+
+def rename_campaign(connection: sqlite3.Connection, campaign_id: str, branch_id: str, title: str, *, expected_state_version: int, owner_id: str) -> dict:
+    if not title.strip():
+        raise ValidationError("Campaign title is required")
+    with transaction(connection):
+        branch = _branch_row(connection, campaign_id, branch_id, owner_id)
+        if branch["state_version"] != expected_state_version:
+            raise StateConflict("Campaign state changed; reload before saving")
+        checkpoint = load_state_checkpoint(connection, campaign_id, branch_id, branch["head_checkpoint_id"], owner_id)
+        connection.execute("UPDATE campaigns SET title = ?, updated_at = ? WHERE id = ? AND owner_id = ?", (title.strip(), utc_now(), campaign_id, owner_id))
+        saved = _advance_checkpoint(connection, campaign_id, branch_id, expected_state_version, dict(checkpoint.snapshot))
+        return {"title": title.strip(), "state_version": saved.state_version, "checkpoint_id": saved.id}
+
+
+def archive_campaign(connection: sqlite3.Connection, campaign_id: str, branch_id: str, *, expected_state_version: int, owner_id: str) -> dict:
+    with transaction(connection):
+        branch = _branch_row(connection, campaign_id, branch_id, owner_id)
+        if branch["state_version"] != expected_state_version:
+            raise StateConflict("Campaign state changed; reload before saving")
+        checkpoint = load_state_checkpoint(connection, campaign_id, branch_id, branch["head_checkpoint_id"], owner_id)
+        connection.execute("UPDATE campaigns SET archived_at = COALESCE(archived_at, ?), updated_at = ? WHERE id = ? AND owner_id = ?", (utc_now(), utc_now(), campaign_id, owner_id))
+        saved = _advance_checkpoint(connection, campaign_id, branch_id, expected_state_version, dict(checkpoint.snapshot))
+        return {"archived": True, "state_version": saved.state_version, "checkpoint_id": saved.id}
+
+
+def add_character(connection: sqlite3.Connection, campaign_id: str, branch_id: str, character: dict, *, expected_state_version: int, owner_id: str):
+    if not isinstance(character, dict):
+        raise ValidationError("Character profile must be an object")
+    character_id = require_uuid(character.get("id"), "character id")
+    if character.get("aliases", []) is not None and not isinstance(character.get("aliases", []), list):
+        raise ValidationError("Character aliases must be a list")
+    with transaction(connection):
+        branch = _branch_row(connection, campaign_id, branch_id, owner_id)
+        if branch["state_version"] != expected_state_version:
+            raise StateConflict("Campaign state changed; reload before saving")
+        checkpoint = load_state_checkpoint(connection, campaign_id, branch_id, branch["head_checkpoint_id"], owner_id)
+        key = f"character:{character_id}"
+        if key in checkpoint.snapshot["profile_versions"]:
+            raise StateConflict("Character is already active in this campaign")
+        version_id = _new_profile(connection, campaign_id, key, "character", {**character, "id": character_id})
+        snapshot = dict(checkpoint.snapshot)
+        snapshot["profile_versions"] = dict(snapshot["profile_versions"])
+        snapshot["profile_versions"][key] = version_id
+        return _advance_checkpoint(connection, campaign_id, branch_id, expected_state_version, snapshot)
+
+
+def remove_profile(connection: sqlite3.Connection, campaign_id: str, branch_id: str, profile_key: str, *, expected_state_version: int, owner_id: str):
+    if profile_key in {"world", "persona", "style"}:
+        raise ValidationError(f"The required {profile_key} profile cannot be removed")
+    if not profile_key.startswith("character:"):
+        raise ValidationError("Only optional character profiles can be removed")
+    with transaction(connection):
+        branch = _branch_row(connection, campaign_id, branch_id, owner_id)
+        if branch["state_version"] != expected_state_version:
+            raise StateConflict("Campaign state changed; reload before saving")
+        checkpoint = load_state_checkpoint(connection, campaign_id, branch_id, branch["head_checkpoint_id"], owner_id)
+        if profile_key not in checkpoint.snapshot["profile_versions"]:
+            raise NotFound("Character profile is not active")
+        snapshot = dict(checkpoint.snapshot)
+        snapshot["profile_versions"] = dict(snapshot["profile_versions"])
+        del snapshot["profile_versions"][profile_key]
         return _advance_checkpoint(connection, campaign_id, branch_id, expected_state_version, snapshot)

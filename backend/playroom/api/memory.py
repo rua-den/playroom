@@ -46,10 +46,39 @@ class SceneUpdate(BaseModel):
     scene_state: dict
 
 
+class MemoryUpdate(BaseModel):
+    branch_id: str
+    expected_state_version: int = Field(ge=1)
+    text: str | None = Field(default=None, min_length=1, max_length=20000)
+    pinned: bool | None = None
+    entity_ids: list[str] | None = Field(default=None, max_length=64)
+    knowledge_scope: str | None = None
+    known_by: list[str] | None = Field(default=None, max_length=64)
+
+
 @router.get("/memory")
 def list_memory(campaign_id: str, branch_id: str, connection: sqlite3.Connection = Depends(request_connection), position: str | None = None, owner: Owner = Depends(require_owner)):
     campaign_service.get_campaign(connection, campaign_id, owner.id)
-    return [asdict(item) for item in service.list_effective_memory(connection, campaign_id, branch_id, position, owner_id=owner.id)]
+    return [asdict(item) for item in service.list_memory_library(connection, campaign_id, branch_id, position, owner_id=owner.id)]
+
+
+@router.get("/memory/proposals")
+def proposals(campaign_id: str, branch_id: str, connection: sqlite3.Connection = Depends(request_connection), position: str | None = None, owner: Owner = Depends(require_owner)):
+    campaign_service.get_campaign(connection, campaign_id, owner.id)
+    return [asdict(item) for item in service.list_memory_proposals(connection, campaign_id, branch_id, position, owner_id=owner.id)]
+
+
+@router.get("/memory/{memory_id}/history")
+def history(campaign_id: str, memory_id: str, branch_id: str, connection: sqlite3.Connection = Depends(request_connection), position: str | None = None, owner: Owner = Depends(require_owner)):
+    campaign_service.get_campaign(connection, campaign_id, owner.id)
+    return [asdict(item) for item in service.list_memory_history(connection, campaign_id, branch_id, memory_id, position, owner_id=owner.id)]
+
+
+@router.patch("/memory/{memory_id}")
+def edit_memory(campaign_id: str, memory_id: str, payload: MemoryUpdate, connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
+    campaign_service.get_campaign(connection, campaign_id, owner.id)
+    fields = payload.model_fields_set
+    return asdict(service.update_memory(connection, campaign_id, payload.branch_id, memory_id, expected_state_version=payload.expected_state_version, text=payload.text if "text" in fields else None, pinned=payload.pinned if "pinned" in fields else None, entity_ids=payload.entity_ids if "entity_ids" in fields else None, knowledge_scope=payload.knowledge_scope if "knowledge_scope" in fields else None, known_by=payload.known_by if "known_by" in fields else None))
 
 
 @router.post("/memory", status_code=201)

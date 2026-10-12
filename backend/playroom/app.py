@@ -116,5 +116,3 @@ def create_app(
     app.include_router(campaigns.router)
     app.include_router(memory.router)
     return app
-
-

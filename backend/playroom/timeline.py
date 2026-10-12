@@ -150,11 +150,13 @@ def create_state_checkpoint(
         return _advance_checkpoint(connection, campaign_id, branch_id, expected_state_version, snapshot)
 
 
-def create_committed_revision(connection: sqlite3.Connection, campaign_id: str, branch_id: str, action_text: str, narrative_text: str) -> tuple[str, str]:
+def create_committed_revision(connection: sqlite3.Connection, campaign_id: str, branch_id: str, action_text: str, narrative_text: str, *, expected_state_version: int) -> tuple[str, str]:
     if not action_text.strip() or not narrative_text.strip():
         raise ValidationError("A committed turn needs both player action and complete narrative")
     with transaction(connection):
         branch = _branch_row(connection, campaign_id, branch_id)
+        if branch["state_version"] != expected_state_version:
+            raise StateConflict("Campaign state changed; reload before committing the turn")
         head = load_state_checkpoint(connection, campaign_id, branch_id, branch["head_checkpoint_id"])
         sequence = connection.execute("SELECT COALESCE(MAX(sequence), 0) + 1 FROM turns WHERE branch_id = ?", (branch_id,)).fetchone()[0]
         turn_id, revision_id = str(uuid4()), str(uuid4())

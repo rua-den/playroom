@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS campaigns (
     id TEXT PRIMARY KEY,
     owner_id TEXT NOT NULL REFERENCES owners(id) ON DELETE CASCADE,
     title TEXT NOT NULL,
+    archived_at TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );

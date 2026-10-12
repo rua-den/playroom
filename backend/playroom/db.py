@@ -42,6 +42,9 @@ def connect(path_or_url: str | Path) -> sqlite3.Connection:
 def migrate(connection: sqlite3.Connection) -> None:
     migration = Path(__file__).parent / "migrations" / "001_initial.sql"
     connection.executescript(migration.read_text(encoding="utf-8"))
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(campaigns)")}
+    if "archived_at" not in columns:
+        connection.execute("ALTER TABLE campaigns ADD COLUMN archived_at TEXT")
 
 
 def request_connection(request: Request):

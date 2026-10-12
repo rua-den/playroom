@@ -71,6 +71,7 @@ class MemoryVersion:
     version: int
     kind: str
     text: str
+    entity_ids: tuple[str, ...]
     origin: str
     status: str
     pinned: bool

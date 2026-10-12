@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from .. import campaigns as service
@@ -29,6 +29,23 @@ class ProfileUpdate(BaseModel):
     data: dict
 
 
+class CampaignUpdate(BaseModel):
+    branch_id: str
+    expected_state_version: int = Field(ge=1)
+    title: str = Field(min_length=1, max_length=160)
+
+
+class CharacterCreate(BaseModel):
+    branch_id: str
+    expected_state_version: int = Field(ge=1)
+    character: dict
+
+
+class ProfileRemove(BaseModel):
+    branch_id: str
+    expected_state_version: int = Field(ge=1)
+
+
 @router.get("")
 def campaigns(connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
     return service.list_campaigns(connection, owner.id)
@@ -43,6 +60,28 @@ def create(payload: CampaignCreate, connection: sqlite3.Connection = Depends(req
 @router.get("/{campaign_id}")
 def get(campaign_id: str, connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
     return service.get_campaign(connection, campaign_id, owner.id)
+
+
+@router.patch("/{campaign_id}")
+def rename(campaign_id: str, payload: CampaignUpdate, connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
+    return service.rename_campaign(connection, campaign_id, payload.branch_id, payload.title, expected_state_version=payload.expected_state_version, owner_id=owner.id)
+
+
+@router.post("/{campaign_id}/archive")
+def archive(campaign_id: str, payload: ProfileRemove, connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
+    return service.archive_campaign(connection, campaign_id, payload.branch_id, expected_state_version=payload.expected_state_version, owner_id=owner.id)
+
+
+@router.post("/{campaign_id}/characters", status_code=201)
+def add_character(campaign_id: str, payload: CharacterCreate, connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
+    created = service.add_character(connection, campaign_id, payload.branch_id, payload.character, expected_state_version=payload.expected_state_version, owner_id=owner.id)
+    return {"state_version": created.state_version, "checkpoint_id": created.id, "character_id": payload.character.get("id")}
+
+
+@router.delete("/{campaign_id}/profiles/{profile_key:path}")
+def remove(campaign_id: str, profile_key: str, branch_id: str, expected_state_version: int, connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
+    saved = service.remove_profile(connection, campaign_id, branch_id, profile_key, expected_state_version=expected_state_version, owner_id=owner.id)
+    return {"state_version": saved.state_version, "checkpoint_id": saved.id}
 
 
 @router.get("/{campaign_id}/profiles/{profile_key:path}")
