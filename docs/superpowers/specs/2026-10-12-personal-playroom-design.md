@@ -1,6 +1,6 @@
 # Playroom cá nhân — web ưu tiên điện thoại
 
-Ngày: 12/10/2026. Trạng thái: đã qua review vòng hai, chưa triển khai. VPS dùng Caddy theo xác nhận người dùng. Contract runtime bổ sung ở [AI/context policy](2026-10-12-runtime-ai-context-policy.md); mẫu đánh giá ở [playrooom](../../references/playrooom-style-and-evaluation.md).
+Ngày: 12/10/2026. Trạng thái: đang triển khai sau review vòng hai; backend nền đã qua kiểm chứng. VPS dùng Caddy theo xác nhận người dùng. Contract runtime bổ sung ở [AI/context policy](2026-10-12-runtime-ai-context-policy.md); mẫu đánh giá ở [playrooom](../../references/playrooom-style-and-evaluation.md).
 
 ## 1. Mục tiêu đã xác nhận
 

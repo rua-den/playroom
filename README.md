@@ -6,7 +6,7 @@ Trọng tâm là quản lý context qua nhiều chương: lưu hồ sơ, cảnh,
 
 ## Trạng thái
 
-Repo hiện chứa tài liệu thiết kế, kế hoạch triển khai và review ngày 12/10/2026. Chưa có code ứng dụng, lệnh chạy app, kết quả test ứng dụng hoặc production deployment.
+Đang triển khai theo plan đã review. Mốc backend nền đã có owner authentication, campaign/profile CRUD, checkpoint bất biến và ký ức có phiên bản; 26 test backend đã qua cùng review. Bộ chọn context, vòng AI và giao diện đang được xây tiếp; chưa có production deployment hoặc kiểm chứng model thật.
 
 ## Đọc theo thứ tự
 
@@ -24,7 +24,8 @@ Agent đọc [AGENTS.md](AGENTS.md) trước khi thay đổi repo.
 - Backend: Python + FastAPI + Uvicorn; bộ chọn context, phiên bản truyện và AI provider adapter tách riêng.
 - Dữ liệu: SQLite trên thư mục lưu trữ bền, có nguồn dữ kiện và checkpoint của từng trạng thái.
 - Deploy: VPS hiện có của người dùng, qua **Caddy đang hoạt động**; Playroom có service, thư mục, database và subdomain riêng.
-- AI: endpoint/model qua API được chọn khi triển khai; tài khoản ChatGPT hiện tại không được giả định là API access.
+- AI: OpenRouter là integration đầu tiên do người dùng chọn; model/role được cấu hình riêng. API key nhập ở máy/server, không dùng session ChatGPT làm API access.
+- Domain dự kiến: https://play.nhkhuy.run.place; DNS/SSH/Caddy thực tế chưa được audit hay thay đổi.
 - Quality có AI hỗ trợ chọn context; economy giảm số call. Cả hai giữ nguyên dữ liệu/style, có free-only policy và không tự chuyển paid khi hết quota.
 
 ## Các mốc

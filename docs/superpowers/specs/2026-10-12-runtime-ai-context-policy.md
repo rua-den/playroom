@@ -75,6 +75,8 @@ ProviderAdapter có `capabilities_for(profile)`, `generate_text(request)` và `g
 
 Sau MVP phone trial, thêm adapter free thứ hai nếu phép thử cho thấy cần. Một provider có đủ tier/capability có thể phục vụ cả hai mode. JSON Schema chỉ kiểm định hình dạng; vẫn validate ID/nguồn và người chơi duyệt diễn giải. Nguồn: [OpenAI output token accounting](https://developers.openai.com/api/docs/guides/token-counting), [Gemini structured output](https://ai.google.dev/gemini-api/docs/structured-output).
 
+Integration đầu tiên đã được người dùng chọn khi triển khai: **OpenRouter**. Model ID/role và capability cụ thể vẫn cần cấu hình/xác minh; API key không được đưa vào chat hoặc repo. Không cần tích hợp OpenAI/Gemini trực tiếp để đủ MVP. Endpoint support/schema phải được kiểm tra; không bật model fallback hoặc response-healing/plugins để che lỗi.
+
 ## 6. Điều kiện kiểm chứng
 
 - Deterministic/fake: wrong-branch/pending/invented ID bị loại; mandatory không bị director bỏ; quality 2/economy 1 upstream attempt; quota fail không gọi paid fallback; đổi model giữ state; reconnect ở mỗi stage không nhân call; incomplete không auto-commit.
