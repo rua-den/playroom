@@ -12,7 +12,7 @@ from playroom.campaigns import create_campaign
 from playroom.context import build_candidate_pool
 from playroom.db import connect, migrate
 from playroom.domain import ValidationError
-from playroom.generation import DEFAULT_PROFILE, GenerationService
+from playroom.generation import DEFAULT_PROFILE, GenerationService, _ProviderError
 from playroom.memory import append_memory_version
 from playroom.provider import FakeProvider, OpenRouterAdapter, ProviderAdapter, ProviderFailure, ProviderResult
 from playroom.settings import get_owner_settings, save_owner_settings
@@ -252,6 +252,51 @@ def test_quality_uses_actual_persisted_wire_and_cost_ledger(tmp_path):
     run = db.execute("SELECT token_budget_json, request_json, wire_json, counter_id, counter_mode FROM context_runs").fetchone()
     assert json.loads(run["request_json"])["narrator"]["messages"]
     assert json.loads(run["wire_json"])["narrator"]["messages"]
+
+
+def test_required_narrator_wire_overflow_preflights_before_director(tmp_path):
+    db, owner, campaign = _story(tmp_path)
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    profile = {
+        **DEFAULT_PROFILE,
+        "input_limit": 260,
+        "context_limit": 1024,
+        "output_limit": 64,
+    }
+
+    class CountingProvider(FakeProvider):
+        def __init__(self):
+            super().__init__([])
+            self.director_calls = 0
+
+        def generate_structured(self, request, schema):
+            self.director_calls += 1
+            raise AssertionError("director must not run when required narrator wire overflows")
+
+    provider = CountingProvider()
+    service = GenerationService(db, provider, profile={"roles": {"context": {**profile, "input_limit": 4096, "context_limit": 8192}, "narrator": profile}})
+
+    job = service.generate(owner.id, campaign.id, campaign.initial_branch_id, "Look", idempotency_key="required-overflow-preflight", expected_checkpoint_id=head.checkpoint_id, mode="quality", execute=False)
+    result = service.run(job["id"])
+
+    assert result["status"] == "failed"
+    assert provider.director_calls == 0
+    assert db.execute("SELECT status FROM provider_attempts WHERE generation_job_id=? AND stage='context'", (job["id"],)).fetchone()[0] == "interrupted"
+    assert db.execute("SELECT COUNT(*) FROM generation_branch_guards WHERE generation_job_id=?", (job["id"],)).fetchone()[0] == 0
+
+
+def test_context_run_insert_rolls_back_when_final_context_cas_loses(tmp_path):
+    db, owner, campaign = _story(tmp_path)
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    service = GenerationService(db, FakeProvider([]))
+    job = service.generate(owner.id, campaign.id, campaign.initial_branch_id, "Look", idempotency_key="context-cas-rollback", expected_checkpoint_id=head.checkpoint_id, execute=False)
+    preview = json.loads(job["preview_snapshot_json"])
+    db.execute("UPDATE generation_jobs SET status='running',cancel_requested=1 WHERE id=?", (job["id"],))
+
+    with pytest.raises(_ProviderError, match="Generation was cancelled"):
+        service._save_context_run(job, preview)
+
+    assert db.execute("SELECT COUNT(*) FROM context_runs WHERE generation_job_id=?", (job["id"],)).fetchone()[0] == 0
 
 
 def test_cost_ledger_keeps_provider_billing_separate_from_unknown_usage(tmp_path):

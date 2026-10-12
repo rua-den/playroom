@@ -442,7 +442,7 @@ class GenerationService:
         bounded_pool["omission_reasons"] = omissions
         return request, metadata, omissions, bounded_pool
 
-    def _narrator_request(self, job, profile: dict, preview: dict, settings: dict):
+    def _narrator_request(self, job, profile: dict, preview: dict, settings: dict, *, required_only: bool = False):
         budget = self._role_budget(profile, settings, "narrator")
         system = (
             "Continue the story in Vietnamese using only supplied context. Canon and approved invariants are authoritative. "
@@ -477,6 +477,8 @@ class GenerationService:
         required_meta = self._wire_metadata(request, profile, role="narrator", budget=budget)
         if not required_meta["fits"]:
             raise ValidationError("Required narrator context exceeds the configured input budget")
+        if required_only:
+            return _copy(preview), request, required_meta
         selected = list(required)
         omissions = list(preview.get("omission_reasons", []))
         selected_ids = {block.get("id") for block in selected}
@@ -574,6 +576,11 @@ class GenerationService:
         director_meta = None
         director_key = None
         director_result = None
+        # Validate the exact required narrator system/user wrapper before any
+        # quality director inference. This preserves the zero-call boundary
+        # when the final required wire cannot fit.
+        if job["mode"] == "quality":
+            self._narrator_request(job, narrator, preview, settings, required_only=True)
         if job["mode"] == "quality" and context_attempt and context_attempt["status"] == "completed" and saved_context:
             final_preview = json.loads(saved_context)
         elif job["mode"] == "quality":
@@ -756,6 +763,15 @@ class GenerationService:
         return packed
 
     def _save_context_run(self, job, preview, director_meta=None, narrator_meta=None):
+        if self.connection.in_transaction:
+            return self._save_context_run_body(job, preview, director_meta, narrator_meta)
+        # Economy mode reaches this helper outside the director completion
+        # transaction. Keep the insert and guarded final-context CAS under
+        # one lock so a cancel/recovery writer cannot strand a stale row.
+        with transaction(self.connection):
+            return self._save_context_run_body(job, preview, director_meta, narrator_meta)
+
+    def _save_context_run_body(self, job, preview, director_meta=None, narrator_meta=None):
         source_ids = [source for block in preview.get("blocks", []) for source in block.get("source_ids", [])]
         for metadata in (director_meta or {}, narrator_meta or {}):
             source_ids.extend(metadata.get("source_ids", []))
