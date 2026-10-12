@@ -34,7 +34,8 @@ def _service(request: Request, connection: sqlite3.Connection, owner: Owner) -> 
             continue
         roles[role] = get_model_profile(connection, owner.id, binding["id"], binding.get("version"))
     if getattr(request.app.state, "generation_runtime", None) is None:
-        request.app.state.generation_runtime = GenerationRuntime(request.app.state.database_url, provider, provider_factory=provider_factory, credential_resolver=request.app.state.generation_credential_resolver, attempt_registry=request.app.state.generation_attempt_registry)
+        resolver = request.app.state.generation_credential_resolver if provider_factory is not None else None
+        request.app.state.generation_runtime = GenerationRuntime(request.app.state.database_url, provider, provider_factory=provider_factory, credential_resolver=resolver, attempt_registry=request.app.state.generation_attempt_registry)
         request.app.state.generation_runtime.start()
     # Keep explicit fake/demo injection usable without requiring a credential
     # file; production profiles still pin their immutable secret version.

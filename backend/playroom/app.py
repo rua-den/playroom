@@ -88,7 +88,8 @@ def create_app(
             app.state.generation_provider_factory = None
         initial_runtime = getattr(app.state, "generation_runtime", None)
         if initial_runtime is None and (app.state.generation_provider is not None or app.state.generation_provider_factory is not None):
-            initial_runtime = GenerationRuntime(app.state.database_url, app.state.generation_provider, provider_factory=app.state.generation_provider_factory, credential_resolver=app.state.generation_credential_resolver, attempt_registry=app.state.generation_attempt_registry)
+            resolver = app.state.generation_credential_resolver if app.state.generation_provider_factory is not None else None
+            initial_runtime = GenerationRuntime(app.state.database_url, app.state.generation_provider, provider_factory=app.state.generation_provider_factory, credential_resolver=resolver, attempt_registry=app.state.generation_attempt_registry)
             app.state.generation_runtime = initial_runtime
         if initial_runtime is None:
             recovery_connection = connect(app.state.database_url)

@@ -11,7 +11,7 @@ from .provider import ProviderFailure
 @dataclass
 class AttemptHandle:
     key: str
-    provider: object
+    provider: object | None
     request: dict
     cancel_event: threading.Event
     queue: queue.Queue
@@ -20,10 +20,12 @@ class AttemptHandle:
 
     def cancel(self) -> None:
         self.cancel_event.set()
-        try:
-            self.provider.cancel(self.request)
-        except Exception:
-            pass
+        provider = self.provider
+        if provider is not None:
+            try:
+                provider.cancel(self.request)
+            except Exception:
+                pass
 
 
 class PhysicalAttemptRegistry:
@@ -33,30 +35,54 @@ class PhysicalAttemptRegistry:
         self._slots = threading.BoundedSemaphore(limit)
         self._handles: dict[str, AttemptHandle] = {}
         self._lock = threading.RLock()
+        self._condition = threading.Condition(self._lock)
         self._shutdown = threading.Event()
 
-    def _start(self, key: str, provider, request: dict, invoke) -> AttemptHandle:
-        while not self._shutdown.is_set():
-            if self._slots.acquire(timeout=0.05):
-                break
-        else:
-            raise RuntimeError("Attempt registry is shutting down")
+    def _start(self, key: str, provider, request: dict, timeout: float, invoke, provider_factory=None) -> AttemptHandle:
         cancel_event = request.setdefault("cancel_event", threading.Event())
         values: queue.Queue = queue.Queue()
         done = threading.Event()
+        deadline = time.monotonic() + timeout
+        slot_held = False
 
         def release():
+            nonlocal slot_held
             with self._lock:
                 self._handles.pop(key, None)
-            self._slots.release()
+                if slot_held:
+                    slot_held = False
+                    self._slots.release()
+                self._condition.notify_all()
 
         handle = AttemptHandle(key, provider, request, cancel_event, values, done, release)
-        with self._lock:
+        with self._condition:
             self._handles[key] = handle
+            self._condition.notify_all()
 
         def worker():
+            nonlocal slot_held
             try:
-                result = invoke()
+                while not self._shutdown.is_set() and not cancel_event.is_set():
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        return
+                    if self._slots.acquire(timeout=min(0.05, remaining)):
+                        with self._lock:
+                            slot_held = True
+                        break
+                else:
+                    return
+                if cancel_event.is_set() or time.monotonic() >= deadline:
+                    return
+                selected = provider_factory(handle) if provider_factory is not None else provider
+                if isinstance(selected, ProviderFailure):
+                    values.put(selected)
+                    return
+                handle.provider = selected
+                if cancel_event.is_set() or time.monotonic() >= deadline:
+                    handle.cancel()
+                    return
+                result = invoke(selected)
                 if isinstance(result, (str, bytes, ProviderFailure)):
                     values.put(result)
                 else:
@@ -67,7 +93,7 @@ class PhysicalAttemptRegistry:
                     else:
                         for item in iterator:
                             values.put(item)
-            except Exception as exc:
+            except Exception:
                 values.put(ProviderFailure("PROVIDER_ERROR", "Provider execution failed"))
             finally:
                 done.set()
@@ -76,8 +102,8 @@ class PhysicalAttemptRegistry:
         threading.Thread(target=worker, name=f"playroom-attempt-{key}", daemon=True).start()
         return handle
 
-    def structured(self, key: str, provider, request: dict, schema: dict, timeout: float):
-        handle = self._start(key, provider, request, lambda: provider.generate_structured(request, schema))
+    def structured(self, key: str, provider, request: dict, schema: dict, timeout: float, *, provider_factory=None):
+        handle = self._start(key, provider, request, timeout, lambda selected: selected.generate_structured(request, schema), provider_factory=provider_factory)
         deadline = time.monotonic() + timeout
         while True:
             if handle.cancel_event.is_set():
@@ -91,10 +117,14 @@ class PhysicalAttemptRegistry:
                 return handle.queue.get(timeout=min(0.05, remaining))
             except queue.Empty:
                 if handle.done.is_set():
+                    if handle.cancel_event.is_set():
+                        raise TimeoutError("cancelled")
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("timeout")
                     return ProviderFailure("MISSING_TERMINAL", "Provider did not return a terminal result")
 
-    def stream(self, key: str, provider, request: dict, timeout: float):
-        handle = self._start(key, provider, request, lambda: provider.generate_text(request))
+    def stream(self, key: str, provider, request: dict, timeout: float, *, provider_factory=None):
+        handle = self._start(key, provider, request, timeout, lambda selected: selected.generate_text(request), provider_factory=provider_factory)
         deadline = time.monotonic() + timeout
         while True:
             if handle.cancel_event.is_set():
@@ -108,6 +138,10 @@ class PhysicalAttemptRegistry:
                 yield handle.queue.get(timeout=min(0.05, remaining))
             except queue.Empty:
                 if handle.done.is_set() and handle.queue.empty():
+                    if handle.cancel_event.is_set():
+                        raise TimeoutError("cancelled")
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("timeout")
                     return
 
     def cancel(self, job_id: str) -> None:
@@ -125,6 +159,16 @@ class PhysicalAttemptRegistry:
     def shutdown(self) -> None:
         self._shutdown.set()
         self.cancel_all()
+
+    def wait_registered(self, key: str, timeout: float = 1.0) -> bool:
+        deadline = time.monotonic() + timeout
+        with self._condition:
+            while key not in self._handles:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self._condition.wait(remaining)
+            return True
 
     def active(self) -> int:
         with self._lock:

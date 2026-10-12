@@ -13,7 +13,7 @@ from playroom.context import build_candidate_pool
 from playroom.memory import append_memory_version
 from playroom.db import connect, migrate
 from playroom.domain import StateConflict
-from playroom.generation import DEFAULT_PROFILE, GenerationService
+from playroom.generation import DEFAULT_PROFILE, GenerationRuntime, GenerationService
 from playroom.attempt_runtime import PhysicalAttemptRegistry
 from playroom.campaigns import update_profile
 from playroom.provider import FakeProvider, ProviderAdapter, ProviderFailure, ProviderResult
@@ -108,17 +108,74 @@ def test_partial_output_is_draft_and_offsets_are_unicode_safe(tmp_path):
         service.commit_candidate(owner.id, job["id"])
 
 
-def test_cancel_and_recovery_do_not_replay_attempts(tmp_path):
+def test_restart_before_dispatch_recovers_queued_job_without_replay(tmp_path):
     db, owner, campaign = _story(tmp_path)
     head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
-    # Reserve a queued job and simulate a process restart before dispatch.
-    service = GenerationService(db, FakeProvider(["unused"]))
-    job = service.generate(owner.id, campaign.id, campaign.initial_branch_id, "Look", idempotency_key="cancel-1", expected_checkpoint_id=head.checkpoint_id)
+    reserved = GenerationService(db, FakeProvider(["unused"])).generate(owner.id, campaign.id, campaign.initial_branch_id, "Look", idempotency_key="restart-queued", expected_checkpoint_id=head.checkpoint_id, execute=False)
+    assert reserved["status"] == "queued"
+    provider = FakeProvider(["recovered candidate"])
+    recovered_service = GenerationService(db, provider)
+    recovered_service.recover_after_restart()
+    job = recovered_service.run(reserved["id"])
     assert job["status"] == "candidate"
-    cancelled = service.cancel(owner.id, job["id"])
-    assert cancelled["status"] == "cancelled"
-    same = service.generate(owner.id, campaign.id, campaign.initial_branch_id, "Look", idempotency_key="cancel-1", expected_checkpoint_id=head.checkpoint_id)
-    assert same["id"] == job["id"] and len(service.provider.calls) == 1
+    assert len(provider.calls) == 1
+    assert recovered_service.generate(owner.id, campaign.id, campaign.initial_branch_id, "Look", idempotency_key="restart-queued", expected_checkpoint_id=head.checkpoint_id)["id"] == reserved["id"]
+
+
+def test_same_branch_reservation_is_serialized_across_connections(tmp_path):
+    db, owner, campaign = _story(tmp_path)
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    first_db = connect(tmp_path / "durable.sqlite3")
+    second_db = connect(tmp_path / "durable.sqlite3")
+    services = [GenerationService(first_db, FakeProvider([])), GenerationService(second_db, FakeProvider([]))]
+    barrier = threading.Barrier(2)
+    results, errors = [], []
+
+    def reserve(service, key):
+        barrier.wait()
+        try:
+            results.append(service.generate(owner.id, campaign.id, campaign.initial_branch_id, "Look", idempotency_key=key, expected_checkpoint_id=head.checkpoint_id, execute=False))
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=reserve, args=(services[0], "race-one")), threading.Thread(target=reserve, args=(services[1], "race-two"))]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(2)
+    assert len(results) == 1
+    assert len(errors) == 1 and isinstance(errors[0], StateConflict)
+    first_db.close()
+    second_db.close()
+
+
+def test_concurrent_candidate_commit_creates_one_revision(tmp_path):
+    db, owner, campaign = _story(tmp_path)
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    candidate = GenerationService(db, FakeProvider(["candidate"])).generate(owner.id, campaign.id, campaign.initial_branch_id, "Look", idempotency_key="commit-race", expected_checkpoint_id=head.checkpoint_id)
+    before = db.execute("SELECT COUNT(*) FROM turn_revisions").fetchone()[0]
+    first_db = connect(tmp_path / "durable.sqlite3")
+    second_db = connect(tmp_path / "durable.sqlite3")
+    barrier = threading.Barrier(2)
+    results, errors = [], []
+
+    def commit(connection):
+        barrier.wait()
+        try:
+            results.append(GenerationService(connection, FakeProvider([])).commit_candidate(owner.id, candidate["id"]))
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=commit, args=(first_db,)), threading.Thread(target=commit, args=(second_db,))]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(2)
+    assert len(results) + len(errors) == 2
+    assert all(isinstance(error, StateConflict) for error in errors)
+    assert db.execute("SELECT COUNT(*) FROM turn_revisions").fetchone()[0] == before + 1
+    first_db.close()
+    second_db.close()
 
 
 def test_complete_candidate_can_become_stale_after_effective_story_mutation(tmp_path):
@@ -165,6 +222,7 @@ class _BlockingDirector(ProviderAdapter):
     def __init__(self):
         self.started = threading.Event()
         self.release = threading.Event()
+        self.finished = threading.Event()
         self.calls = 0
         self.request = None
 
@@ -198,6 +256,176 @@ def test_http_cancel_signals_the_runtime_attempt_and_retains_physical_work(tmp_p
     thread.join(3)
     assert not thread.is_alive()
     second_connection.close()
+
+
+def _http_login(client, owner):
+    response = client.post("/api/auth/login", json={"email": owner.email, "password": "durable password"}, headers={"origin": "https://testserver"})
+    assert response.status_code == 200, response.text
+
+
+def test_http_cancel_blocking_director_cannot_save_late_context(tmp_path):
+    db, owner, campaign = _story(tmp_path)
+    database = tmp_path / "durable.sqlite3"
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    provider = _BlockingDirector()
+    app = create_app(database_url=str(database), allowed_hosts={"testserver"}, secure_cookies=False, generation_provider=provider, credential_root=tmp_path / "secrets")
+    with TestClient(app, base_url="https://testserver") as client:
+        _http_login(client, owner)
+        response = client.post(f"/api/campaigns/{campaign.id}/generate", json={"branch_id": campaign.initial_branch_id, "action": "Look", "idempotency_key": "http-director-cancel", "checkpoint_id": head.checkpoint_id, "mode": "quality"}, headers={"origin": "https://testserver"})
+        assert response.status_code == 201, response.text
+        job_id = response.json()["id"]
+        assert provider.started.wait(2)
+        cancelled = client.post(f"/api/generation/jobs/{job_id}/cancel", headers={"origin": "https://testserver"})
+        assert cancelled.status_code == 200
+        assert cancelled.json()["status"] == "cancelling"
+        assert provider.request["cancel_event"].is_set()
+        provider.release.set()
+        for _ in range(30):
+            current = client.get(f"/api/generation/jobs/{job_id}").json()
+            if current["status"] in {"cancelled", "failed"}:
+                break
+            time.sleep(0.05)
+        assert current["status"] == "cancelled"
+        assert current["final_context_json"] is None
+        assert all(attempt["status"] != "completed" for attempt in current["attempt_details"])
+
+
+class _BlockingNarrator(ProviderAdapter):
+    def __init__(self):
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.finished = threading.Event()
+        self.calls = 0
+
+    def capabilities_for(self, profile):
+        return None
+
+    def generate_text(self, request):
+        self.calls += 1
+        self.started.set()
+        try:
+            self.release.wait(5)
+            yield ProviderResult(text="late narrator", usage={"status": "unknown"}, finish_reason="stop")
+        finally:
+            self.finished.set()
+
+
+def test_http_cancel_blocking_narrator_cannot_create_candidate_from_late_result(tmp_path):
+    db, owner, campaign = _story(tmp_path)
+    database = tmp_path / "durable.sqlite3"
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    provider = _BlockingNarrator()
+    app = create_app(database_url=str(database), allowed_hosts={"testserver"}, secure_cookies=False, generation_provider=provider, credential_root=tmp_path / "secrets")
+    with TestClient(app, base_url="https://testserver") as client:
+        _http_login(client, owner)
+        response = client.post(f"/api/campaigns/{campaign.id}/generate", json={"branch_id": campaign.initial_branch_id, "action": "Look", "idempotency_key": "http-narrator-cancel", "checkpoint_id": head.checkpoint_id}, headers={"origin": "https://testserver"})
+        assert response.status_code == 201, response.text
+        job_id = response.json()["id"]
+        assert provider.started.wait(2)
+        cancelled = client.post(f"/api/generation/jobs/{job_id}/cancel", headers={"origin": "https://testserver"})
+        assert cancelled.status_code == 200
+        assert cancelled.json()["status"] == "cancelling"
+        provider.release.set()
+        for _ in range(30):
+            current = client.get(f"/api/generation/jobs/{job_id}").json()
+            if current["status"] in {"cancelled", "failed"}:
+                break
+            time.sleep(0.05)
+        assert current["status"] == "cancelled"
+        assert current["draft"] == ""
+        assert all(attempt["status"] != "completed" for attempt in current["attempt_details"])
+
+
+def test_restart_interrupts_dispatched_stage_and_changes_execution_epoch(tmp_path):
+    db, owner, campaign = _story(tmp_path)
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    reserved = GenerationService(db, FakeProvider(["unused"])).generate(owner.id, campaign.id, campaign.initial_branch_id, "Look", idempotency_key="restart-dispatched", expected_checkpoint_id=head.checkpoint_id, execute=False)
+    old_epoch = reserved["execution_epoch"]
+    db.execute("UPDATE generation_jobs SET status='running' WHERE id=?", (reserved["id"],))
+    db.execute("UPDATE provider_attempts SET status='dispatched',claim_epoch=? WHERE generation_job_id=?", (old_epoch, reserved["id"]))
+    db.commit()
+    restarted = GenerationService(db, FakeProvider([]))
+    restarted.recover_after_restart()
+    current = restarted._job(reserved["id"])
+    assert current["status"] == "interrupted"
+    assert current["execution_epoch"] == old_epoch
+    assert current["attempt_details"][0]["status"] == "interrupted"
+    assert db.execute("SELECT 1 FROM generation_branch_guards WHERE generation_job_id=?", (reserved["id"],)).fetchone() is None
+
+
+def test_completed_director_restart_resumes_only_queued_narrator(tmp_path):
+    db, owner, campaign = _story(tmp_path)
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    reserved = GenerationService(db, FakeProvider([])).generate(owner.id, campaign.id, campaign.initial_branch_id, "Look", idempotency_key="restart-director", expected_checkpoint_id=head.checkpoint_id, mode="quality", execute=False)
+    preview = db.execute("SELECT preview_snapshot_json FROM generation_jobs WHERE id=?", (reserved["id"],)).fetchone()[0]
+    db.execute("UPDATE generation_jobs SET status='running',final_context_json=? WHERE id=?", (preview, reserved["id"]))
+    db.execute("UPDATE provider_attempts SET status='completed',output_text='{}',usage_json='{}' WHERE generation_job_id=? AND stage='context'", (reserved["id"],))
+    db.commit()
+    provider = FakeProvider(["resumed narrator"])
+    restarted = GenerationService(db, provider)
+    restarted.recover_after_restart()
+    queued = restarted._job(reserved["id"])
+    assert queued["status"] == "queued"
+    assert [attempt["status"] for attempt in queued["attempt_details"]] == ["completed", "queued"]
+    result = restarted.run(reserved["id"])
+    assert result["status"] == "candidate"
+    assert [call["stage"] for call in provider.calls] == ["narration"]
+
+
+class _PartialBlockingNarrator(ProviderAdapter):
+    def __init__(self):
+        self.partial = threading.Event()
+        self.release = threading.Event()
+
+    def capabilities_for(self, profile):
+        return None
+
+    def generate_text(self, request):
+        yield "partial 👋"
+        self.partial.set()
+        self.release.wait(5)
+        yield ProviderResult(text="", usage={"status": "unknown"}, finish_reason="stop")
+
+
+def test_restart_during_partial_narration_preserves_partial_and_blocks_late_candidate(tmp_path):
+    db, owner, campaign = _story(tmp_path)
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    provider = _PartialBlockingNarrator()
+    service = GenerationService(db, provider, timeout_seconds=10)
+    result = {}
+    thread = threading.Thread(target=lambda: result.setdefault("job", service.generate(owner.id, campaign.id, campaign.initial_branch_id, "Look", idempotency_key="restart-partial", expected_checkpoint_id=head.checkpoint_id)))
+    thread.start()
+    assert provider.partial.wait(2)
+    job_id = db.execute("SELECT id FROM generation_jobs WHERE idempotency_key='restart-partial'").fetchone()[0]
+    restart_db = connect(tmp_path / "durable.sqlite3")
+    restarted = GenerationService(restart_db, FakeProvider([]))
+    restarted.recover_after_restart()
+    provider.release.set()
+    thread.join(3)
+    assert not thread.is_alive()
+    current = restarted._job(job_id)
+    assert current["status"] == "interrupted"
+    assert current["draft"] == "partial 👋"
+    assert all(attempt["status"] != "completed" for attempt in current["attempt_details"])
+    restart_db.close()
+
+
+def test_runtime_shutdown_keeps_connection_open_while_provider_is_blocked(tmp_path):
+    db, owner, campaign = _story(tmp_path)
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    provider = _BlockingNarrator()
+    seed = GenerationService(db, provider)
+    seed.generate(owner.id, campaign.id, campaign.initial_branch_id, "Look", idempotency_key="shutdown-blocked", expected_checkpoint_id=head.checkpoint_id, execute=False)
+    runtime = GenerationRuntime(str(tmp_path / "durable.sqlite3"), provider, poll_seconds=0.01)
+    runtime.start()
+    assert provider.started.wait(2)
+    assert runtime.stop() is False
+    assert runtime.connection.execute("SELECT 1").fetchone()[0] == 1
+    provider.release.set()
+    assert provider.finished.wait(2)
+    assert runtime._thread is not None
+    runtime._thread.join(2)
+    assert runtime.stop() is True
 
 
 def test_commit_rejects_competing_branch_guard(tmp_path):
@@ -300,6 +528,144 @@ def test_zero_row_dispatch_claim_never_invokes_provider(tmp_path):
     assert provider.calls == []
 
 
+class _BlockingStructured(ProviderAdapter):
+    def __init__(self):
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.finished = threading.Event()
+        self.calls = 0
+
+    def capabilities_for(self, profile):
+        return None
+
+    def generate_structured(self, request, schema):
+        self.calls += 1
+        self.started.set()
+        try:
+            self.release.wait(5)
+            return ProviderFailure("CANCELLED", "released blocker")
+        finally:
+            self.finished.set()
+
+
+def _run_blocking_structured(registry, key, provider, finished):
+    try:
+        registry.structured(key, provider, {}, {}, 5)
+    except Exception:
+        pass
+    finally:
+        finished.set()
+
+
+def test_waiting_attempt_can_cancel_before_a_slot_and_never_invokes(tmp_path):
+    registry = PhysicalAttemptRegistry(limit=2)
+    first, second, waiting = _BlockingStructured(), _BlockingStructured(), _BlockingStructured()
+    done1, done2, done3 = threading.Event(), threading.Event(), threading.Event()
+    threading.Thread(target=_run_blocking_structured, args=(registry, "one:context", first, done1), daemon=True).start()
+    threading.Thread(target=_run_blocking_structured, args=(registry, "two:context", second, done2), daemon=True).start()
+    assert first.started.wait(1) and second.started.wait(1)
+    waiter = threading.Thread(target=_run_blocking_structured, args=(registry, "three:context", waiting, done3), daemon=True)
+    waiter.start()
+    assert registry.wait_registered("three:context", 1)
+    registry.cancel("three")
+    assert done3.wait(1)
+    first.release.set()
+    second.release.set()
+    assert done1.wait(1) and done2.wait(1)
+    assert waiting.calls == 0
+
+
+def test_waiting_attempt_deadline_expires_before_slot_and_never_invokes():
+    registry = PhysicalAttemptRegistry(limit=2)
+    first, second, waiting = _BlockingStructured(), _BlockingStructured(), _BlockingStructured()
+    done1, done2 = threading.Event(), threading.Event()
+    threading.Thread(target=_run_blocking_structured, args=(registry, "one:context", first, done1), daemon=True).start()
+    threading.Thread(target=_run_blocking_structured, args=(registry, "two:context", second, done2), daemon=True).start()
+    assert first.started.wait(1) and second.started.wait(1)
+    result = {}
+    def waiting_call():
+        try:
+            result["value"] = registry.structured("three:context", waiting, {}, {}, 0.05)
+        except Exception as exc:
+            result["error"] = exc
+
+    thread = threading.Thread(target=waiting_call, daemon=True)
+    thread.start()
+    assert registry.wait_registered("three:context", 1)
+    thread.join(1)
+    assert not thread.is_alive()
+    assert isinstance(result.get("error"), TimeoutError)
+    first.release.set()
+    second.release.set()
+    assert done1.wait(1) and done2.wait(1)
+    assert waiting.calls == 0
+
+
+def test_two_logically_timed_out_calls_retain_slots_against_third_invocation():
+    registry = PhysicalAttemptRegistry(limit=2)
+    first, second, third = _BlockingStructured(), _BlockingStructured(), _BlockingStructured()
+    done1, done2, done3 = threading.Event(), threading.Event(), threading.Event()
+
+    def timed_out(key, provider, done):
+        try:
+            registry.structured(key, provider, {}, {}, 0.05)
+        except TimeoutError:
+            pass
+        finally:
+            done.set()
+
+    threading.Thread(target=timed_out, args=("one:context", first, done1), daemon=True).start()
+    threading.Thread(target=timed_out, args=("two:context", second, done2), daemon=True).start()
+    assert first.started.wait(1) and second.started.wait(1)
+    assert done1.wait(1) and done2.wait(1)
+    assert registry.active() == 2
+    threading.Thread(target=_run_blocking_structured, args=(registry, "three:context", third, done3), daemon=True).start()
+    assert registry.wait_registered("three:context", 1)
+    registry.cancel("three")
+    assert done3.wait(1)
+    first.release.set()
+    second.release.set()
+    assert first.finished.wait(1) and second.finished.wait(1)
+    assert registry.active() == 0
+    assert third.calls == 0
+
+
+def test_waiting_attempt_resolves_pinned_key_only_after_slot_and_rejects_revoked_version():
+    registry = PhysicalAttemptRegistry(limit=2)
+    first, second = _BlockingStructured(), _BlockingStructured()
+    done1, done2, done3 = threading.Event(), threading.Event(), threading.Event()
+    threading.Thread(target=_run_blocking_structured, args=(registry, "one:context", first, done1), daemon=True).start()
+    threading.Thread(target=_run_blocking_structured, args=(registry, "two:context", second, done2), daemon=True).start()
+    assert first.started.wait(1) and second.started.wait(1)
+    factory_called = threading.Event()
+    revoked = threading.Event()
+    calls = []
+
+    def resolve_then_call(handle):
+        factory_called.set()
+        if revoked.is_set():
+            return ProviderFailure("CREDENTIAL_UNAVAILABLE", "revoked")
+        calls.append("provider")
+        return _BlockingStructured()
+
+    result = {}
+    def waiting_call():
+        result["value"] = registry.structured("three:context", None, {}, {}, 2, provider_factory=resolve_then_call)
+        done3.set()
+
+    thread = threading.Thread(target=waiting_call, daemon=True)
+    thread.start()
+    assert registry.wait_registered("three:context", 1)
+    assert not factory_called.is_set()
+    revoked.set()
+    first.release.set()
+    second.release.set()
+    assert done1.wait(1) and done2.wait(1) and done3.wait(1)
+    assert factory_called.is_set()
+    assert result["value"].code == "CREDENTIAL_UNAVAILABLE"
+    assert calls == []
+
+
 def test_http_raw_identity_recovers_omitted_choices_after_settings_change(tmp_path):
     from playroom.model_profiles import persist_model_profile
     from playroom.settings import save_owner_settings
@@ -345,3 +711,9 @@ def test_authenticated_sse_stream_replays_events_with_resume_cursor(tmp_path):
             text = "".join(stream.iter_text())
             assert stream.headers["content-type"].startswith("text/event-stream")
             assert "event: reserved" in text and "event: completed" in text
+        events = client.get(f"/api/generation/jobs/{job_id}/events").json()["events"]
+        first_cursor = events[0]["id"]
+        with client.stream("GET", f"/api/generation/jobs/{job_id}/events/stream?after={first_cursor}") as resumed:
+            resumed_text = "".join(resumed.iter_text())
+            assert "event: reserved" not in resumed_text
+            assert "event: completed" in resumed_text

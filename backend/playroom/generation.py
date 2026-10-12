@@ -290,8 +290,7 @@ class GenerationService:
                 raise _ProviderError(ProviderFailure("CANCELLED", "Generation attempt was claimed by another worker"))
             self._event(job["id"], "context", "phase_changed", None, "", {"phase": "context_dispatched"})
             try:
-                context_provider = self._provider_for(job, "context", context)
-                result = self.attempt_registry.structured(key, context_provider, request, SELECTION_SCHEMA, self.timeout_seconds)
+                result = self.attempt_registry.structured(key, None, request, SELECTION_SCHEMA, self.timeout_seconds, provider_factory=lambda _handle: self._provider_for_or_failure(job, "context", context))
             except TimeoutError as exc:
                 code = "CANCELLED" if str(exc) == "cancelled" else "PROVIDER_TIMEOUT"
                 failure = ProviderFailure(code, "Generation was cancelled" if code == "CANCELLED" else "Context director exceeded its timeout")
@@ -377,6 +376,12 @@ class GenerationService:
                 raise _ProviderError(ProviderFailure("CONFIG_INVALID", "Provider could not be constructed for the pinned profile")) from exc
         return self.provider
 
+    def _provider_for_or_failure(self, job, stage, profile):
+        try:
+            return self._provider_for(job, stage, profile)
+        except _ProviderError as exc:
+            return exc.failure
+
     def _pack_selected(self, preview, plan, profile, *, director_selected_only=False):
         base = [b for b in preview.get("blocks", []) if b.get("mandatory")] if director_selected_only else list(preview.get("blocks", []))
         blocks, known = base, {b["id"] for b in base}
@@ -413,9 +418,8 @@ class GenerationService:
         self._event(job["id"], "narration", "phase_changed", None, "", {"phase": "narration_dispatched"})
         parts, result = [], None
         try:
-            narration_provider = self._provider_for(job, "narration", profile)
             try:
-                for event in self.attempt_registry.stream(key, narration_provider, request, self.timeout_seconds):
+                for event in self.attempt_registry.stream(key, None, request, self.timeout_seconds, provider_factory=lambda _handle: self._provider_for_or_failure(job, "narration", profile)):
                     if self._cancel_requested(job["id"]):
                         self.attempt_registry.cancel(job["id"])
                         raise _ProviderError(ProviderFailure("CANCELLED", "Generation was cancelled"))
@@ -486,7 +490,9 @@ class GenerationService:
         return changed
 
     def _fail(self, job_id, failure):
-        self.connection.execute("UPDATE generation_jobs SET status=?,failure_json=? WHERE id=?", ("cancelled" if failure.code == "CANCELLED" else "failed", json.dumps({"code": failure.code, "message": failure.message}, ensure_ascii=False), job_id))
+        changed = self.connection.execute("UPDATE generation_jobs SET status=?,failure_json=? WHERE id=? AND status IN ('queued','running','cancelling')", ("cancelled" if failure.code == "CANCELLED" else "failed", json.dumps({"code": failure.code, "message": failure.message}, ensure_ascii=False), job_id)).rowcount
+        if changed != 1:
+            return
         self.connection.execute("DELETE FROM generation_branch_guards WHERE generation_job_id=?", (job_id,))
         for key, event in list(self._attempt_cancel_events.items()):
             if key.startswith(f"{job_id}:"):
@@ -526,6 +532,8 @@ class GenerationService:
 
     def recover_after_restart(self):
         with transaction(self.connection):
+            current_epoch = str(uuid4())
+            self.connection.execute("UPDATE execution_epochs SET epoch=?,created_at=? WHERE id=1", (current_epoch, _now()))
             jobs = self.connection.execute("SELECT generation_job_id FROM provider_attempts WHERE status='dispatched'").fetchall()
             self.connection.execute("UPDATE provider_attempts SET status='interrupted',failure_json=?,finished_at=? WHERE status='dispatched'", (json.dumps({"code": "PROVIDER_INTERRUPTED", "message": "Process restarted while provider call was ambiguous"}), _now()))
             running = self.connection.execute("SELECT id,final_context_json FROM generation_jobs WHERE status='running'").fetchall()
@@ -536,7 +544,8 @@ class GenerationService:
                 queued = self.connection.execute("SELECT 1 FROM provider_attempts WHERE generation_job_id=? AND status='queued'", (job["id"],)).fetchone()
                 dispatched = self.connection.execute("SELECT 1 FROM provider_attempts WHERE generation_job_id=? AND status='dispatched'", (job["id"],)).fetchone()
                 if queued and not dispatched and job["final_context_json"]:
-                    self.connection.execute("UPDATE generation_jobs SET status='queued' WHERE id=?", (job["id"],))
+                    self.connection.execute("UPDATE generation_jobs SET status='queued',execution_epoch=? WHERE id=?", (current_epoch, job["id"]))
+            self.connection.execute("UPDATE generation_jobs SET execution_epoch=? WHERE status='queued' AND execution_epoch<>?", (current_epoch, current_epoch))
 
     startup_recover = recover_after_restart
 
@@ -661,7 +670,7 @@ class GenerationRuntime:
             self._stop.set()
             self.attempt_registry.shutdown()
             self._thread.join(timeout=2)
-            if self._thread.is_alive():
+            if self._thread.is_alive() or self.attempt_registry.active():
                 return False
         self.connection.close()
         return True
