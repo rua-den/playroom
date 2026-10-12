@@ -280,4 +280,3 @@ def test_synthetic_style_cases_keep_agency_and_style_profiles_required(story):
     profile_blocks = [block for block in preview['blocks'] if block['type'] in {'persona', 'style'}]
     assert any("player alone controls Henn's choices" in block['text'] for block in profile_blocks)
     assert any(block['type'] == 'style' for block in profile_blocks)
-
