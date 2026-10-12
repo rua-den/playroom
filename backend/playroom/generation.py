@@ -778,7 +778,7 @@ class GenerationService:
         wires = {"director": director_meta.get("wire") if isinstance(director_meta, dict) else None, "narrator": narrator_meta.get("wire") if isinstance(narrator_meta, dict) else None}
         existing = self.connection.execute("SELECT 1 FROM context_runs WHERE generation_job_id=? LIMIT 1", (job["id"],)).fetchone()
         if existing is not None:
-            updated = self.connection.execute("UPDATE generation_jobs SET final_context_json=? WHERE id=? AND status='running' AND cancel_requested=0", (json.dumps(preview, ensure_ascii=False, sort_keys=True), job["id"]))
+            updated = self.connection.execute("UPDATE generation_jobs SET final_context_json=? WHERE id=? AND status='running' AND cancel_requested=0 AND execution_epoch=(SELECT epoch FROM execution_epochs WHERE id=1)", (json.dumps(preview, ensure_ascii=False, sort_keys=True), job["id"]))
             if updated.rowcount != 1:
                 raise _ProviderError(ProviderFailure("CANCELLED", "Generation was cancelled"))
             return
@@ -793,7 +793,7 @@ class GenerationService:
                 narrator_meta.get("counter_mode") or director_meta.get("counter_mode") or "estimated", _now(),
             ),
         )
-        updated = self.connection.execute("UPDATE generation_jobs SET final_context_json=? WHERE id=? AND status='running' AND cancel_requested=0", (json.dumps(preview, ensure_ascii=False, sort_keys=True), job["id"]))
+        updated = self.connection.execute("UPDATE generation_jobs SET final_context_json=? WHERE id=? AND status='running' AND cancel_requested=0 AND execution_epoch=(SELECT epoch FROM execution_epochs WHERE id=1)", (json.dumps(preview, ensure_ascii=False, sort_keys=True), job["id"]))
         if updated.rowcount != 1:
             raise _ProviderError(ProviderFailure("CANCELLED", "Generation was cancelled"))
 
