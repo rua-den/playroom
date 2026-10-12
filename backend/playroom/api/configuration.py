@@ -28,11 +28,12 @@ class VerifyProfileRequest(BaseModel):
 
 class SettingsRequest(BaseModel):
     context_profile_id: str | None = None
-    narrator_profile_id: str
+    narrator_profile_id: str | None = None
     consolidation_profile_id: str | None = None
-    mode: str = "economy"
-    policy: str = "free_only"
+    mode: str | None = None
+    policy: str | None = None
     confirmed_usd_cap: str | float | None = None
+    budgets: dict[str, dict[str, int]] | None = None
 
 
 def _store(request: Request) -> CredentialStore:
@@ -83,21 +84,31 @@ def settings(connection: sqlite3.Connection = Depends(request_connection), owner
 
 @router.put("/settings")
 def update_settings(payload: SettingsRequest, connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
-    narrator_profile = get_model_profile(connection, owner.id, payload.narrator_profile_id)
+    existing = get_owner_settings(connection, owner.id)
+    narrator_id = payload.narrator_profile_id or ((existing.get("roles") or {}).get("narrator") or {}).get("id")
+    if not narrator_id:
+        raise ValidationError("A narrator profile is required")
+    narrator_profile = get_model_profile(connection, owner.id, narrator_id)
     def binding(profile):
         return {"id": profile["id"], "version": profile["version"], "profile_hash": profile.get("profile_hash") or profile_hash({key: value for key, value in profile.items() if key not in {"version", "profile_hash"}})}
     roles = {"narrator": binding(narrator_profile)}
-    if payload.context_profile_id:
-        context_profile = get_model_profile(connection, owner.id, payload.context_profile_id)
+    context_id = payload.context_profile_id or ((existing.get("roles") or {}).get("context") or {}).get("id")
+    if context_id:
+        context_profile = get_model_profile(connection, owner.id, context_id)
         if not context_profile.get("structured_output") or not context_profile.get("native_structured_output") or not context_profile.get("structured_schema_parameter"):
             raise ValidationError("Context role requires native strict schema support")
         roles["context"] = binding(context_profile)
-    if payload.consolidation_profile_id:
-        consolidation_profile = get_model_profile(connection, owner.id, payload.consolidation_profile_id)
+    consolidation_id = payload.consolidation_profile_id or ((existing.get("roles") or {}).get("consolidation") or {}).get("id")
+    if consolidation_id:
+        consolidation_profile = get_model_profile(connection, owner.id, consolidation_id)
         if not consolidation_profile.get("structured_output") or not consolidation_profile.get("native_structured_output") or not consolidation_profile.get("structured_schema_parameter"):
             raise ValidationError("Consolidation role requires native strict schema support")
         roles["consolidation"] = binding(consolidation_profile)
-    if payload.mode == "quality":
+    mode = payload.mode or existing.get("mode", "economy")
+    policy = payload.policy or existing.get("policy", "free_only")
+    cap = payload.confirmed_usd_cap if payload.confirmed_usd_cap is not None else existing.get("confirmed_usd_cap")
+    budgets = payload.budgets if payload.budgets is not None else (existing.get("budgets") if existing.get("budgets_configured") else {})
+    if mode == "quality":
         if "context" not in roles:
             raise ValidationError("Quality mode requires a context profile")
-    return save_owner_settings(connection, owner.id, {"roles": roles, "mode": payload.mode, "policy": payload.policy, "confirmed_usd_cap": payload.confirmed_usd_cap})
+    return save_owner_settings(connection, owner.id, {"roles": roles, "mode": mode, "policy": policy, "confirmed_usd_cap": cap, "budgets": budgets or {}})

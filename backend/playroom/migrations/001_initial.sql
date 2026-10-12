@@ -178,6 +178,11 @@ CREATE TABLE IF NOT EXISTS context_runs (
     omission_reasons_json TEXT NOT NULL,
     token_budget_json TEXT NOT NULL,
     payload_hash TEXT NOT NULL,
+    generation_job_id TEXT REFERENCES generation_jobs(id) ON DELETE CASCADE,
+    request_json TEXT NOT NULL DEFAULT '{}',
+    wire_json TEXT NOT NULL DEFAULT '{}',
+    counter_id TEXT NOT NULL DEFAULT 'utf8-bytes-div-3',
+    counter_mode TEXT NOT NULL DEFAULT 'estimated',
     created_at TEXT NOT NULL
 );
 

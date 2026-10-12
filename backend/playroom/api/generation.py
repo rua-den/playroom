@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import json
-import time
+import asyncio
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -35,11 +35,11 @@ def _service(request: Request, connection: sqlite3.Connection, owner: Owner) -> 
         roles[role] = get_model_profile(connection, owner.id, binding["id"], binding.get("version"))
     if getattr(request.app.state, "generation_runtime", None) is None:
         resolver = request.app.state.generation_credential_resolver if provider_factory is not None else None
-        request.app.state.generation_runtime = GenerationRuntime(request.app.state.database_url, provider, provider_factory=provider_factory, credential_resolver=resolver, attempt_registry=request.app.state.generation_attempt_registry)
+        request.app.state.generation_runtime = GenerationRuntime(request.app.state.database_url, provider, provider_factory=provider_factory, credential_resolver=resolver, attempt_registry=request.app.state.generation_attempt_registry, context_counter=request.app.state.context_counter, context_counter_id=request.app.state.context_counter_id)
         request.app.state.generation_runtime.start()
     # Keep explicit fake/demo injection usable without requiring a credential
     # file; production profiles still pin their immutable secret version.
-    return GenerationService(connection, provider, profile={"roles": roles} if roles else None, settings=settings)
+    return GenerationService(connection, provider, profile={"roles": roles} if roles else None, settings=settings, context_counter=request.app.state.context_counter, context_counter_id=request.app.state.context_counter_id)
 
 
 class GenerateRequest(BaseModel):
@@ -103,9 +103,11 @@ def events_stream(job_id: str, request: Request, after: int = Query(default=0, g
     GenerationService(connection, FakeProvider([])).get_job(owner.id, job_id)
     token = request.cookies.get(SESSION_COOKIE)
 
-    def stream():
+    async def stream():
         cursor = after
         while True:
+            if await request.is_disconnected():
+                return
             poll = connect(request.app.state.database_url)
             try:
                 current_owner = session_valid(poll, token)
@@ -123,7 +125,7 @@ def events_stream(job_id: str, request: Request, after: int = Query(default=0, g
                 yield ": keep-alive\n\n"
             finally:
                 poll.close()
-            time.sleep(0.5)
+            await asyncio.sleep(0.5)
 
     return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 

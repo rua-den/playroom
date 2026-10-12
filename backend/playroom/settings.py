@@ -8,6 +8,13 @@ from decimal import Decimal, InvalidOperation
 from .domain import ValidationError
 
 
+ROLE_BUDGET_DEFAULTS = {
+    "context": {"input_limit": 12000, "requested_output": 4000, "wrapper_buffer": 512},
+    "narrator": {"input_limit": 12000, "requested_output": 4000, "wrapper_buffer": 512},
+    "consolidation": {"input_limit": 12000, "requested_output": 4000, "wrapper_buffer": 512},
+}
+
+
 # Internal deterministic fixture profile. It is not a provider model or a claim
 # about any external model's capabilities; live profiles require verified caps.
 DEFAULT_TEST_CONTEXT_PROFILE = {
@@ -61,6 +68,25 @@ def _validated_settings(settings: dict) -> dict:
         raise ValidationError("Quality mode requires a context profile binding")
     if set(roles) - {"context", "narrator", "consolidation"} or any(value is not None and not isinstance(value, dict) for value in roles.values()):
         raise ValidationError("Selected runtime roles require immutable profile version bindings")
+    configured_budgets = settings.get("budgets") or {}
+    if not isinstance(configured_budgets, dict) or set(configured_budgets) - set(ROLE_BUDGET_DEFAULTS):
+        raise ValidationError("Unknown role budget")
+    budgets = {}
+    for role, defaults in ROLE_BUDGET_DEFAULTS.items():
+        raw = configured_budgets.get(role, {})
+        if raw is None:
+            raw = {}
+        if not isinstance(raw, dict) or set(raw) - (set(defaults) | {"total_output"}):
+            raise ValidationError("Role budgets must use input_limit, requested_output, and wrapper_buffer")
+        normalized = dict(defaults)
+        normalized.update(raw)
+        if "total_output" in raw:
+            normalized["requested_output"] = raw["total_output"]
+        for key in defaults:
+            value = normalized[key]
+            if not isinstance(value, int) or isinstance(value, bool) or value < (0 if key == "wrapper_buffer" else 1):
+                raise ValidationError("Role budget values must be positive integers")
+        budgets[role] = {key: int(normalized[key]) for key in defaults}
     cap = settings.get("confirmed_usd_cap")
     if policy == "capped_paid":
         try:
@@ -72,12 +98,26 @@ def _validated_settings(settings: dict) -> dict:
         cap = format(cap_value, "f")
     else:
         cap = None
-    return {"roles": roles, "mode": mode, "policy": policy, "confirmed_usd_cap": cap}
+    return {"roles": roles, "mode": mode, "policy": policy, "confirmed_usd_cap": cap, "budgets": budgets, "budgets_configured": bool(configured_budgets)}
 
 
 def save_owner_settings(connection, owner_id: str, settings: dict) -> dict:
     ensure_configuration_tables(connection)
     validated = _validated_settings(settings)
+    explicit_budgets = settings.get("budgets") or {}
+    for role, configured in explicit_budgets.items():
+        binding = (validated.get("roles") or {}).get(role)
+        if not isinstance(binding, dict):
+            continue
+        row = connection.execute("SELECT snapshot_json FROM model_profile_versions WHERE owner_id=? AND id=? AND version=?", (owner_id, binding.get("id"), binding.get("version"))).fetchone()
+        if row is None:
+            continue
+        profile = json.loads(row["snapshot_json"])
+        verified_input = int(profile.get("input_limit", profile.get("context_limit", 12000)))
+        verified_output = int(profile.get("output_limit", 4000))
+        budget = validated["budgets"][role]
+        if budget["input_limit"] > verified_input or budget["requested_output"] > verified_output:
+            raise ValidationError("Role budget exceeds the verified profile capability")
     row = connection.execute("SELECT COALESCE(MAX(revision), 0) AS revision FROM owner_settings_versions WHERE owner_id=?", (owner_id,)).fetchone()
     revision = int(row["revision"]) + 1
     digest = config_hash(validated)
@@ -90,5 +130,5 @@ def get_owner_settings(connection, owner_id: str) -> dict:
     ensure_configuration_tables(connection)
     row = connection.execute("SELECT revision, settings_json, settings_hash, created_at FROM owner_settings_versions WHERE owner_id=? ORDER BY revision DESC LIMIT 1", (owner_id,)).fetchone()
     if row is None:
-        return {"settings_revision": 0, "settings_hash": config_hash({}), "roles": {}, "mode": "economy", "policy": "free_only", "confirmed_usd_cap": None}
+        return {"settings_revision": 0, "settings_hash": config_hash({}), "roles": {}, "mode": "economy", "policy": "free_only", "confirmed_usd_cap": None, "budgets": {role: dict(values) for role, values in ROLE_BUDGET_DEFAULTS.items()}, "budgets_configured": False}
     return {**json.loads(row["settings_json"]), "settings_revision": row["revision"], "settings_hash": row["settings_hash"], "created_at": row["created_at"]}

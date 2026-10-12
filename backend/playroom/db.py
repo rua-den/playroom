@@ -56,6 +56,11 @@ def migrate(connection: sqlite3.Connection) -> None:
         for name, definition in (("output_text", "TEXT NOT NULL DEFAULT ''"), ("output_offset", "INTEGER NOT NULL DEFAULT 0"), ("failure_json", "TEXT"), ("request_json", "TEXT NOT NULL DEFAULT '{}'"), ("dispatched_at", "TEXT"), ("claim_epoch", "TEXT"), ("cancel_requested", "INTEGER NOT NULL DEFAULT 0")):
             if name not in attempt_columns:
                 connection.execute(f"ALTER TABLE provider_attempts ADD COLUMN {name} {definition}")
+    context_run_columns = {row[1] for row in connection.execute("PRAGMA table_info(context_runs)")}
+    if context_run_columns:
+        for name, definition in (("generation_job_id", "TEXT"), ("request_json", "TEXT NOT NULL DEFAULT '{}'"), ("wire_json", "TEXT NOT NULL DEFAULT '{}'"), ("counter_id", "TEXT NOT NULL DEFAULT 'utf8-bytes-div-3'"), ("counter_mode", "TEXT NOT NULL DEFAULT 'estimated'")):
+            if name not in context_run_columns:
+                connection.execute(f"ALTER TABLE context_runs ADD COLUMN {name} {definition}")
     connection.execute("CREATE TABLE IF NOT EXISTS model_profile_versions (id TEXT NOT NULL, owner_id TEXT NOT NULL REFERENCES owners(id) ON DELETE CASCADE, version INTEGER NOT NULL, snapshot_json TEXT NOT NULL, profile_hash TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(owner_id, id, version))")
     connection.execute("CREATE TRIGGER IF NOT EXISTS prevent_model_profile_update BEFORE UPDATE ON model_profile_versions BEGIN SELECT RAISE(ABORT, 'model profiles are immutable'); END")
     connection.execute("CREATE TRIGGER IF NOT EXISTS prevent_model_profile_delete BEFORE DELETE ON model_profile_versions BEGIN SELECT RAISE(ABORT, 'model profiles are immutable'); END")

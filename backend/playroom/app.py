@@ -65,7 +65,7 @@ def create_app(
     login_failure_window_seconds: int = 900,
     context_model_profiles: dict | None = None,
     context_counter=None,
-    context_counter_id: str = "synthetic-test-counter",
+    context_counter_id: str = "utf8-bytes-div-3",
     credential_root: str | None = None,
     provider_verifier=None,
     generation_provider=None,
@@ -89,7 +89,7 @@ def create_app(
         initial_runtime = getattr(app.state, "generation_runtime", None)
         if initial_runtime is None and (app.state.generation_provider is not None or app.state.generation_provider_factory is not None):
             resolver = app.state.generation_credential_resolver if app.state.generation_provider_factory is not None else None
-            initial_runtime = GenerationRuntime(app.state.database_url, app.state.generation_provider, provider_factory=app.state.generation_provider_factory, credential_resolver=resolver, attempt_registry=app.state.generation_attempt_registry)
+            initial_runtime = GenerationRuntime(app.state.database_url, app.state.generation_provider, provider_factory=app.state.generation_provider_factory, credential_resolver=resolver, attempt_registry=app.state.generation_attempt_registry, context_counter=app.state.context_counter, context_counter_id=app.state.context_counter_id)
             app.state.generation_runtime = initial_runtime
         if initial_runtime is None:
             recovery_connection = connect(app.state.database_url)

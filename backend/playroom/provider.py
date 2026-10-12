@@ -10,6 +10,8 @@ import httpx2 as httpx
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError as SchemaValidationError
 
+from .wire_cost import provider_wire
+
 
 @dataclass(frozen=True)
 class ProviderCapabilities:
@@ -172,13 +174,7 @@ class OpenRouterAdapter(ProviderAdapter):
             raise ValueError("A reserved output allowance is required") from exc
         if requested_output <= 0 or requested_output > int(pinned["output_limit"]):
             raise ValueError("Reserved output allowance exceeds the verified endpoint limit")
-        provider = {"allow_fallbacks": False, "require_parameters": True}
-        if pinned.get("provider_tag"):
-            provider["only"] = [pinned["provider_tag"]]
-        payload = {"model": model, "messages": request.get("messages", []), "stream": True, "stream_options": {"include_usage": True}, output_parameter: requested_output, "provider": provider}
-        if schema is not None:
-            payload["response_format"] = {"type": "json_schema", "json_schema": {"name": request.get("schema_name", "selection_plan"), "strict": True, "schema": schema}}
-        return payload
+        return provider_wire({**request, "reserved_completion_tokens": requested_output}, pinned, schema=schema)
 
     def generate_text(self, request: dict) -> Iterator[str | ProviderResult | ProviderFailure]:
         try:
@@ -207,6 +203,11 @@ class OpenRouterAdapter(ProviderAdapter):
         return result
 
     def _stream(self, payload: dict, *, request: dict | None = None) -> Iterator[str | ProviderResult | ProviderFailure]:
+        # A lazy generator executes on its first ``next`` call.  Observe a
+        # cancellation before opening the HTTP stream as well as after the
+        # response object has been registered for physical cancellation.
+        if request and request.get("cancel_event") is not None and request["cancel_event"].is_set():
+            return
         text_parts: list[str] = []
         usage = None
         finish_reason = None
@@ -258,6 +259,8 @@ class OpenRouterAdapter(ProviderAdapter):
             with self.client.stream("POST", self.endpoint, headers={"Authorization": f"Bearer {self._key}", "Content-Type": "application/json"}, json=payload) as response:
                 with self._response_lock:
                     self._active_response = response
+                if request and request.get("cancel_event") is not None and request["cancel_event"].is_set():
+                    return
                 if response.status_code >= 400:
                     code = "QUOTA_EXHAUSTED" if response.status_code in {402, 429} else "MODEL_UNAVAILABLE" if response.status_code in {404, 503} else "PROVIDER_ERROR"
                     yield ProviderFailure(code, "OpenRouter request failed")

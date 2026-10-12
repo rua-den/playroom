@@ -154,7 +154,7 @@ def validate_selection_plan(checkpoint_id: str, action_hash: str, pool: dict, pl
     return {"checkpoint_id": checkpoint_id, "action_hash": action_hash, "selected_memory_ids": ids, "reasons": reasons, "reason_sources": reason_sources, "scene_ids": scene_ids, "mandatory": pool.get("mandatory", []), "optional": [by_id[memory_id] for memory_id in ids], "new_facts": [], "conflict_flags": conflict_flags}
 
 
-def build_context_preview(connection: sqlite3.Connection, campaign_id: str, branch_id: str, action: str, model_config: dict, *, owner_id: str | None = None, settings_hash: str | None = None, context_counter=None, counter_id: str = "synthetic-test-counter") -> dict:
+def build_context_preview(connection: sqlite3.Connection, campaign_id: str, branch_id: str, action: str, model_config: dict, *, owner_id: str | None = None, settings_hash: str | None = None, context_counter=None, counter_id: str = "utf8-bytes-div-3") -> dict:
     model_config = model_config if isinstance(model_config, dict) else {}
     counter_id = model_config.get("counter_id", counter_id)
     trusted_config = bool(model_config.get("is_test_profile") or model_config.get("capabilities_verified"))

@@ -37,6 +37,12 @@ def _profile_config(connection: sqlite3.Connection, request: Request, owner: Own
     output_limit = profile.get("output_limit")
     if not isinstance(context_limit, int) or not isinstance(output_limit, int) or context_limit <= 0 or output_limit <= 0 or not profile.get("pricing_verified"):
         raise ValidationError("Requested context profile has no configured verified limits")
+    role_budget = (settings.get("budgets") or {}).get("context") or {}
+    configured_input = role_budget.get("input_limit")
+    # The preview endpoint preserves the verified profile's displayed input
+    # allowance when no smaller owner override is configured. Generation's
+    # final wire still applies the conservative 12k role default.
+    preview_input = int(profile.get("input_limit", context_limit)) if configured_input in (None, 12000) else min(int(configured_input), int(profile.get("input_limit", context_limit)))
     return {
         "profile_id": profile["id"],
         "profile_version": profile.get("version"),
@@ -44,10 +50,10 @@ def _profile_config(connection: sqlite3.Connection, request: Request, owner: Own
         "settings_revision": settings.get("settings_revision"),
         "owner_settings_hash": settings.get("settings_hash"),
         "context_window": context_limit,
-        "input_limit": int(profile.get("input_limit", context_limit)),
+        "input_limit": preview_input,
         "output_limit": output_limit,
-        "wrapper_buffer": int(profile.get("wrapper_buffer", 512)),
-        "requested_output": min(4000, output_limit),
+        "wrapper_buffer": int(role_budget.get("wrapper_buffer", profile.get("wrapper_buffer", 512))),
+        "requested_output": min(int(role_budget.get("requested_output", 4000)), output_limit, 4000),
         "capabilities_verified": True,
         "token_count_mode": "estimated",
     }

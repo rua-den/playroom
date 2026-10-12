@@ -38,7 +38,7 @@ class PhysicalAttemptRegistry:
         self._condition = threading.Condition(self._lock)
         self._shutdown = threading.Event()
 
-    def _start(self, key: str, provider, request: dict, timeout: float, invoke, provider_factory=None) -> AttemptHandle:
+    def _start(self, key: str, provider, request: dict, timeout: float, invoke, provider_factory=None, invocation_gate=None, pre_invocation_gate=None) -> AttemptHandle:
         cancel_event = request.setdefault("cancel_event", threading.Event())
         values: queue.Queue = queue.Queue()
         done = threading.Event()
@@ -74,6 +74,12 @@ class PhysicalAttemptRegistry:
                     return
                 if cancel_event.is_set() or time.monotonic() >= deadline:
                     return
+                # This first durable gate runs after physical slot ownership
+                # but before deferred credential/provider construction.
+                first_gate = pre_invocation_gate or invocation_gate
+                if first_gate is not None and not first_gate(handle):
+                    values.put(ProviderFailure("CANCELLED", "Generation attempt is no longer active"))
+                    return
                 selected = provider_factory(handle) if provider_factory is not None else provider
                 if isinstance(selected, ProviderFailure):
                     values.put(selected)
@@ -81,6 +87,13 @@ class PhysicalAttemptRegistry:
                 handle.provider = selected
                 if cancel_event.is_set() or time.monotonic() >= deadline:
                     handle.cancel()
+                    return
+                # Credential resolution may race with cancellation/recovery;
+                # activate the persisted claim again immediately before the
+                # physical adapter invocation.
+                if invocation_gate is not None and not invocation_gate(handle):
+                    handle.cancel()
+                    values.put(ProviderFailure("CANCELLED", "Generation attempt is no longer active"))
                     return
                 result = invoke(selected)
                 if isinstance(result, (str, bytes, ProviderFailure)):
@@ -91,7 +104,13 @@ class PhysicalAttemptRegistry:
                     except TypeError:
                         values.put(result)
                     else:
+                        first = True
                         for item in iterator:
+                            if first and invocation_gate is not None and not invocation_gate(handle):
+                                handle.cancel()
+                                values.put(ProviderFailure("CANCELLED", "Generation attempt is no longer active"))
+                                return
+                            first = False
                             values.put(item)
             except Exception:
                 values.put(ProviderFailure("PROVIDER_ERROR", "Provider execution failed"))
@@ -102,8 +121,8 @@ class PhysicalAttemptRegistry:
         threading.Thread(target=worker, name=f"playroom-attempt-{key}", daemon=True).start()
         return handle
 
-    def structured(self, key: str, provider, request: dict, schema: dict, timeout: float, *, provider_factory=None):
-        handle = self._start(key, provider, request, timeout, lambda selected: selected.generate_structured(request, schema), provider_factory=provider_factory)
+    def structured(self, key: str, provider, request: dict, schema: dict, timeout: float, *, provider_factory=None, invocation_gate=None, pre_invocation_gate=None):
+        handle = self._start(key, provider, request, timeout, lambda selected: selected.generate_structured(request, schema), provider_factory=provider_factory, invocation_gate=invocation_gate, pre_invocation_gate=pre_invocation_gate)
         deadline = time.monotonic() + timeout
         while True:
             if handle.cancel_event.is_set():
@@ -123,8 +142,8 @@ class PhysicalAttemptRegistry:
                         raise TimeoutError("timeout")
                     return ProviderFailure("MISSING_TERMINAL", "Provider did not return a terminal result")
 
-    def stream(self, key: str, provider, request: dict, timeout: float, *, provider_factory=None):
-        handle = self._start(key, provider, request, timeout, lambda selected: selected.generate_text(request), provider_factory=provider_factory)
+    def stream(self, key: str, provider, request: dict, timeout: float, *, provider_factory=None, invocation_gate=None, pre_invocation_gate=None):
+        handle = self._start(key, provider, request, timeout, lambda selected: selected.generate_text(request), provider_factory=provider_factory, invocation_gate=invocation_gate, pre_invocation_gate=pre_invocation_gate)
         deadline = time.monotonic() + timeout
         while True:
             if handle.cancel_event.is_set():
