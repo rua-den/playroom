@@ -6,9 +6,8 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 
 from ..db import request_connection
-from ..domain import Owner
+from ..domain import Owner, ValidationError
 from ..generation import GenerationService
-from ..provider import FakeProvider
 from .auth import require_owner
 
 router = APIRouter(prefix="/api", tags=["generation"])
@@ -25,8 +24,11 @@ class GenerateRequest(BaseModel):
 
 
 @router.post("/campaigns/{campaign_id}/generate", status_code=201)
-def generate(campaign_id: str, payload: GenerateRequest, connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
-    provider = getattr(request.app.state, "generation_provider", None) or FakeProvider(["Synthetic response."])
+def generate(campaign_id: str, payload: GenerateRequest, request: Request, connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
+    provider = getattr(request.app.state, "generation_provider", None)
+    if provider is None:
+        raise ValidationError("Narrative generation is not configured")
+    return GenerationService(connection, provider).generate(owner.id, campaign_id, payload.branch_id, payload.action, idempotency_key=payload.idempotency_key, expected_checkpoint_id=payload.checkpoint_id, mode=payload.mode, policy=payload.policy, cap=payload.cap)
     return GenerationService(connection, provider).generate(owner.id, campaign_id, payload.branch_id, payload.action, idempotency_key=payload.idempotency_key, expected_checkpoint_id=payload.checkpoint_id, mode=payload.mode, policy=payload.policy, cap=payload.cap)
 
 
