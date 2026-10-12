@@ -53,6 +53,12 @@ def migrate(connection: sqlite3.Connection) -> None:
     attempt_columns = {row[1] for row in connection.execute("PRAGMA table_info(provider_attempts)")}
     if attempt_columns and "output_text" not in attempt_columns:
         connection.execute("ALTER TABLE provider_attempts ADD COLUMN output_text TEXT NOT NULL DEFAULT ''")
+    connection.execute("CREATE TABLE IF NOT EXISTS model_profile_versions (id TEXT NOT NULL, owner_id TEXT NOT NULL REFERENCES owners(id) ON DELETE CASCADE, version INTEGER NOT NULL, snapshot_json TEXT NOT NULL, profile_hash TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(owner_id, id, version))")
+    connection.execute("CREATE TRIGGER IF NOT EXISTS prevent_model_profile_update BEFORE UPDATE ON model_profile_versions BEGIN SELECT RAISE(ABORT, 'model profiles are immutable'); END")
+    connection.execute("CREATE TRIGGER IF NOT EXISTS prevent_model_profile_delete BEFORE DELETE ON model_profile_versions BEGIN SELECT RAISE(ABORT, 'model profiles are immutable'); END")
+    connection.execute("CREATE TABLE IF NOT EXISTS owner_settings_versions (owner_id TEXT NOT NULL REFERENCES owners(id) ON DELETE CASCADE, revision INTEGER NOT NULL, settings_json TEXT NOT NULL, settings_hash TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(owner_id, revision))")
+    connection.execute("CREATE TRIGGER IF NOT EXISTS prevent_owner_settings_update BEFORE UPDATE ON owner_settings_versions BEGIN SELECT RAISE(ABORT, 'owner settings are immutable'); END")
+    connection.execute("CREATE TRIGGER IF NOT EXISTS prevent_owner_settings_delete BEFORE DELETE ON owner_settings_versions BEGIN SELECT RAISE(ABORT, 'owner settings are immutable'); END")
 
 
 def request_connection(request: Request):

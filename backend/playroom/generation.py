@@ -37,7 +37,7 @@ class GenerationService:
         if "action" not in cols:
             self.connection.execute("ALTER TABLE generation_jobs ADD COLUMN action TEXT NOT NULL DEFAULT ''")
 
-    def generate(self, owner_id: str, campaign_id: str, branch_id: str, action: str, *, idempotency_key: str, expected_checkpoint_id: str, mode: str = "economy", policy: str = "free_only", cap: int | None = None) -> dict:
+    def generate(self, owner_id: str, campaign_id: str, branch_id: str, action: str, *, idempotency_key: str, expected_checkpoint_id: str, mode: str = "economy", policy: str = "free_only", cap=None) -> dict:
         request_hash = _hash({"campaign_id": campaign_id, "branch_id": branch_id, "action": action, "mode": mode, "policy": policy, "profile": profile_hash(self.profile)})
         existing = self.connection.execute("SELECT * FROM generation_jobs WHERE owner_id=? AND branch_id=? AND operation='generation' AND idempotency_key=?", (owner_id, branch_id, idempotency_key)).fetchone()
         if existing:
@@ -54,7 +54,7 @@ class GenerationService:
             preview = build_context_preview(self.connection, campaign_id, branch_id, action, {"profile_id": self.profile["id"], "is_test_profile": True, "context_window": self.profile["context_limit"], "input_limit": self.profile["context_limit"], "output_limit": self.profile["output_limit"], "wrapper_buffer": 512, "requested_output": min(4000, self.profile["output_limit"])}, owner_id=owner_id)
             if preview["status"] != "ready":
                 raise ValidationError("Generation context is not ready")
-            validate_dispatch(self.profile, policy, preview["budget"].get("input_tokens", 0) + self.profile["output_limit"], cap)
+            validate_dispatch(self.profile, policy, {"input_tokens": preview["budget"].get("input_tokens"), "completion_tokens": self.profile["output_limit"]}, cap)
             if mode == "quality":
                 pool = build_candidate_pool(self.connection, campaign_id, branch_id, action, checkpoint_id=expected_checkpoint_id, owner_id=owner_id)
                 context_key = f"{job_id}:context"
@@ -62,7 +62,7 @@ class GenerationService:
             stage_key = f"{job_id}:narration"
             self.connection.execute("INSERT INTO provider_attempts(id,generation_job_id,stage,stage_key,profile_snapshot_json,payload_hash,status,created_at) VALUES (?,?,?,?,?,?,?,?)", (str(uuid4()), job_id, "narration", stage_key, json.dumps(self.profile, sort_keys=True), preview["payload_hash"], "dispatched", _now()))
             text_parts, result = [], None
-            for event in self.provider.generate_text({"messages": preview["blocks"], "estimated_input_tokens": preview["budget"].get("input_tokens", 0)}):
+            for event in self.provider.generate_text({"stage": "narration", "messages": preview["blocks"], "estimated_input_tokens": preview["budget"].get("input_tokens", 0), "reserved_completion_tokens": self.profile["output_limit"]}):
                 if isinstance(event, ProviderFailure):
                     raise _ProviderError(event)
                 if isinstance(event, ProviderResult):

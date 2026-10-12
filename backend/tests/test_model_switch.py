@@ -14,8 +14,8 @@ from playroom.provider import FakeProvider
 
 class StubVerifier:
     def verify(self, secret, model, endpoint, *, provider_tag=None):
-        assert secret == "sk-secret-value"
-        return {"id": "profile-a", "provider": "openrouter", "model": model, "endpoint": endpoint, "provider_tag": provider_tag or "exact", "context_limit": 8192, "output_limit": 1024, "credential_tier": "free", "pricing_verified": True, "pricing": {"prompt": "0", "completion": "0"}, "supported_parameters": ["max_tokens", "response_format"], "structured_output": True}
+        assert secret.startswith("sk-")
+        return {"id": "profile-a", "provider": "openrouter", "model": model, "endpoint": endpoint, "provider_tag": provider_tag or "exact", "context_limit": 8192, "output_limit": 1024, "credential_tier": "free", "pricing_verified": True, "pricing": {"prompt": "0", "completion": "0"}, "supported_parameters": ["max_tokens", "response_format"], "native_structured_output": True, "structured_schema_parameter": "response_format", "structured_output": True}
 
 
 def test_owner_provider_configuration_is_versioned_and_masked(tmp_path):
@@ -37,7 +37,7 @@ def test_owner_provider_configuration_is_versioned_and_masked(tmp_path):
     profiles = client.post("/api/provider/profiles/verify", json={"credential_id": credential["id"], "model": "author/model:free", "endpoint": "https://openrouter.ai/api/v1/chat/completions", "provider_tag": "exact"}, headers=headers)
     assert profiles.status_code == 201, profiles.text
     profile_id = profiles.json()["id"]
-    saved = client.put("/api/provider/settings", json={"context_profile_id": profile_id, "narrator_profile_id": profile_id, "consolidation_profile_id": profile_id, "mode": "economy", "policy": "free_only"}, headers=headers)
+    saved = client.put("/api/provider/settings", json={"narrator_profile_id": profile_id, "mode": "economy", "policy": "free_only"}, headers=headers)
     assert saved.status_code == 200
     revision = saved.json()["settings_revision"]
     assert revision == 1 and saved.json()["settings_hash"]
@@ -47,6 +47,38 @@ def test_owner_provider_configuration_is_versioned_and_masked(tmp_path):
     connection = connect(database)
     assert connection.execute("SELECT COUNT(*) FROM owner_settings_versions").fetchone()[0] == 2
     assert connection.execute("SELECT COUNT(*) FROM model_profile_versions").fetchone()[0] == 1
+    settings = saved.json()
+    assert settings["roles"]["narrator"]["version"] == 1
+    connection.close()
+
+
+def test_configuration_requires_quality_roles_and_redacts_invalid_secret(tmp_path):
+    database = tmp_path / "invalid-config.sqlite3"
+    connection = connect(database); migrate(connection); owner = create_owner(connection, "invalid@example.test", "invalid owner password"); connection.close()
+    app = create_app(database_url=f"sqlite:///{database}", allowed_hosts={"testserver"}, secure_cookies=False, credential_root=tmp_path / "secrets", provider_verifier=StubVerifier())
+    client = TestClient(app, base_url="https://testserver"); headers = {"origin": "https://testserver"}
+    client.post("/api/auth/login", json={"email": "invalid@example.test", "password": "invalid owner password"}, headers=headers)
+    secret = "sk-" + ("x" * 4094)
+    response = client.post("/api/provider/credentials", json={"secret": secret}, headers=headers)
+    assert response.status_code == 422 and secret not in response.text
+    malformed = client.post("/api/provider/credentials", json={"secret": {"raw": "do-not-echo"}}, headers=headers)
+    assert malformed.status_code == 422 and "do-not-echo" not in malformed.text
+    added = client.post("/api/provider/credentials", json={"secret": "sk-valid"}, headers=headers)
+    verified = client.post("/api/provider/profiles/verify", json={"credential_id": added.json()["id"], "model": "author/model", "endpoint": "https://openrouter.ai/api/v1/chat/completions", "provider_tag": "exact"}, headers=headers)
+    quality = client.put("/api/provider/settings", json={"narrator_profile_id": verified.json()["id"], "mode": "quality"}, headers=headers)
+    assert quality.status_code == 422
+
+
+def test_profile_reads_do_not_commit_callers_transaction(tmp_path):
+    connection = connect(tmp_path / "profiles.sqlite3"); migrate(connection)
+    owner = create_owner(connection, "read@example.test", "read owner password")
+    profile = persist_model_profile(connection, owner.id, {"id": "p", "version": 1, "provider": "openrouter", "model": "author/model:free", "endpoint": "https://openrouter.ai/api/v1/chat/completions", "provider_tag": "exact", "context_limit": 10, "output_limit": 5, "credential_tier": "free", "pricing_verified": True})
+    connection.execute("CREATE TABLE marker(value TEXT)")
+    connection.execute("BEGIN")
+    connection.execute("INSERT INTO marker VALUES ('pending')")
+    get_model_profile(connection, owner.id, profile["id"])
+    connection.rollback()
+    assert connection.execute("SELECT COUNT(*) FROM marker").fetchone()[0] == 0
     connection.close()
 
 

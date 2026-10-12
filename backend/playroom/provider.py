@@ -117,6 +117,8 @@ class OpenRouterAdapter(ProviderAdapter):
     def __init__(self, api_key: str, endpoint: str, *, profile: dict | None = None, http_client: httpx.Client | None = None):
         if not api_key or not endpoint.startswith("https://"):
             raise ValueError("OpenRouter requires HTTPS and a key")
+        if not profile or not profile.get("id") or not profile.get("version") or not profile.get("profile_hash") or not profile.get("provider_tag"):
+            raise ValueError("OpenRouter adapter requires an immutable verified profile")
         if profile and profile.get("endpoint") and profile["endpoint"] != endpoint:
             raise ValueError("OpenRouter endpoint does not match the verified profile")
         self._key, self.endpoint, self.profile = api_key, endpoint, dict(profile or {})
@@ -126,8 +128,7 @@ class OpenRouterAdapter(ProviderAdapter):
         return ProviderCapabilities(self.endpoint, profile["model"], int(profile["context_limit"]), int(profile["output_limit"]), structured_output=bool(profile.get("structured_output")), supported_parameters=tuple(profile.get("supported_parameters", ())), output_parameter=profile.get("output_parameter", "max_tokens"), provider_tag=profile.get("provider_tag"))
 
     def _payload(self, request: dict, schema: dict | None = None) -> dict:
-        request_profile = request.get("profile") or {}
-        pinned = self.profile or (request_profile if request_profile.get("model") else {"model": request.get("model"), "output_limit": int(request.get("max_tokens", 4000)), "supported_parameters": []})
+        pinned = self.profile
         model = pinned.get("model")
         if not model:
             raise ValueError("OpenRouter adapter requires a verified pinned model")
@@ -135,18 +136,25 @@ class OpenRouterAdapter(ProviderAdapter):
             raise ValueError("Requested model does not match the verified profile")
         supported = set(pinned.get("supported_parameters", ()))
         output_parameter = pinned.get("output_parameter") or ("max_completion_tokens" if "max_completion_tokens" in supported else "max_tokens")
-        if supported and output_parameter not in supported:
+        if output_parameter not in supported:
             raise ValueError("Verified profile does not support its output allowance parameter")
-        if schema is not None and "response_format" not in supported and "structured_outputs" not in supported:
+        if schema is not None and not (pinned.get("native_structured_output") is True and pinned.get("structured_schema_parameter") in supported and pinned.get("structured_output") is True):
             raise ValueError("Verified endpoint does not support structured output")
         if any(key in request for key in ("reasoning", "reasoning_effort")) and not any(key in supported for key in ("reasoning", "reasoning_effort")):
             raise ValueError("Verified endpoint does not support reasoning parameters")
         if any(key in request for key in ("tools", "plugins", "transforms", "models", "model_fallbacks")):
             raise ValueError("Unsupported provider fallback or tool options")
+        requested_output = request.get("reserved_completion_tokens", request.get("reserved_output_tokens"))
+        try:
+            requested_output = int(requested_output)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("A reserved output allowance is required") from exc
+        if requested_output <= 0 or requested_output > int(pinned["output_limit"]):
+            raise ValueError("Reserved output allowance exceeds the verified endpoint limit")
         provider = {"allow_fallbacks": False, "require_parameters": True}
         if pinned.get("provider_tag"):
             provider["only"] = [pinned["provider_tag"]]
-        payload = {"model": model, "messages": request.get("messages", []), "stream": True, "stream_options": {"include_usage": True}, output_parameter: int(pinned.get("output_limit", request.get("max_tokens", 0))), "provider": provider}
+        payload = {"model": model, "messages": request.get("messages", []), "stream": True, "stream_options": {"include_usage": True}, output_parameter: requested_output, "provider": provider}
         if schema is not None:
             payload["response_format"] = {"type": "json_schema", "json_schema": {"name": request.get("schema_name", "selection_plan"), "strict": True, "schema": schema}}
         return payload
@@ -198,24 +206,6 @@ class OpenRouterAdapter(ProviderAdapter):
             try:
                 frame = json.loads(value)
             except (ValueError, TypeError):
-                # A few OpenRouter-compatible test transports emit one JSON
-                # frame per data line without an SSE blank separator. Keep
-                # compatibility for that wire shape while still rejecting a
-                # genuinely malformed event.
-                if len(lines) > 1:
-                    results = []
-                    for line in lines:
-                        try:
-                            frame = json.loads(line)
-                        except (ValueError, TypeError):
-                            failed = True
-                            return ProviderFailure("PROVIDER_ERROR", "Malformed provider frame")
-                        result = process_frame(frame)
-                        if isinstance(result, ProviderFailure):
-                            return result
-                        if isinstance(result, str):
-                            results.append(result)
-                    return "".join(results) if results else None
                 failed = True
                 return ProviderFailure("PROVIDER_ERROR", "Malformed provider frame")
             return process_frame(frame)

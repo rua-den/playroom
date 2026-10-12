@@ -60,7 +60,10 @@ def estimate_cost_usd(profile: dict, reserved_input_tokens: int, reserved_comple
         raise ValidationError("Reserved token allowances are invalid") from exc
     if reserved_input_tokens < 0 or reserved_completion_tokens < 0:
         raise ValidationError("Reserved token allowances must be nonnegative")
-    return (prompt * Decimal(reserved_input_tokens) + completion * Decimal(reserved_completion_tokens)) / Decimal(1_000_000)
+    # OpenRouter endpoint metadata prices are USD per token (e.g. 0.000003
+    # represents $3 per million), so no additional million-token conversion is
+    # applied here.
+    return prompt * Decimal(reserved_input_tokens) + completion * Decimal(reserved_completion_tokens)
 
 
 def validate_dispatch(profile: dict, policy: str, estimated_total, cap: Decimal | int | str | None = None) -> None:
@@ -92,23 +95,14 @@ def validate_dispatch(profile: dict, policy: str, estimated_total, cap: Decimal 
             except (TypeError, ValueError) as exc:
                 raise ValidationError("Reserved token allowance is invalid") from exc
             estimated_cost = estimate_cost_usd(profile, input_tokens, completion_tokens)
-        elif "pricing" in profile:
-            input_tokens, completion_tokens = int(estimated_total), int(profile.get("reserved_completion_tokens", 0))
-            estimated_cost = estimate_cost_usd(profile, input_tokens, completion_tokens)
-        elif "estimated_cost_usd" in profile:
-            try:
-                estimated_cost = _money(profile["estimated_cost_usd"], field="estimated")
-            except ValidationError as exc:
-                raise ValidationError("Estimated cost or verified prices is invalid") from exc
         else:
-            raise ValidationError("Estimated cost or verified prices is invalid")
+            raise ValidationError("Reserved token allowance is unknown")
         if estimated_cost > confirmed_cap:
             raise ValidationError("Estimated cost exceeds the confirmed USD cap")
 
 
 def _model_parts(model: str) -> tuple[str, str]:
-    base = model[:-5] if model.endswith(":free") else model
-    author, separator, slug = base.partition("/")
+    author, separator, slug = model.partition("/")
     if not separator or not author or not slug:
         raise ValidationError("OpenRouter model must use author/slug form")
     return author, slug
@@ -124,6 +118,8 @@ class OpenRouterVerifier:
             raise ValidationError("Only the pinned OpenRouter chat endpoint is supported")
         if not api_key:
             raise ValidationError("Provider credential could not be verified")
+        if not provider_tag:
+            raise ValidationError("An exact provider endpoint tag is required")
         author, slug = _model_parts(model)
         headers = {"Authorization": f"Bearer {api_key}"}
         source = f"{self.base_url}/models/{quote(author, safe='')}/{quote(slug, safe=':')}/endpoints"
@@ -138,10 +134,11 @@ class OpenRouterVerifier:
         if isinstance(raw_endpoints, dict):
             raw_endpoints = raw_endpoints.get("endpoints", [])
         candidates = [item for item in raw_endpoints if isinstance(item, dict)]
-        if provider_tag is not None:
-            candidates = [item for item in candidates if item.get("provider_id") == provider_tag or item.get("provider_name") == provider_tag or item.get("tag") == provider_tag]
+        candidates = [item for item in candidates if item.get("id") == provider_tag or item.get("provider_id") == provider_tag or item.get("provider_name") == provider_tag or item.get("tag") == provider_tag]
         if not candidates:
             raise ValidationError("Requested provider endpoint is unavailable")
+        if len(candidates) != 1:
+            raise ValidationError("Requested provider endpoint is ambiguous")
         selected = candidates[0]
         selected_tag = selected.get("provider_id") or selected.get("tag") or selected.get("provider_name")
         if not selected_tag:
@@ -151,6 +148,9 @@ class OpenRouterVerifier:
         completion = _money(pricing.get("completion"), field="completion")
         supported = tuple(str(item) for item in (selected.get("supported_parameters") or []))
         key_data = key_response.json().get("data", {})
+        returned_model = selected.get("model") or selected.get("model_id") or selected.get("model_name")
+        if returned_model and returned_model != model:
+            raise ValidationError("OpenRouter endpoint metadata does not match the requested model")
         free_variant = model.endswith(":free") and prompt == 0 and completion == 0
         key_flag = key_data.get("is_free_tier")
         if not isinstance(key_flag, bool):
@@ -165,19 +165,16 @@ class OpenRouterVerifier:
         output_limit = selected.get("max_completion_tokens", selected.get("output_limit"))
         if not isinstance(context_limit, int) or not isinstance(output_limit, int) or context_limit <= 0 or output_limit <= 0:
             raise ValidationError("OpenRouter endpoint limits are unknown")
-        return {"provider": "openrouter", "endpoint": endpoint, "endpoint_id": selected.get("id") or selected_tag, "model": model, "provider_tag": selected_tag, "context_limit": context_limit, "output_limit": output_limit, "pricing": {"prompt": str(prompt), "completion": str(completion), "currency": "USD"}, "credential_tier": tier, "structured_output": "response_format" in supported or "structured_outputs" in supported, "supported_parameters": list(supported), "reasoning_parameters": [item for item in supported if "reason" in item], "data_policy": selected.get("data_policy"), "metadata_source": source, "credential_metadata": {"is_free_tier": key_flag, "free_model_daily_requests": key_data.get("free_model_daily_requests")}, "verified_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"), "pricing_verified": True}
+        native_structured = selected.get("structured_outputs") is True or selected.get("supports_structured_outputs") is True or selected.get("capabilities", {}).get("structured_outputs") is True
+        schema_parameter = "response_format" if "response_format" in supported else "structured_outputs" if "structured_outputs" in supported else None
+        return {"provider": "openrouter", "endpoint": endpoint, "endpoint_id": selected.get("id") or selected_tag, "model": model, "provider_tag": selected_tag, "context_limit": context_limit, "output_limit": output_limit, "pricing": {"prompt": str(prompt), "completion": str(completion), "currency": "USD", "unit": "USD/token"}, "credential_tier": tier, "structured_output": native_structured and schema_parameter is not None, "native_structured_output": native_structured, "structured_schema_parameter": schema_parameter, "supported_parameters": list(supported), "reasoning_parameters": [item for item in supported if "reason" in item], "data_policy": selected.get("data_policy"), "metadata_source": source, "credential_metadata": {"is_free_tier": key_flag, "free_model_daily_requests": key_data.get("free_model_daily_requests")}, "verified_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"), "pricing_verified": True}
 
 
 def ensure_profile_tables(connection) -> None:
-    connection.executescript("""
-    CREATE TABLE IF NOT EXISTS model_profile_versions (
-        id TEXT NOT NULL, owner_id TEXT NOT NULL REFERENCES owners(id) ON DELETE CASCADE,
-        version INTEGER NOT NULL, snapshot_json TEXT NOT NULL, profile_hash TEXT NOT NULL,
-        created_at TEXT NOT NULL, PRIMARY KEY(owner_id, id, version)
-    );
-    CREATE TRIGGER IF NOT EXISTS prevent_model_profile_update BEFORE UPDATE ON model_profile_versions BEGIN SELECT RAISE(ABORT, 'model profiles are immutable'); END;
-    CREATE TRIGGER IF NOT EXISTS prevent_model_profile_delete BEFORE DELETE ON model_profile_versions BEGIN SELECT RAISE(ABORT, 'model profiles are immutable'); END;
-    """)
+    try:
+        connection.execute("SELECT 1 FROM model_profile_versions LIMIT 0")
+    except Exception as exc:
+        raise RuntimeError("Configuration schema must be created by startup migration") from exc
 
 
 def persist_model_profile(connection, owner_id: str, profile: dict) -> dict:

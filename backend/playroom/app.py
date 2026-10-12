@@ -6,6 +6,8 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from .api import auth, campaigns, context as context_api, memory, generation, configuration
@@ -123,6 +125,18 @@ def create_app(
         else:
             status = 400
         return JSONResponse(status_code=status, content={"detail": str(exc)})
+
+    @app.exception_handler(RequestValidationError)
+    async def request_validation_error_handler(request: Request, exc: RequestValidationError):
+        # Pydantic's default detail includes the rejected input.  Credential
+        # payloads can contain secrets, so redact that field before returning
+        # any validation response for this route.
+        if request.url.path == "/api/provider/credentials":
+            details = []
+            for error in exc.errors():
+                details.append({key: value for key, value in error.items() if key not in {"input", "ctx"}})
+            return JSONResponse(status_code=422, content={"detail": details})
+        return await request_validation_exception_handler(request, exc)
 
     @app.get("/health", include_in_schema=False)
     def health():

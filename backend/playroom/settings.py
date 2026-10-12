@@ -5,7 +5,7 @@ import json
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
-from .domain import NotFound, ValidationError
+from .domain import ValidationError
 
 
 # Internal deterministic fixture profile. It is not a provider model or a claim
@@ -43,25 +43,25 @@ def config_hash(config: dict) -> str:
 
 
 def ensure_configuration_tables(connection) -> None:
-    connection.executescript("""
-    CREATE TABLE IF NOT EXISTS owner_settings_versions (
-        owner_id TEXT NOT NULL REFERENCES owners(id) ON DELETE CASCADE,
-        revision INTEGER NOT NULL, settings_json TEXT NOT NULL, settings_hash TEXT NOT NULL,
-        created_at TEXT NOT NULL, PRIMARY KEY(owner_id, revision)
-    );
-    CREATE TRIGGER IF NOT EXISTS prevent_owner_settings_update BEFORE UPDATE ON owner_settings_versions BEGIN SELECT RAISE(ABORT, 'owner settings are immutable'); END;
-    CREATE TRIGGER IF NOT EXISTS prevent_owner_settings_delete BEFORE DELETE ON owner_settings_versions BEGIN SELECT RAISE(ABORT, 'owner settings are immutable'); END;
-    """)
+    try:
+        connection.execute("SELECT 1 FROM owner_settings_versions LIMIT 0")
+    except Exception as exc:
+        raise RuntimeError("Configuration schema must be created by startup migration") from exc
 
 
 def _validated_settings(settings: dict) -> dict:
-    roles = settings.get("roles") or {}
-    if set(roles) != {"context", "narrator", "consolidation"} or not all(isinstance(roles[name], str) and roles[name] for name in roles):
-        raise ValidationError("Three context, narrator, and consolidation role bindings are required")
     mode = settings.get("mode", "economy")
     policy = settings.get("policy", "free_only")
     if mode not in {"economy", "quality"} or policy not in {"free_only", "capped_paid"}:
         raise ValidationError("Unknown runtime mode or cost policy")
+    roles = settings.get("roles") or {}
+    required = {"narrator"} if mode == "economy" else {"context", "narrator", "consolidation"}
+    if not required.issubset(roles) or not all(isinstance(roles[name], dict) for name in required):
+        raise ValidationError("Selected runtime roles require immutable profile version bindings")
+    if mode == "economy":
+        roles = {"context": None, "narrator": roles["narrator"], "consolidation": None}
+    elif set(roles) != {"context", "narrator", "consolidation"} or not all(isinstance(roles[name], dict) for name in roles):
+        raise ValidationError("Three immutable context, narrator, and consolidation bindings are required")
     cap = settings.get("confirmed_usd_cap")
     if policy == "capped_paid":
         try:
@@ -73,7 +73,7 @@ def _validated_settings(settings: dict) -> dict:
         cap = format(cap_value, "f")
     else:
         cap = None
-    return {"roles": dict(roles), "mode": mode, "policy": policy, "confirmed_usd_cap": cap}
+    return {"roles": roles, "mode": mode, "policy": policy, "confirmed_usd_cap": cap}
 
 
 def save_owner_settings(connection, owner_id: str, settings: dict) -> dict:
