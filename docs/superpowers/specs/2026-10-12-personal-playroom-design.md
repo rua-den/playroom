@@ -1,6 +1,6 @@
 # Playroom cá nhân — web ưu tiên điện thoại
 
-Ngày: 12/10/2026. Trạng thái: đã review và sửa thiết kế, chưa triển khai. Thông tin trực tiếp mới nhất của người dùng về VPS: dùng Caddy; mô tả Nginx trong repo wedding-online là tài liệu cũ.
+Ngày: 12/10/2026. Trạng thái: đã qua review vòng hai, chưa triển khai. VPS dùng Caddy theo xác nhận người dùng. Contract runtime bổ sung ở [AI/context policy](2026-10-12-runtime-ai-context-policy.md); mẫu đánh giá ở [playrooom](../../references/playrooom-style-and-evaluation.md).
 
 ## 1. Mục tiêu đã xác nhận
 
@@ -32,6 +32,8 @@ Repository: [rua-den/playroom](https://github.com/rua-den/playroom), do người
 - Tạo lại câu trả lời, chọn phiên bản, tạo nhánh tại một lượt cũ.
 - Nhập transcript cũ theo định dạng rõ ràng, xem trước khi nhập; xuất và khôi phục chiến dịch.
 - Đăng nhập một tài khoản chủ sở hữu, HTTPS, giao diện mobile, khôi phục trạng thái sau khi điện thoại mất mạng/tắt màn hình và manifest PWA.
+- Quality/economy mode cùng một bộ nhớ; cấu hình role/model riêng, free-only policy và xử lý hết quota không chuyển paid âm thầm.
+- Thư viện ký ức sự kiện có ghim/sửa/xóa và mode retrieval; StyleProfile giữ giọng kể khi đổi model.
 
 Chưa đưa vào MVP: marketplace nhân vật, mạng xã hội, quảng cáo/gem, sinh ảnh, voice, đồng bộ nhiều server, chơi offline và APK. Hosting web có lưu trữ bền nằm trong MVP.
 
@@ -40,30 +42,34 @@ Chưa đưa vào MVP: marketplace nhân vật, mạng xã hội, quảng cáo/ge
 | Lớp | Nội dung | Quy tắc |
 |---|---|---|
 | Canon/hồ sơ | Thế giới, nhân vật, cách xưng hô, điều người chơi đã chốt | Chỉ người chơi sửa hoặc duyệt; AI không âm thầm ghi đè |
-| Trạng thái cảnh | Thời gian, địa điểm, người đang có mặt, mục tiêu, tình trạng đang diễn ra | Phân biệt người được nhắc đến với người thực sự có mặt |
+| Trạng thái cảnh | Focus scene và cảnh phụ, thời gian/địa điểm/present IDs, mục tiêu và tình trạng | Chuyển góc nhìn không tự di chuyển NPC; người được nhắc đến không tự có mặt |
 | Sự kiện/quan hệ | Sự kiện đã xảy ra, lời hứa, quan hệ, việc chưa giải quyết | Có lượt nguồn, nhánh và thời điểm hiệu lực |
 | Tóm tắt/lorebook | Tóm tắt đoạn cũ; kiến thức kích hoạt theo tên, alias và từ khóa | Là tài liệu hỗ trợ, không mạnh hơn canon hoặc nguồn gốc |
 | Transcript | Toàn bộ lượt gốc và các phiên bản | Giữ nguyên nguồn; prompt mỗi lượt chỉ lấy phần cần thiết |
 
 Sự kiện và quan hệ lưu dưới dạng văn bản có cấu trúc tối thiểu: chủ thể, nội dung, người liên quan, lượt nguồn và trạng thái duyệt. Không tạo hệ thống điểm tình cảm tự động trong bản đầu. Trong schema và fixture, một turn là một cặp hành động người chơi + câu trả lời AI được chọn; các candidate là revision của cặp đó. Transcript mới được chốt khi chọn candidate hoàn chỉnh, nhưng hành động/partial response vẫn được giữ trong job để không mất khi lỗi.
 
+StyleProfile là cấu hình câu chuyện có version tại checkpoint: tiếng Việt, độ dài, mức heading/emoji, cách đối thoại/chuyển góc cảnh và quyền điều khiển persona. Model/credentials là settings riêng. Kiến thức NPC được ghi bằng knowledge_scope/known_by khi có nguồn; narrator biết một fact không đồng nghĩa mọi NPC biết nó. Chi tiết đầy đủ và bài kiểm chứng ở tài liệu mẫu playrooom.
+
 ## 5. Vòng chơi và context
 
 1. Người chơi nhập hành động/lời thoại. Bản nháp còn nguyên nếu mạng lỗi.
 2. Backend đọc đúng đầu nhánh hiện tại và các phiên bản hồ sơ có hiệu lực.
-3. Context composer chọn quy tắc chơi, canon cần thiết, trạng thái cảnh đã chốt, dữ kiện/lore liên quan, tóm tắt các đoạn cũ và các lượt gần đây chưa được tóm tắt.
+3. Code lọc đúng checkpoint và tạo candidate pool. Economy chọn deterministic; quality gọi context director trong job đã reserve để chọn ID/lý do, sau đó code kiểm tra và pack final context. Mandatory không do director quyết định bỏ. Mỗi stage có budget/idempotency riêng như runtime policy.
 4. Tạo bản xem trước: nội dung, nguồn dữ kiện, lý do chọn, phần bị bỏ và số token chính xác hoặc ước lượng được ghi rõ. Khi chơi thường, nút gửi tự chạy preview rồi gửi nếu hợp lệ; không bắt mở bảng kỹ thuật mỗi lượt. “Xem context” là thao tác tùy chọn, lỗi budget sẽ mở phần giải thích tương ứng.
-5. Gửi AI; stream trả lời vào một phiên bản nháp. Lỗi/hủy không biến trả lời dở thành sự kiện đã xảy ra.
+5. Gửi narrator; stream trả lời vào một phiên bản nháp. Lỗi/hủy, refusal hoặc finish vì output limit không biến trả lời dở thành sự kiện đã xảy ra. Hết quota không làm mất lịch sử và không tự chuyển paid/provider khác.
 6. Câu trả lời hoàn chỉnh xuất hiện để người chơi chọn. Chọn “Dùng lượt này”, hoặc gửi hành động tiếp, sẽ chốt phiên bản đang chọn. Tạo lại trước khi chốt không đổi bộ nhớ.
 7. Trích đề xuất sự kiện/cảnh/tóm tắt từ phần đã chốt. Hiện trạng thái “chờ duyệt”; chưa dùng chúng như sự thật đã chốt. Người chơi có thể duyệt theo lô ở cuối cảnh.
 
 Trong lúc đề xuất cảnh chưa được duyệt, composer gửi cảnh đã chốt kèm các lượt mới nguyên văn, chỉ rõ các thay đổi mới còn nằm trong transcript. Không gửi một cảnh cũ như thể chắc chắn vẫn là hiện tại. Gợi ý cập nhật bộ nhớ ở mốc chuyển cảnh hoặc khi context đạt 75% trần input hữu dụng; không chờ một số lượt cố định vì một chương có thể rất dài. Người chơi duyệt theo lô, không bị bắt duyệt từng fact mỗi lượt. Nếu phần bắt buộc không còn vừa, cần duyệt/sửa bản tóm tắt hoặc tăng budget hợp lệ trước khi gọi AI tiếp.
 
+Dynamic block ghi as-of cursor; raw turn mới đã chọn thể hiện diễn biến mới mà projection memory chưa cập nhật. Ghim không đóng băng thời gian: lời hứa đổi trong story không bị giá trị cũ ghim thắng mãi. Canon invariant do người chơi chốt vẫn không bị lời kể sai tự biến thành retcon. Xem runtime policy về thứ tự nguồn/tính thời điểm.
+
 Quy tắc điều khiển đề xuất: AI không tự tạo lời thoại, suy nghĩ hoặc quyết định mới cho Henn. AI có thể diễn đạt lại hành động Henn mà người chơi vừa nhập, mô tả tác động và phản ứng của NPC. Người chơi có thể sửa quy tắc này trong hồ sơ chiến dịch.
 
 ### Ngân sách context
 
-- Mặc định trần input 12.000 token, dự trữ output 4.000 token, dự trữ bao gói 512 token. Đây là lựa chọn sản phẩm, không phải giới hạn của một model cụ thể.
+- Điểm khởi đầu: trần input 12.000 token, dự trữ total output 4.000 token, dự trữ bao gói 512 token. Mỗi role/model có budget riêng; wrapper là buffer cấu hình được, không phải phép đếm chính xác. Total output có thể gồm reasoning/formatting chứ không bảo đảm 4.000 token truyện nhìn thấy. Xem runtime policy về incomplete, cost và điều chỉnh budget.
 - Input thực tế tối đa là giá trị nhỏ hơn giữa trần người chơi đặt và cửa sổ model trừ hai khoản dự trữ.
 - Model config phải ghi context window và giới hạn output; không đoán cửa sổ từ tên model.
 - Nếu có tokenizer phù hợp, dùng token thực. Nếu không có, dùng ước lượng bảo thủ, gắn nhãn “ước lượng” và cho phép đặt trần thấp hơn. Không bảo đảm request sẽ vừa chỉ bằng phép đếm ký tự.
@@ -76,11 +82,15 @@ Quy tắc điều khiển đề xuất: AI không tự tạo lời thoại, suy 
 
 Dùng tên/alias nhân vật, từ khóa lore, nhân vật đang trong cảnh và truy vấn văn bản để chọn dữ kiện. Xếp hạng theo ghim, trùng chủ thể, độ liên quan từ khóa, việc chưa giải quyết và recency. Tie-break theo ID để preview lặp lại được. Lọc nhánh và thời điểm trước khi xếp hạng.
 
-Chưa dùng vector database hoặc một agent riêng cho từng NPC. Chỉ thêm semantic retrieval khi bộ tình huống kiểm chứng cho thấy tìm bằng tên/từ khóa bỏ sót quan trọng.
+Đây là deterministic baseline cho economy và tạo pool cho quality. Trong quality, model mạnh xếp hạng/chọn từ pool có nguồn; chưa dùng vector database hoặc agent riêng cho từng NPC. Chỉ thêm embedding retrieval khi thử nghiệm cho thấy pool bỏ sót dữ kiện quan trọng; đổi model director không sửa canon/checkpoint.
+
+Tham khảo Whif: event memory tách summary, ghim và lựa chọn retrieval. App có `auto` (gọi ký ức liên quan), `important_only` (chỉ ký ức ghim), `disabled` (tắt optional event retrieval). Các mode không tắt canon/scene/diễn biến bắt buộc, không tự duyệt proposal. Xóa ký ức tạo tombstone version từ checkpoint mới, không xóa dữ liệu cần cho lịch sử/fork.
+
+Giảm lặp bằng ID/version và source span khi phần raw gần đây đã chứa trọn sự kiện; không coi summary phủ source là chứng minh giữ mọi chi tiết. Ghim, slot quan trọng và lời hứa chưa giải quyết vẫn có thể cần nêu riêng dù summary đã bao phủ lượt nguồn. Không copy cứng cửa sổ 40 messages hoặc hệ số 1–2.5 của Whif vào logic app.
 
 ## 6. Canon, tóm tắt và xung đột
 
-Mỗi memory item có ID, loại, nội dung, entity IDs, source turn/revision IDs, origin (`user`, `import`, `ai`), trạng thái (`pending`, `approved`, `rejected`), phiên bản và state cursor hiệu lực trên nhánh. Trường cấu trúc tùy loại gồm `subject_id`, `predicate`, `value`/`object_id` và `supersedes_id`. Các slot đơn trị như vị trí nhân vật, chủ sở hữu đồ vật hoặc trạng thái quan hệ được so sánh bằng ID/predicate; tên/alias không phải identity. Alias trùng giữa hai nhân vật không tự gộp họ.
+Mỗi memory item có ID, loại, nội dung, entity IDs, source turn/revision IDs, origin (`user`, `import`, `ai`), trạng thái (`pending`, `approved`, `rejected`, `deleted` tombstone), pinned flag, knowledge_scope/known_by, phiên bản và state cursor hiệu lực trên nhánh. Trường cấu trúc tùy loại gồm `subject_id`, `predicate`, `value`/`object_id` và `supersedes_id`. Các slot đơn trị được so sánh bằng ID/predicate; tên/alias không phải identity. Alias trùng giữa hai nhân vật không tự gộp họ.
 
 - Dữ kiện do người chơi tạo được duyệt khi lưu, nhưng vẫn có lịch sử chỉnh sửa.
 - AI chỉ tạo đề xuất. Hai giá trị khác nhau cho cùng slot đơn trị đã chốt tạo conflict để người chơi xem nội dung và nguồn; thay đổi hợp lệ theo thời gian phải ghi supersession, không xóa giá trị cũ. Với văn bản tự do, phát hiện mâu thuẫn bằng AI chỉ là gợi ý, không hứa phát hiện mọi mâu thuẫn ngữ nghĩa. Nội dung có lượt nguồn hợp lệ vẫn có thể diễn giải sai và vẫn cần duyệt.
@@ -91,16 +101,16 @@ Mỗi memory item có ID, loại, nội dung, entity IDs, source turn/revision I
 
 ## 7. Phiên bản và nhánh
 
-Transcript lưu lượt và các revision; branch lưu parent, checkpoint fork và lựa chọn revision. Memory/profile cũng có phiên bản. Một `StateCursor` gồm turn/revision đã chốt và state version tăng đơn điệu trên branch. Mỗi mutation chốt lượt, sửa hồ sơ, duyệt memory/scene/summary đều tạo checkpoint mới. Vì vậy sửa hai lần ở cùng một lượt vẫn phân biệt được. Snapshot tham chiếu các version ID bất biến, không dùng truy vấn “lấy bản mới nhất” để dựng lịch sử.
+Transcript lưu lượt và các revision; branch lưu parent, checkpoint fork và lựa chọn revision. Memory/profile/style/scene/retrieval policy có phiên bản. Một `StateCursor` gồm turn/revision đã chốt và state version tăng đơn điệu trên branch. Mỗi mutation dữ kiện truyện đều tạo checkpoint mới; hai lần sửa ở cùng lượt vẫn phân biệt được. Snapshot tham chiếu version IDs bất biến. Model/provider/mode bindings dùng settings_revision riêng, nên đổi model không sửa lịch sử hay khiến memory bị mất; job ghi cấu hình thực đã dùng.
 
 - Tạo lại lượt cuối: giữ bản cũ, tạo candidate mới; chỉ candidate được chọn/chốt mới thành nguồn memory.
 - Muốn tạo lại một lượt đã chốt, kể cả lượt cuối, tạo nhánh tại checkpoint trước lượt đó rồi sinh lại. Candidate chưa chốt có thể tạo lại trên cùng branch. Không sửa quá khứ tại chỗ rồi giữ nguyên bộ nhớ tương lai.
 - Fork kế thừa đúng transcript, hồ sơ, memory và tóm tắt tại checkpoint đã chọn. Mọi dữ kiện hay chỉnh sửa được duyệt sau checkpoint này bị loại, kể cả khi source của chúng là một lượt cũ.
 - Context run lưu snapshot ID, hash payload, danh sách source IDs và model config dùng thực tế. Bản snapshot đã tạo không bị thay đổi bởi lần sửa hồ sơ sau đó.
-- Một generation tại một thời điểm cho mỗi branch, tối đa hai provider job chạy đồng thời toàn app (kể cả consolidation); mỗi attempt timeout tổng mặc định 300 giây, cấu hình được theo provider. Preview/start/commit và mọi mutation state dùng expected state version, trả 409 nếu đã cũ. Khi một generation đang chạy, mutation canon/scene/memory trên branch đó trả 409; UI có thể giữ bản sửa nháp để áp dụng sau. Candidate hoàn chỉnh bị stale do sửa state vẫn được giữ để đọc/copy nhưng không commit vào state khác.
+- Một generation pipeline tại một thời điểm cho mỗi branch, tối đa hai provider attempt chạy đồng thời toàn app (kể cả consolidation); mỗi attempt timeout tổng mặc định 300 giây, cấu hình được theo provider. Preview/start/commit và mọi mutation state dùng expected state version, trả 409 nếu đã cũ. Khi pipeline đang chạy, mọi effective story mutation (canon, scene, memory, style, pins/retrieval policy) trên branch đó trả 409; UI giữ bản sửa nháp. Candidate hoàn chỉnh bị stale do sửa story state vẫn được giữ để đọc/copy nhưng không commit vào state khác.
 - UI tạo và lưu idempotency key trước khi gửi, backend reserve job trong transaction trước khi gọi provider. Nếu response đầu bị mất và UI chưa biết job ID, truy vấn status bằng key đó để lấy job cũ; không sinh key mới/tự gọi provider lại. Job idempotency áp dụng trên owner, branch và operation; cùng key nhưng payload khác trả 409. Retry tự động bên provider adapter mặc định tắt. Backend không bảo đảm provider không tính phí một request đã nhận trước khi timeout, nên không suy diễn phí từ trạng thái job.
 - Điện thoại mất kết nối không tự hủy generation. Backend giữ job và tiến độ; UI mở lại sẽ lấy trạng thái/nội dung đã nhận theo job ID, không tự gửi một request AI mới. Chỉ nút hủy mới yêu cầu dừng. Khi server restart giữa request, giữ draft và đánh dấu interrupted; không âm thầm gọi lại một API có thể đã tính phí.
-- Job và delta được lưu bền theo thứ tự; reconnect trả offset/cursor và nội dung hiện có, loại duplicate delta. Logout/thu hồi session chặn đọc stream mới ngay; kết nối dài kiểm tra session mỗi 15 giây và đóng khi revoke. Job có thể hoàn tất phía server nhưng không tiếp tục lộ nội dung cho session đã revoke.
+- Job và delta được lưu bền theo thứ tự; reconnect trả offset/cursor và nội dung hiện có, loại duplicate delta. Logout chặn request mới ngay và stream hiện có dừng gửi sau tối đa một chu kỳ kiểm tra session 15 giây. Job có thể hoàn tất phía server nhưng không tiếp tục mở stream cho session đã revoke. Không hứa thu hồi tức thì cho bytes đã gửi trong interval đó.
 
 ## 8. Giao diện ưu tiên điện thoại
 
@@ -120,10 +130,11 @@ Màn hình hồ sơ cho phép sửa nhân vật và alias; người chơi chọn
 - API key không ghi vào transcript, prompt preview, export hay log. Export chiến dịch không chứa session đăng nhập hoặc provider secrets. DB backup quản trị có thể chứa bảng owner/session nên chỉ quản trị viên truy cập; khi restore server phải revoke session cũ. Provider secrets ở cấu hình server riêng, không nằm trong export chiến dịch.
 - PWA manifest có tên, icon 192/512, start URL và standalone display. Cài qua thao tác trình duyệt hỗ trợ; không hứa cùng một nút cài hoạt động trên mọi hệ điều hành. Bản đầu không cache API/truyện riêng qua service worker; generation vẫn cần Internet.
 - Dùng SQLite backup API để sao lưu DB đang hoạt động; không copy tùy tiện một file DB khi đang có WAL.
-- Export JSON có `schema_version`, hồ sơ, turns/revisions, branches, memory, scene, summaries và snapshot metadata; không chứa provider secrets. Import tạo campaign mới, validate trước và commit nguyên transaction.
+- Restore/import có execution epoch mới và không tự replay job đã có trong dữ liệu khôi phục, kể cả queued: chúng có thể đã dispatch sau lúc backup. Revoke session cũ, đọc được draft/kết quả như history, người chơi chủ động tạo attempt mới nếu muốn tiếp tục.
+- Export JSON có `schema_version`, hồ sơ, turns/revisions, branches, memory, scene, summaries và snapshot metadata; không chứa provider secrets. App-export import validate trước rồi commit campaign và references trong một transaction, jobs mang theo chỉ là history không dispatchable. Invalid references không tạo campaign dở.
 - Export kiểm tra giới hạn kích thước tương ứng importer trước khi tạo file chuyển phiên; không xuất thành công một file mà chính app không thể nhập. Campaign vượt giới hạn có thể tăng cấu hình transfer sau khi kiểm tra tài nguyên, hoặc dùng backup DB quản trị để khôi phục đầy đủ. Không cắt dữ liệu âm thầm.
 - Nhập truyện cũ: nhận JSON turns hoặc TXT/Markdown người chơi đã đánh dấu lượt; không tự đoán chắc ai nói chỉ từ một khối văn bản. Preview cho chỉnh speaker/thứ tự và chọn “đây là đoạn trích” khi thiếu phần đầu. File tối đa 20 MiB trong MVP, kiểm tra kích thước trước khi đọc hết; import/validation có tiến độ và không chạy SQL/script lấy từ file.
-- Với import transcript lịch sử: lưu raw trước, chia đoạn theo budget model, đề xuất tóm tắt và một hồ sơ/cảnh checkpoint tiếp tục chơi; người dùng duyệt checkpoint trước khi sinh truyện. Đoạn thiếu lịch sử được đánh dấu unknown. Các lượt trước checkpoint import chỉ là archive để tra; không cho fork tại thời điểm không có state lịch sử xác thực. Với export schema v1 của chính app, bảo toàn checkpoint/version references để fork và round-trip chính xác.
+- Với transcript lịch sử: validate raw rồi tạo campaign ở trạng thái `importing` trong một transaction ngắn; không giữ DB transaction mở xuyên các AI calls. Chia đoạn/tóm tắt là job sau đó, giữ progress/raw khi quota hoặc AI lỗi. Người chơi có thể làm summary/hồ sơ/cảnh thủ công; chỉ sau duyệt checkpoint mới chuyển `playable`. Đoạn thiếu được đánh dấu unknown, archive trước checkpoint không là fork target. Với export schema v1 của app, bảo toàn checkpoint/version references để fork/round-trip mà không cần AI gọi lại.
 - Link chat `playrooom` là nguồn tham khảo hiện có, không phải cam kết app tự đồng bộ toàn bộ lịch sử ChatGPT. Chỉ nhập nội dung thực sự lấy được và người chơi duyệt.
 
 ## 10. Stack đề xuất
@@ -142,6 +153,8 @@ Thứ tự nguồn deployment: thông tin trực tiếp mới nhất của ngư�
 
 AI provider nằm sau interface riêng; MVP có fake provider để test không tốn tiền và một HTTP adapter cho endpoint có contract đã kiểm tra. Thay provider không thay schema memory. Không tự thử model có phí trước khi người chơi cấu hình key và chạy phép thử.
 
+MVP phải hỗ trợ contract text/structured theo profile đã chọn và economy/quality semantics; không cần viết mọi nhà cung cấp cùng lúc. Adapter thiếu structured output vẫn chơi text/economy và sửa memory thủ công được. Whif reference và style reference hướng dẫn bài kiểm thử, không chứng minh backend Whif hoặc model nào sẽ kể hay hơn.
+
 Tài liệu nền đã kiểm tra:
 
 - [Vite Getting Started](https://vite.dev/guide/).
@@ -155,10 +168,12 @@ Tài liệu nền đã kiểm tra:
 
 Test deterministic: cô lập thế giới/nhánh, budget, hồ sơ ghim, memory pending, tóm tắt stale, generation dở, restart, duplicate request, export/import và snapshot ở lượt cũ.
 
-Kiểm chứng web/mobile: toàn bộ truyện/context/export cần session hợp lệ; logout chặn đọc kể cả kết nối stream đang mở; reconnect không sinh trùng lượt hoặc gọi AI lại, kể cả mất response trước khi nhận job ID. Smoke trên trình duyệt Android và iOS thực khi có thiết bị, ghi rõ nếu chỉ có viewport mô phỏng. Restart service và đổi release không làm mất DB; backup khôi phục ở thư mục dữ liệu mới được. Domain thật dùng HTTPS trước nghiệm thu truy cập từ Internet. Kiểm tra health các site hiện có trước/sau Caddy reload.
+Kiểm chứng web/mobile: toàn bộ truyện/context/export cần session hợp lệ; logout tuân thủ bound 15 giây cho stream; reconnect không nhân attempt ở context/narrator, kể cả mất response trước khi nhận job ID. Quality dùng hai provider calls/economy dùng một ở đường thành công; thêm consolidation là thao tác riêng được ghi nhận. Free quota hết không gọi paid fallback. Smoke trên Android/iOS thực khi có thiết bị, ghi rõ emulation. Restart service và đổi release không mất DB; Caddy reload giữ health các site hiện có.
 
 Bộ truyện kiểm chứng có ít nhất 120 lượt tổng hợp, có summary coverage đã duyệt, một lời hứa xa, hai người có alias gần nhau, thay đổi địa điểm, một nhân vật chỉ được nhắc đến, một mâu thuẫn slot canon và hai nhánh có kết quả khác nhau. Thêm tình huống duyệt memory từ source cũ sau điểm fork, import vượt budget và mất response job đầu. Đây là fixture kiểm tra chọn context, không phải bằng chứng AI kể truyện tốt.
 
 Thử chất lượng thực với model được chọn: người chơi đánh giá giọng kể tiếng Việt, phân biệt NPC, quyền điều khiển Henn và giữ mạch sau 20 lượt tương tác. Ghi rõ model/config/context; mọi lần chạy có phí được tách khỏi test tự động.
+
+Thử cả quality và economy/free trên cùng checkpoint/style; kiểm tra cảnh song song, kiến thức NPC, lời hứa thay đổi hợp lệ và output bị cắt như style reference. Khi chỉ đủ quota cho thử nhỏ, báo đúng số lượt thử đã thực hiện, không đánh dấu nghiệm thu 20 lượt như thể đã đủ.
 
 MVP được nghiệm thu khi test dữ liệu/context đạt, giao diện hoàn thành vòng chơi và khôi phục được dữ liệu, bộ truyện kiểm chứng không rò dữ kiện sai nhánh, và người chơi chấp nhận chất lượng phiên thử. Không tuyên bố hoàn thành chỉ vì frontend build thành công.
