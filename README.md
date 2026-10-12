@@ -6,7 +6,7 @@ Trọng tâm là quản lý context qua nhiều chương: lưu hồ sơ, cảnh,
 
 ## Trạng thái
 
-Đang triển khai theo plan đã review. Mốc backend nền đã có owner authentication, campaign/profile CRUD, checkpoint bất biến và ký ức có phiên bản; 26 test backend đã qua cùng review. Bộ chọn context, vòng AI và giao diện đang được xây tiếp; chưa có production deployment hoặc kiểm chứng model thật.
+Đang triển khai theo plan đã review. Backend đã có owner authentication, campaign/profile CRUD, checkpoint bất biến, ký ức có phiên bản và context preview deterministic không gọi AI. Review context đã chốt summary coverage, hồ sơ NPC/knowledge, alias, recency và budget. Toàn bộ 54 test backend đã qua trước bản sửa thứ tự; 29 test context đã qua sau bản sửa, gồm kiểm tra tám process/hash seed. Vòng AI và giao diện đang được xây tiếp; chưa kiểm chứng model thật. Người dùng chọn chạy/test local trước; cấu hình VPS/domain để sau.
 
 ## Đọc theo thứ tự
 
