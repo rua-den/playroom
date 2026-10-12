@@ -1,0 +1,23 @@
+{
+  "fixture_kind": "synthetic_only",
+  "pair_count": 120,
+  "action_template": "Synthetic test action {sequence}: Henn checks the clinic.",
+  "narration_template": "Synthetic test narration {sequence}: Henn and Mila wait at the clinic.",
+  "special_narrations": {
+    "40": "Synthetic test narration: Mila mentions Bao in a letter; Bao never enters the scene.",
+    "120": "Synthetic test narration 120: Henn pays Mila the milk debt at the old dairy, closing the promise. The narrator mistakenly says Henn is 181 cm tall."
+  },
+  "summary_source_end_exclusive": 119,
+  "symbolic_sources": {
+    "old_promise": "pair:1",
+    "old_ledger_event": "pair:1",
+    "approved_summary": "pairs:1-119",
+    "latest_raw": "pair:120",
+    "mentioned_only_actor": "Bao"
+  },
+  "expectations": {
+    "must_include": ["old_promise", "old_ledger_event", "latest_raw", "henn_agency_rule", "scene_cast"],
+    "must_exclude": ["pending_memory", "foreign_campaign", "irrelevant_side_lore", "mentioned_only_actor_as_present"],
+    "summary_must_replace_only": "contiguous_committed_interval_excluding_latest_raw"
+  }
+}

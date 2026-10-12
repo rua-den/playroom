@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -16,6 +17,8 @@ from playroom.timeline import create_committed_revision, get_branch_head
 
 @pytest.fixture
 def story(tmp_path):
+    fixture_spec = json.loads((Path(__file__).parent / "fixtures" / "context-120-pairs.json").read_text(encoding="utf-8"))
+    assert fixture_spec["fixture_kind"] == "synthetic_only"
     connection = connect(tmp_path / "context.sqlite3")
     migrate(connection)
     owner = create_owner(connection, "context@example.test", "strong context password")
@@ -38,24 +41,22 @@ def story(tmp_path):
     revisions.append(first_revision)
     head = get_branch_head(connection, campaign.id, branch)
     promise = append_memory_version(connection, campaign.id, branch, "promise", "Henn promised Mila a bottle of milk at the old dairy; unresolved.", origin="user", expected_state_version=head.state_version, source_revision_ids=[first_revision], entity_ids=[henn, mila], pinned=True, mandatory=True, subject_id=henn, predicate="promise", value="deliver milk", object_id=mila)
-    for turn in range(1, 120):
+    for turn in range(1, fixture_spec["pair_count"]):
         head = get_branch_head(connection, campaign.id, branch)
         if turn == 59:
             scene_id = str(uuid4())
             changed_scene = {"focus_scene_id": scene_id, "scenes": [{"id": scene_id, "name": "Dairy", "location": "Old dairy beside clinic", "present_ids": [henn, mila]}]}
             changed = update_scene(connection, campaign.id, branch, changed_scene, expected_state_version=head.state_version)
             head = get_branch_head(connection, campaign.id, branch)
-        action = f"Synthetic test action {turn + 1}: Henn checks the clinic."
-        if turn == 39:
-            narrative = "Synthetic test narration: Mila mentions Bao in a letter; Bao never enters the scene."
-        elif turn == 119:
-            narrative = "Synthetic test narration 120: Henn pays Mila the milk debt at the old dairy, closing the promise. The narrator mistakenly says Henn is 181 cm tall."
+        action = fixture_spec["action_template"].format(sequence=turn + 1)
+        if str(turn + 1) in fixture_spec["special_narrations"]:
+            narrative = fixture_spec["special_narrations"][str(turn + 1)]
         else:
-            narrative = f"Synthetic test narration {turn + 1}: Henn and Mila wait at the clinic."
+            narrative = fixture_spec["narration_template"].format(sequence=turn + 1)
         _, revision_id = create_committed_revision(connection, campaign.id, branch, action, narrative, expected_state_version=head.state_version)
         revisions.append(revision_id)
     head = get_branch_head(connection, campaign.id, branch)
-    summary = append_memory_version(connection, campaign.id, branch, "summary", "Synthetic approved chapter summary: Henn promised milk to Mila; Dr. Vinh is at the clinic; the blue gate leads to the old dairy.", origin="user", expected_state_version=head.state_version, source_revision_ids=revisions[:119], entity_ids=[henn, mila, doctor], pinned=False)
+    summary = append_memory_version(connection, campaign.id, branch, "summary", "Synthetic approved chapter summary: Henn promised milk to Mila; Dr. Vinh is at the clinic; the blue gate leads to the old dairy.", origin="user", expected_state_version=head.state_version, source_revision_ids=revisions[:fixture_spec["summary_source_end_exclusive"]], entity_ids=[henn, mila, doctor], pinned=False)
     head = get_branch_head(connection, campaign.id, branch)
     relevant = append_memory_version(connection, campaign.id, branch, "lore", "The old dairy has a blue gate and is beside the clinic.", origin="user", expected_state_version=head.state_version, source_revision_ids=[revisions[1]], entity_ids=[mila, doctor])
     head = get_branch_head(connection, campaign.id, branch)
@@ -71,12 +72,12 @@ def story(tmp_path):
     other = create_campaign(connection, owner.id, "Other synthetic world", {"name": "Other"}, [], {"name": "Other player"})
     foreign_memory = append_memory_version(connection, other.id, other.initial_branch_id, "event", "Foreign campaign memory must not enter this preview.", origin="user", expected_state_version=1, source_revision_ids=[])
     assert summary.status == promise.status == relevant.status == excluded.status == "approved"
-    yield {"connection": connection, "owner": owner, "campaign": campaign, "branch": branch, "henn": henn, "mila": mila, "doctor": doctor, "mentioned": mentioned, "revisions": revisions, "summary": summary, "promise": promise, "relevant": relevant, "old_event": old_event, "pending": pending, "excluded": excluded, "other": other, "foreign_memory": foreign_memory, "head": head}
+    yield {"connection": connection, "owner": owner, "campaign": campaign, "branch": branch, "henn": henn, "mila": mila, "doctor": doctor, "mentioned": mentioned, "revisions": revisions, "summary": summary, "promise": promise, "relevant": relevant, "old_event": old_event, "pending": pending, "excluded": excluded, "other": other, "foreign_memory": foreign_memory, "head": head, "fixture_spec": fixture_spec}
     connection.close()
 
 
 def _model_config():
-    return {"profile_id": "fake-context-test", "label": "Synthetic fixture only", "input_limit": 12000, "output_limit": 4000, "wrapper_buffer": 512, "requested_output": 1000, "token_count_mode": "estimated", "is_test_profile": True}
+    return {"profile_id": "fake-context-test", "label": "Synthetic fixture only", "context_window": 16512, "input_limit": 12000, "output_limit": 4000, "wrapper_buffer": 512, "requested_output": 1000, "token_count_mode": "estimated", "is_test_profile": True}
 
 
 def test_context_preview_replaces_approved_intervals_but_keeps_latest_turn_verbatim(story):
@@ -227,3 +228,56 @@ def test_budget_drops_optional_memory_before_blocking_required_context(story):
     assert preview["budget"]["fits"] is True
     assert not any("Milk Milk" in block["text"] for block in preview["blocks"])
     assert any("budget" in item["reason"].casefold() for item in preview["omission_reasons"])
+
+
+def test_latest_inclusive_summary_is_selected_or_raw_interval_is_restored(story):
+    head = get_branch_head(story['connection'], story['campaign'].id, story['branch'])
+    latest_summary = append_memory_version(story['connection'], story['campaign'].id, story['branch'], 'summary', 'Synthetic full chapter summary with older milk promise.', origin='user', expected_state_version=head.state_version, source_revision_ids=story['revisions'], entity_ids=[story['henn'], story['mila']])
+    preview = build_context_preview(story['connection'], story['campaign'].id, story['branch'], 'What about the promise?', _model_config(), owner_id=story['owner'].id)
+    raw_ids = {block['id'] for block in preview['blocks'] if block['type'] == 'transcript'}
+    summarized = latest_summary.version_id in {source for block in preview['blocks'] for source in block['source_ids']}
+    assert story['revisions'][-1] in raw_ids
+    assert summarized or set(story['revisions'][:-1]).issubset(raw_ids)
+
+def test_summary_coverage_does_not_discard_distinct_unresolved_memory(story):
+    preview = build_context_preview(story['connection'], story['campaign'].id, story['branch'], 'Return that ledger to Mila', _model_config(), owner_id=story['owner'].id)
+    assert any(block['id'] == story['old_event'].memory_id for block in preview['blocks'])
+
+def test_alias_resolves_actor_profile_and_rank_uses_recent_effective_memory(story):
+    pool = build_candidate_pool(story['connection'], story['campaign'].id, story['branch'], 'Hen, give her the ledger', owner_id=story['owner'].id)
+    assert any(item['kind'] == 'character' and story['henn'] in item['text'] for item in pool['mandatory'] + pool['optional'])
+    alias_candidates = [item for item in pool['optional'] if item.get('entity_ids') and story['henn'] in item['entity_ids']]
+    assert alias_candidates
+    assert max(max(item['source_turn_sequences'], default=0) for item in alias_candidates) == 119
+    assert story['mentioned'] not in {item['key'].partition(':')[2] for item in pool['mandatory'] if item.get('kind') == 'character'}
+    preview = build_context_preview(story['connection'], story['campaign'].id, story['branch'], 'Hen, what about her?', _model_config(), owner_id=story['owner'].id)
+    assert any(item.get('actor_id') == story['mentioned'] and 'outside current scene' in item['reason'] for item in preview['omission_reasons'])
+
+def test_same_relevance_actor_memory_prefers_newer_effective_turn(story):
+    head = get_branch_head(story['connection'], story['campaign'].id, story['branch'])
+    old = append_memory_version(story['connection'], story['campaign'].id, story['branch'], 'lore', 'Silver compass points to the north room.', origin='user', expected_state_version=head.state_version, source_revision_ids=[story['revisions'][0]], entity_ids=[story['henn']])
+    head = get_branch_head(story['connection'], story['campaign'].id, story['branch'])
+    newer = append_memory_version(story['connection'], story['campaign'].id, story['branch'], 'lore', 'Silver compass points to the north room.', origin='user', expected_state_version=head.state_version, source_revision_ids=[story['revisions'][-1]], entity_ids=[story['henn']])
+    pool = build_candidate_pool(story['connection'], story['campaign'].id, story['branch'], 'Henn checks the silver compass', owner_id=story['owner'].id)
+    ordered = [item['id'] for item in pool['optional']]
+    assert ordered.index(newer.memory_id) < ordered.index(old.memory_id)
+
+def test_preview_injected_counter_is_internal_and_owned_read_is_saved(story):
+    calls = []
+    counter = lambda text: calls.append(text) or len(text.split())
+    preview = build_context_preview(story['connection'], story['campaign'].id, story['branch'], 'A synthetic exact count', _model_config(), owner_id=story['owner'].id, context_counter=counter, counter_id='fixture-word-counter-v1')
+    assert preview['budget']['counter_mode'] == 'exact'
+    assert preview['budget']['counter_id'] == 'fixture-word-counter-v1'
+    assert calls
+    saved = load_context_preview(story['connection'], preview['id'], story['owner'].id)
+    assert saved['budget']['counter_id'] == 'fixture-word-counter-v1'
+    assert '_context_counter' not in json.dumps(saved)
+
+def test_synthetic_style_cases_keep_agency_and_style_profiles_required(story):
+    style_data = json.loads((Path(__file__).parent / "fixtures" / "style-cases.json").read_text(encoding="utf-8"))
+    assert style_data["fixture_kind"] == "synthetic_only"
+    preview = build_context_preview(story['connection'], story['campaign'].id, story['branch'], 'Continue at the clinic', _model_config(), owner_id=story['owner'].id)
+    profile_blocks = [block for block in preview['blocks'] if block['type'] in {'persona', 'style'}]
+    assert any("player alone controls Henn's choices" in block['text'] for block in profile_blocks)
+    assert any(block['type'] == 'style' for block in profile_blocks)
+

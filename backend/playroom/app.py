@@ -55,6 +55,8 @@ def create_app(
     login_failure_limit: int = 5,
     login_failure_window_seconds: int = 900,
     context_model_profiles: dict | None = None,
+    context_counter=None,
+    context_counter_id: str = "synthetic-test-counter",
 ) -> FastAPI:
     configured_url = database_url or os.getenv("PLAYROOM_DATABASE_URL", "./data/playroom.sqlite3")
     is_memory_database = configured_url in {":memory:", "sqlite:///:memory:"}
@@ -79,6 +81,8 @@ def create_app(
     app.state.login_failure_limit = login_failure_limit
     app.state.login_failure_window_seconds = login_failure_window_seconds
     app.state.context_model_profiles = context_model_profiles if context_model_profiles is not None else {DEFAULT_TEST_CONTEXT_PROFILE["profile_id"]: dict(DEFAULT_TEST_CONTEXT_PROFILE)}
+    app.state.context_counter = context_counter
+    app.state.context_counter_id = context_counter_id
 
     @app.middleware("http")
     async def protect_host_and_origin(request: Request, call_next):

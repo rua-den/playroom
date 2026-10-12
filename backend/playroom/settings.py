@@ -11,6 +11,7 @@ DEFAULT_TEST_CONTEXT_PROFILE = {
     "label": "Synthetic fixture only",
     "is_test_profile": True,
     "input_limit": 12000,
+    "context_window": 16512,
     "output_limit": 4000,
     "wrapper_buffer": 512,
     "requested_output": 4000,

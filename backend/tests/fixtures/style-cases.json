@@ -1,0 +1,8 @@
+{
+  "fixture_kind": "synthetic_only",
+  "cases": [
+    {"id": "voice-player-agency", "text": "The player alone controls Henn's choices.", "expected": "required_profile"},
+    {"id": "voice-style-profile", "text": "Use concise, warm narration and preserve established character voice.", "expected": "required_profile"},
+    {"id": "voice-irrelevant-actor", "actor": "Bao", "text": "A character mentioned in a letter but absent from the scene.", "expected": "optional_unless_action_resolves_actor"}
+  ]
+}
