@@ -87,12 +87,17 @@ def update_settings(payload: SettingsRequest, connection: sqlite3.Connection = D
     def binding(profile):
         return {"id": profile["id"], "version": profile["version"], "profile_hash": profile.get("profile_hash") or profile_hash({key: value for key, value in profile.items() if key not in {"version", "profile_hash"}})}
     roles = {"narrator": binding(narrator_profile)}
-    if payload.mode == "quality":
-        if not payload.context_profile_id or not payload.consolidation_profile_id:
-            raise ValidationError("Quality mode requires context and consolidation profiles")
+    if payload.context_profile_id:
         context_profile = get_model_profile(connection, owner.id, payload.context_profile_id)
+        if not context_profile.get("structured_output") or not context_profile.get("native_structured_output") or not context_profile.get("structured_schema_parameter"):
+            raise ValidationError("Context role requires native strict schema support")
+        roles["context"] = binding(context_profile)
+    if payload.consolidation_profile_id:
         consolidation_profile = get_model_profile(connection, owner.id, payload.consolidation_profile_id)
-        if not all(profile.get("structured_output") and profile.get("native_structured_output") and profile.get("structured_schema_parameter") for profile in (context_profile, consolidation_profile)):
-            raise ValidationError("Context and consolidation roles require native strict schema support")
-        roles.update({"context": binding(context_profile), "consolidation": binding(consolidation_profile)})
+        if not consolidation_profile.get("structured_output") or not consolidation_profile.get("native_structured_output") or not consolidation_profile.get("structured_schema_parameter"):
+            raise ValidationError("Consolidation role requires native strict schema support")
+        roles["consolidation"] = binding(consolidation_profile)
+    if payload.mode == "quality":
+        if "context" not in roles:
+            raise ValidationError("Quality mode requires a context profile")
     return save_owner_settings(connection, owner.id, {"roles": roles, "mode": payload.mode, "policy": payload.policy, "confirmed_usd_cap": payload.confirmed_usd_cap})

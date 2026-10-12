@@ -55,13 +55,12 @@ def _validated_settings(settings: dict) -> dict:
     if mode not in {"economy", "quality"} or policy not in {"free_only", "capped_paid"}:
         raise ValidationError("Unknown runtime mode or cost policy")
     roles = settings.get("roles") or {}
-    required = {"narrator"} if mode == "economy" else {"context", "narrator", "consolidation"}
-    if not required.issubset(roles) or not all(isinstance(roles[name], dict) for name in required):
+    if not isinstance(roles, dict) or not isinstance(roles.get("narrator"), dict):
         raise ValidationError("Selected runtime roles require immutable profile version bindings")
-    if mode == "economy":
-        roles = {"context": None, "narrator": roles["narrator"], "consolidation": None}
-    elif set(roles) != {"context", "narrator", "consolidation"} or not all(isinstance(roles[name], dict) for name in roles):
-        raise ValidationError("Three immutable context, narrator, and consolidation bindings are required")
+    if mode == "quality" and not isinstance(roles.get("context"), dict):
+        raise ValidationError("Quality mode requires a context profile binding")
+    if set(roles) - {"context", "narrator", "consolidation"} or any(value is not None and not isinstance(value, dict) for value in roles.values()):
+        raise ValidationError("Selected runtime roles require immutable profile version bindings")
     cap = settings.get("confirmed_usd_cap")
     if policy == "capped_paid":
         try:

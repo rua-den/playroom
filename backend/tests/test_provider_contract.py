@@ -71,7 +71,7 @@ def test_paid_cap_is_money_and_unknown_eligibility_fails_closed():
 def test_openrouter_metadata_verification_requires_exact_endpoint_and_records_tier():
     def route(request):
         if request.url.path.endswith("/models/author/model:free/endpoints"):
-            return httpx.Response(200, json={"data": [{"id": "other", "provider_id": "other", "model_name": "author/model:free", "context_length": 8192, "max_completion_tokens": 1024, "pricing": {"prompt": "0", "completion": "0"}, "supported_parameters": ["response_format"], "structured_outputs": True}, {"id": "exact", "provider_name": "Exact", "provider_id": "exact", "model_name": "author/model:free", "context_length": 8192, "max_completion_tokens": 1024, "pricing": {"prompt": "0", "completion": "0"}, "supported_parameters": ["response_format"], "structured_outputs": True, "data_policy": {"allow_training": False}}]})
+            return httpx.Response(200, json={"data": [{"id": "other", "provider_id": "other", "tag": "other", "model_id": "author/model:free", "model_name": "author/model:free", "context_length": 8192, "max_completion_tokens": 1024, "pricing": {"prompt": "0", "completion": "0"}, "supported_parameters": ["response_format", "structured_outputs"]}, {"id": "exact", "provider_name": "Exact", "provider_id": "exact", "tag": "exact", "model_id": "author/model:free", "model_name": "author/model:free", "context_length": 8192, "max_completion_tokens": 1024, "pricing": {"prompt": "0", "completion": "0"}, "supported_parameters": ["response_format", "structured_outputs"], "data_policy": {"allow_training": False}}]})
         return httpx.Response(200, json={"data": {"is_free_tier": False, "limit": None}})
     verifier = OpenRouterVerifier(http_client=httpx.Client(transport=httpx.MockTransport(route)))
     result = verifier.verify("secret", "author/model:free", "https://openrouter.ai/api/v1/chat/completions", provider_tag="exact")
@@ -133,6 +133,20 @@ def test_streaming_split_utf8_and_multiline_data_event_completes():
     adapter = OpenRouterAdapter("secret-key", "https://openrouter.ai/api/v1/chat/completions", profile=_profile(), http_client=httpx.Client(transport=transport))
     events = list(adapter.generate_text({"messages": [], "reserved_completion_tokens": 10}))
     assert "".join(item for item in events if isinstance(item, str)) == "Xin chào"
+    assert isinstance(events[-1], ProviderResult) and events[-1].finish_reason == "stop"
+
+
+def test_streaming_valid_newline_joined_data_event_completes():
+    first = b'data: {"choices":[{"delta":\r\n'
+    second = b'data: {"content":"joined"}}]}\r\n\r\n'
+    stop = b'data: {"choices":[{"finish_reason":"stop"}]}\r\n\r\n'
+    done = b"data: [DONE]\r\n\r\n"
+    body = first + second + stop + done
+    stream = _SplitStream([body[:9], body[9:23], body[23:41], body[41:]])
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, stream=stream, headers={"content-type": "text/event-stream"}))
+    adapter = OpenRouterAdapter("secret-key", "https://openrouter.ai/api/v1/chat/completions", profile=_profile(), http_client=httpx.Client(transport=transport))
+    events = list(adapter.generate_text({"messages": [], "reserved_completion_tokens": 10}))
+    assert "".join(item for item in events if isinstance(item, str)) == "joined"
     assert isinstance(events[-1], ProviderResult) and events[-1].finish_reason == "stop"
 
 

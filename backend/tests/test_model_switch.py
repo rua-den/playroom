@@ -15,7 +15,8 @@ from playroom.provider import FakeProvider
 class StubVerifier:
     def verify(self, secret, model, endpoint, *, provider_tag=None):
         assert secret.startswith("sk-")
-        return {"id": "profile-a", "provider": "openrouter", "model": model, "endpoint": endpoint, "provider_tag": provider_tag or "exact", "context_limit": 8192, "output_limit": 1024, "credential_tier": "free", "pricing_verified": True, "pricing": {"prompt": "0", "completion": "0"}, "supported_parameters": ["max_tokens", "response_format"], "native_structured_output": True, "structured_schema_parameter": "response_format", "structured_output": True}
+        supported = ["max_tokens", "response_format", "structured_outputs"]
+        return {"id": "profile-a", "provider": "openrouter", "model": model, "model_id": model, "endpoint": endpoint, "provider_tag": provider_tag or "exact", "tag": provider_tag or "exact", "context_limit": 8192, "output_limit": 1024, "credential_tier": "free", "pricing_verified": True, "pricing": {"prompt": "0", "completion": "0"}, "supported_parameters": supported, "native_structured_output": "structured_outputs" in supported and "response_format" in supported, "structured_schema_parameter": "response_format", "structured_output": "structured_outputs" in supported and "response_format" in supported}
 
 
 def test_owner_provider_configuration_is_versioned_and_masked(tmp_path):
@@ -41,11 +42,15 @@ def test_owner_provider_configuration_is_versioned_and_masked(tmp_path):
     assert saved.status_code == 200
     revision = saved.json()["settings_revision"]
     assert revision == 1 and saved.json()["settings_hash"]
-    again = client.put("/api/provider/settings", json={"context_profile_id": profile_id, "narrator_profile_id": profile_id, "consolidation_profile_id": profile_id, "mode": "quality", "policy": "free_only"}, headers=headers)
+    again = client.put("/api/provider/settings", json={"context_profile_id": profile_id, "narrator_profile_id": profile_id, "mode": "quality", "policy": "free_only"}, headers=headers)
     assert again.json()["settings_revision"] == 2
+    assert set(again.json()["roles"]) == {"context", "narrator"}
+    all_roles = client.put("/api/provider/settings", json={"context_profile_id": profile_id, "narrator_profile_id": profile_id, "consolidation_profile_id": profile_id, "mode": "economy", "policy": "free_only"}, headers=headers)
+    assert all_roles.status_code == 200
+    assert set(all_roles.json()["roles"]) == {"context", "narrator", "consolidation"}
     assert get_branch_head(connect(database), campaign.id, campaign.initial_branch_id).checkpoint_id == initial_checkpoint
     connection = connect(database)
-    assert connection.execute("SELECT COUNT(*) FROM owner_settings_versions").fetchone()[0] == 2
+    assert connection.execute("SELECT COUNT(*) FROM owner_settings_versions").fetchone()[0] == 3
     assert connection.execute("SELECT COUNT(*) FROM model_profile_versions").fetchone()[0] == 1
     settings = saved.json()
     assert settings["roles"]["narrator"]["version"] == 1

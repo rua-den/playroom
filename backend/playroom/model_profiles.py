@@ -165,8 +165,8 @@ class OpenRouterVerifier:
         output_limit = selected.get("max_completion_tokens", selected.get("output_limit"))
         if not isinstance(context_limit, int) or not isinstance(output_limit, int) or context_limit <= 0 or output_limit <= 0:
             raise ValidationError("OpenRouter endpoint limits are unknown")
-        native_structured = selected.get("structured_outputs") is True or selected.get("supports_structured_outputs") is True or selected.get("capabilities", {}).get("structured_outputs") is True
-        schema_parameter = "response_format" if "response_format" in supported else "structured_outputs" if "structured_outputs" in supported else None
+        native_structured = "structured_outputs" in supported and "response_format" in supported
+        schema_parameter = "response_format" if native_structured else None
         return {"provider": "openrouter", "endpoint": endpoint, "endpoint_id": selected.get("id") or selected_tag, "model": model, "provider_tag": selected_tag, "context_limit": context_limit, "output_limit": output_limit, "pricing": {"prompt": str(prompt), "completion": str(completion), "currency": "USD", "unit": "USD/token"}, "credential_tier": tier, "structured_output": native_structured and schema_parameter is not None, "native_structured_output": native_structured, "structured_schema_parameter": schema_parameter, "supported_parameters": list(supported), "reasoning_parameters": [item for item in supported if "reason" in item], "data_policy": selected.get("data_policy"), "metadata_source": source, "credential_metadata": {"is_free_tier": key_flag, "free_model_daily_requests": key_data.get("free_model_daily_requests")}, "verified_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"), "pricing_verified": True}
 
 
