@@ -1,6 +1,6 @@
 # Personal Playroom Mobile Web Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Follow the user's model routing: implementation must be delegated to `gpt-6-luna` with `medium` reasoning; the orchestrator reviews the diff and runs verification. Do not substitute an unsupported model silently.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Follow the user's model routing: implementation must be delegated to `gpt-5.6-luna` with `medium` reasoning; the orchestrator reviews the diff and runs verification. Do not substitute an unsupported model silently.
 
 **Goal:** Build a private mobile-first roleplay web app accessible anywhere, with inspectable context and branch-correct memory for long Vietnamese stories.
 
@@ -34,7 +34,7 @@
 
 ## Execution status
 
-Implementation authorized on 12/10/2026. The user explicitly selected gpt-6-luna with medium reasoning, superseding the earlier gpt-5.6-luna instruction. Dispatch succeeded. Work starts on feat/playroom-mvp in an isolated checkout; per-task progress is recorded in the plan-scoped SDD ledger. No real-provider trial or VPS deployment has occurred.
+Implementation authorized on 12/10/2026. The user explicitly selected gpt-6-luna with medium reasoning, superseding the earlier gpt-5.6-luna instruction. Dispatch succeeded. The latest user-provided AGENTS.md restores gpt-5.6-luna medium for subsequent implementation; dispatch was verified. Work starts on feat/playroom-mvp in an isolated checkout; per-task progress is recorded in the plan-scoped SDD ledger. No real-provider trial or VPS deployment has occurred.
 
 ## Delivery checkpoints
 
