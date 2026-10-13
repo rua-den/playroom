@@ -830,6 +830,74 @@ def test_real_http_zero_row_claim_race_never_invokes_provider(tmp_path):
         assert current["attempt_counts"]["dispatched"] == 0
 
 
+def test_http_claim_race_cancel_before_invocation_never_dispatches(tmp_path, monkeypatch):
+    database = tmp_path / "http-claim-race.sqlite3"
+    db = connect(database)
+    migrate(db)
+    owner = create_owner(db, "http-claim-race@example.test", "durable password")
+    campaign = create_campaign(db, owner.id, "HTTP claim race", {"name": "World"}, [], {"name": "Player"})
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    provider = _QualitySSEPhaseProvider("director")
+    app = create_app(database_url=str(database), allowed_hosts={"127.0.0.1"}, secure_cookies=False, generation_provider=provider, credential_root=tmp_path / "secrets")
+    entered = threading.Event()
+    release = threading.Event()
+    original_gate = GenerationService._invocation_gate
+
+    def held_invocation_gate(service, job_id, key):
+        entered.set()
+        assert release.wait(5), "claim race barrier timed out"
+        return original_gate(service, job_id, key)
+
+    monkeypatch.setattr(GenerationService, "_invocation_gate", held_invocation_gate)
+    server, server_thread, port = _start_local_http(app)
+    try:
+        login = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+        status, headers, _ = _http_request(login, "POST", "/api/auth/login", body={"email": owner.email, "password": "durable password"})
+        assert status == 200
+        cookie = next(value.split(";", 1)[0] for key, value in headers if key.casefold() == "set-cookie")
+        login.close()
+        submit = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+        status, _, created = _http_request(submit, "POST", f"/api/campaigns/{campaign.id}/generate", cookie=cookie, body={"branch_id": campaign.initial_branch_id, "action": "Look", "idempotency_key": "http-claim-race", "checkpoint_id": head.checkpoint_id, "mode": "quality"})
+        submit.close()
+        assert status == 201
+        job_id = created["id"]
+        assert entered.wait(3)
+        claimed = db.execute("SELECT status FROM provider_attempts WHERE generation_job_id=? AND stage='context'", (job_id,)).fetchone()[0]
+        assert claimed == "claimed"
+        cancel = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+        status, _, cancelled = _http_request(cancel, "POST", f"/api/generation/jobs/{job_id}/cancel", cookie=cookie)
+        cancel.close()
+        assert status == 200
+        assert cancelled["cancel_requested"] == 1
+        assert cancelled["status"] == "cancelled"
+        assert db.execute("SELECT cancel_requested,status FROM generation_jobs WHERE id=?", (job_id,)).fetchone()[0:2] == (1, "cancelled")
+        release.set()
+        for _ in range(60):
+            state = db.execute("SELECT status FROM generation_jobs WHERE id=?", (job_id,)).fetchone()[0]
+            if state == "cancelled":
+                break
+            time.sleep(0.05)
+        assert (provider.director_calls, provider.narrator_calls) == (0, 0)
+        attempt = db.execute("SELECT status,dispatched_at FROM provider_attempts WHERE generation_job_id=? AND stage='context'", (job_id,)).fetchone()
+        assert attempt["status"] == "interrupted"
+        assert attempt["dispatched_at"] is None
+        assert db.execute("SELECT COUNT(*) FROM context_runs WHERE generation_job_id=?", (job_id,)).fetchone()[0] == 0
+        assert db.execute("SELECT COUNT(*) FROM generation_branch_guards WHERE generation_job_id=?", (job_id,)).fetchone()[0] == 0
+        attempts_before = db.execute("SELECT COUNT(*) FROM provider_attempts WHERE generation_job_id=?", (job_id,)).fetchone()[0]
+        status_get = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+        status, _, current = _http_request(status_get, "GET", f"/api/generation/jobs/{job_id}", cookie=cookie)
+        status_get.close()
+        assert status == 200 and current["id"] == job_id
+        by_key = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+        status, _, recovered = _http_request(by_key, "GET", f"/api/generation/jobs/by-key?branch_id={campaign.initial_branch_id}&idempotency_key=http-claim-race", cookie=cookie)
+        by_key.close()
+        assert status == 200 and recovered["id"] == job_id
+        assert db.execute("SELECT COUNT(*) FROM provider_attempts WHERE generation_job_id=?", (job_id,)).fetchone()[0] == attempts_before
+    finally:
+        release.set()
+        _stop_local_http(server, server_thread)
+
+
 class _BlockingStructured(ProviderAdapter):
     def __init__(self):
         self.started = threading.Event()
