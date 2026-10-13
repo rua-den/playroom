@@ -349,6 +349,127 @@ class _BlockingDirector(ProviderAdapter):
         return ProviderFailure("CANCELLED", "blocked fixture released")
 
 
+class _QualityHTTPDisconnectProvider(ProviderAdapter):
+    def __init__(self, *, gate_narrator=False):
+        self.gate_narrator = gate_narrator
+        self.director_started = threading.Event()
+        self.director_done = threading.Event()
+        self.narrator_started = threading.Event()
+        self.allow_narrator = threading.Event()
+        self.release = threading.Event()
+        self.director_calls = 0
+        self.narrator_calls = 0
+
+    def capabilities_for(self, profile):
+        return None
+
+    def generate_structured(self, request, schema):
+        self.director_calls += 1
+        self.director_started.set()
+        payload = json.loads(request["messages"][1]["content"])
+        value = {
+            "checkpoint_id": payload["checkpoint_id"],
+            "action_hash": payload["action_hash"],
+            "selected_memory_ids": [],
+            "reasons": {},
+            "reason_sources": {},
+            "scene_ids": payload["candidate_pool"]["scene_ids"],
+            "conflict_flags": [],
+        }
+        self.director_done.set()
+        return ProviderResult(text=json.dumps(value), usage={"input_tokens": 5, "output_tokens": 5, "total_tokens": 10})
+
+    def generate_text(self, request):
+        self.narrator_calls += 1
+        self.narrator_started.set()
+        if self.gate_narrator:
+            self.allow_narrator.wait(5)
+        self.release.wait(5)
+        yield ProviderResult(text="quality result", usage={"input_tokens": 5, "output_tokens": 5, "total_tokens": 10}, finish_reason="stop")
+
+
+def _http_disconnect_quality_stream(client, job_id):
+    with client.stream("GET", f"/api/generation/jobs/{job_id}/events/stream") as stream:
+        assert stream.status_code == 200
+        assert next(stream.iter_lines())
+
+
+def _wait_candidate(client, job_id):
+    current = None
+    for _ in range(100):
+        current = client.get(f"/api/generation/jobs/{job_id}").json()
+        if current["status"] == "candidate":
+            return current
+        time.sleep(0.05)
+    return current
+
+
+def test_local_http_quality_sse_disconnect_during_director_does_not_replay(tmp_path):
+    database = tmp_path / "quality-director-disconnect.sqlite3"
+    db = connect(database)
+    migrate(db)
+    owner = create_owner(db, "quality-director@example.test", "durable password")
+    campaign = create_campaign(db, owner.id, "Quality director", {"name": "World"}, [], {"name": "Player"})
+    provider = _QualityHTTPDisconnectProvider(gate_narrator=True)
+    app = create_app(database_url=str(database), allowed_hosts={"testserver"}, secure_cookies=False, generation_provider=provider, credential_root=tmp_path / "secrets")
+    with TestClient(app, base_url="https://testserver") as client:
+        _http_login(client, owner)
+        head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+        response = client.post(f"/api/campaigns/{campaign.id}/generate", json={"branch_id": campaign.initial_branch_id, "action": "Look", "idempotency_key": "quality-disconnect-director", "checkpoint_id": head.checkpoint_id, "mode": "quality"}, headers={"origin": "https://testserver"})
+        assert response.status_code == 201
+        job_id = response.json()["id"]
+        assert provider.director_started.wait(2)
+        _http_disconnect_quality_stream(client, job_id)
+        provider.allow_narrator.set()
+        provider.release.set()
+        assert _wait_candidate(client, job_id)["status"] == "candidate", client.get(f"/api/generation/jobs/{job_id}").text
+        assert (provider.director_calls, provider.narrator_calls) == (1, 1)
+
+
+def test_local_http_quality_sse_disconnect_after_director_completion_does_not_replay(tmp_path):
+    database = tmp_path / "quality-after-director-disconnect.sqlite3"
+    db = connect(database)
+    migrate(db)
+    owner = create_owner(db, "quality-after@example.test", "durable password")
+    campaign = create_campaign(db, owner.id, "Quality after", {"name": "World"}, [], {"name": "Player"})
+    provider = _QualityHTTPDisconnectProvider(gate_narrator=True)
+    app = create_app(database_url=str(database), allowed_hosts={"testserver"}, secure_cookies=False, generation_provider=provider, credential_root=tmp_path / "secrets")
+    with TestClient(app, base_url="https://testserver") as client:
+        _http_login(client, owner)
+        head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+        response = client.post(f"/api/campaigns/{campaign.id}/generate", json={"branch_id": campaign.initial_branch_id, "action": "Look", "idempotency_key": "quality-disconnect-after-director", "checkpoint_id": head.checkpoint_id, "mode": "quality"}, headers={"origin": "https://testserver"})
+        assert response.status_code == 201
+        job_id = response.json()["id"]
+        assert provider.director_done.wait(2)
+        assert provider.narrator_started.wait(2)
+        _http_disconnect_quality_stream(client, job_id)
+        provider.allow_narrator.set()
+        provider.release.set()
+        assert _wait_candidate(client, job_id)["status"] == "candidate"
+        assert (provider.director_calls, provider.narrator_calls) == (1, 1)
+
+
+def test_local_http_quality_sse_disconnect_during_narration_does_not_replay(tmp_path):
+    database = tmp_path / "quality-narration-disconnect.sqlite3"
+    db = connect(database)
+    migrate(db)
+    owner = create_owner(db, "quality-narration@example.test", "durable password")
+    campaign = create_campaign(db, owner.id, "Quality narration", {"name": "World"}, [], {"name": "Player"})
+    provider = _QualityHTTPDisconnectProvider()
+    app = create_app(database_url=str(database), allowed_hosts={"testserver"}, secure_cookies=False, generation_provider=provider, credential_root=tmp_path / "secrets")
+    with TestClient(app, base_url="https://testserver") as client:
+        _http_login(client, owner)
+        head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+        response = client.post(f"/api/campaigns/{campaign.id}/generate", json={"branch_id": campaign.initial_branch_id, "action": "Look", "idempotency_key": "quality-disconnect-narration", "checkpoint_id": head.checkpoint_id, "mode": "quality"}, headers={"origin": "https://testserver"})
+        assert response.status_code == 201
+        job_id = response.json()["id"]
+        assert provider.narrator_started.wait(2)
+        _http_disconnect_quality_stream(client, job_id)
+        provider.release.set()
+        assert _wait_candidate(client, job_id)["status"] == "candidate"
+        assert (provider.director_calls, provider.narrator_calls) == (1, 1)
+
+
 def test_http_cancel_signals_the_runtime_attempt_and_retains_physical_work(tmp_path):
     db, owner, campaign = _story(tmp_path)
     head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
@@ -638,6 +759,27 @@ def test_zero_row_dispatch_claim_never_invokes_provider(tmp_path):
     finished = service.run(reserved["id"])
     assert finished["status"] == "cancelled"
     assert provider.calls == []
+
+
+def test_real_http_zero_row_claim_race_never_invokes_provider(tmp_path):
+    database = tmp_path / "http-zero-row.sqlite3"
+    db = connect(database)
+    migrate(db)
+    owner = create_owner(db, "http-zero-row@example.test", "durable password")
+    campaign = create_campaign(db, owner.id, "HTTP zero row", {"name": "World"}, [], {"name": "Player"})
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    provider = FakeProvider(["must not run"])
+    app = create_app(database_url=str(database), allowed_hosts={"testserver"}, secure_cookies=False, generation_provider=provider, credential_root=tmp_path / "secrets")
+    with TestClient(app, base_url="https://testserver") as client:
+        _http_login(client, owner)
+        app.state.generation_runtime.service._mark_dispatched = lambda key: False
+        response = client.post(f"/api/campaigns/{campaign.id}/generate", json={"branch_id": campaign.initial_branch_id, "action": "Look", "idempotency_key": "http-zero-row", "checkpoint_id": head.checkpoint_id}, headers={"origin": "https://testserver"})
+        assert response.status_code == 201
+        job_id = response.json()["id"]
+        current = _wait_candidate(client, job_id)
+        assert current["status"] == "cancelled"
+        assert provider.calls == []
+        assert current["attempt_counts"]["dispatched"] == 0
 
 
 class _BlockingStructured(ProviderAdapter):
