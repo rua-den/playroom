@@ -1,0 +1,162 @@
+:root {
+  color: #f6f1e9;
+  background: #171614;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
+}
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; background: radial-gradient(circle at 75% 10%, #3a3025 0, #171614 42rem); }
+button, input { font: inherit; }
+button { cursor: pointer; }
+.loading-screen { min-height: 100vh; display: grid; place-items: center; color: #cec4b4; }
+.auth-layout { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+.auth-card { width: min(100%, 440px); padding: clamp(28px, 8vw, 56px); border: 1px solid #4d453a; border-radius: 28px; background: rgba(31, 29, 26, .94); box-shadow: 0 24px 80px #080706aa; }
+.brand-mark { width: 48px; height: 48px; display: grid; place-items: center; border-radius: 14px; background: #c98257; color: #211814; font-size: 26px; margin-bottom: 24px; }
+.brand-mark.small { width: 30px; height: 30px; margin: 0; border-radius: 9px; font-size: 16px; }
+.eyebrow { color: #d79771; letter-spacing: .18em; font-size: 11px; font-weight: 700; }
+h1, h2, p { margin-top: 0; }
+h1 { margin-bottom: 12px; font-family: Georgia, serif; font-size: clamp(32px, 8vw, 54px); line-height: 1.02; letter-spacing: -.04em; }
+.auth-intro, .welcome-copy p, .empty-state p { color: #c2b8aa; line-height: 1.65; }
+.auth-form { display: grid; gap: 10px; margin-top: 30px; }
+label { color: #e4dbce; font-size: 13px; font-weight: 650; }
+input { width: 100%; min-height: 48px; border: 1px solid #5b5145; border-radius: 12px; padding: 0 14px; color: #fff; background: #151311; outline: none; }
+input:focus { border-color: #d79771; box-shadow: 0 0 0 3px #d7977133; }
+.primary-button, .quiet-button { min-height: 46px; border-radius: 12px; border: 1px solid transparent; font-weight: 700; }
+.primary-button { margin-top: 12px; color: #211814; background: #db9368; }
+.primary-button:disabled { cursor: wait; opacity: .65; }
+.quiet-button { padding: 0 14px; color: #f0e6d9; background: transparent; border-color: #574e42; }
+.form-error { padding: 11px 13px; border-radius: 10px; border: 1px solid #a65c55; color: #ffc0b5; background: #5f2b2b55; font-size: 13px; }
+.shell-notice { max-width: 680px; margin-bottom: 22px; }
+.security-note { margin: 24px 0 0; color: #8f8679; font-size: 12px; line-height: 1.55; }
+.app-shell { min-height: 100vh; padding: 20px clamp(20px, 5vw, 72px) 72px; }
+.touch-target { min-width: 44px; min-height: 44px; }
+.story-app { padding-bottom: calc(72px + env(safe-area-inset-bottom)); }
+.story-app h1 { font-size: clamp(38px, 6vw, 70px); }
+.workspace-grid { max-width: 1440px; margin: 48px auto 0; display: grid; grid-template-columns: minmax(180px, 240px) minmax(0, 1fr) minmax(220px, 300px); gap: clamp(24px, 4vw, 64px); }
+.campaign-nav, .details-column { border-top: 1px solid #4d453a; padding-top: 18px; }
+.section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.section-heading h2 { font: 22px Georgia, serif; margin: 0; }
+.campaign-item { display: block; width: 100%; margin-top: 8px; padding: 0 12px; text-align: left; color: #cfc4b5; background: transparent; border: 1px solid transparent; border-radius: 10px; }
+.campaign-item:hover, .campaign-item.selected { color: #fff; border-color: #6c5949; background: #2b241e; }
+.story-column { min-width: 0; }
+.story-column, .story-turn, .markdown-content, .profile-block, .campaign-item, .empty-campaign p, .create-card { overflow-wrap: anywhere; }
+.story-column h1 { margin-bottom: 34px; }
+.story-turn { max-width: 760px; margin: 0 0 34px; }
+.turn-action { margin-bottom: 8px; color: #d79771; font-size: 13px; font-style: italic; }
+.markdown-content { color: #ebe0d3; font-family: Georgia, serif; font-size: 19px; line-height: 1.78; }
+.markdown-content p { margin: 0 0 18px; }
+.markdown-content h2, .markdown-content h3, .markdown-content h4 { font-family: Georgia, serif; color: #fff5e8; }
+.markdown-content strong { color: #fff8ee; }
+.details-column h2 { font: 22px Georgia, serif; margin: 0 0 22px; }
+.profile-block { padding: 14px 0; border-bottom: 1px solid #3b342c; }
+.profile-block h3 { margin: 0 0 6px; font: 18px Georgia, serif; }
+.profile-block p, .details-meta, .story-empty p, .empty-campaign p { color: #aaa093; line-height: 1.65; }
+.story-empty, .empty-campaign { max-width: 700px; padding: 30px; border: 1px solid #4d453a; border-radius: 18px; background: #25211d99; }
+.empty-campaign { margin: clamp(70px, 15vh, 150px) auto 0; text-align: center; }
+.empty-campaign h1 { margin-bottom: 12px; }
+.empty-campaign .primary-button { width: auto; padding: 0 20px; }
+.mobile-actions { display: none; }
+.mobile-overlay { position: fixed; inset: 0; z-index: 10; display: flex; align-items: flex-end; padding: 16px 16px calc(16px + env(safe-area-inset-bottom)); background: #080706aa; }
+.mobile-drawer, .mobile-sheet { width: min(100%, 420px); max-height: 88vh; overflow: auto; padding: 20px; border: 1px solid #5a4b3c; border-radius: 18px 18px 0 0; background: #211d19; }
+.mobile-drawer .campaign-item { margin-top: 12px; }
+.create-card { width: min(100%, 720px); margin: 42px auto 0; padding: clamp(22px, 5vw, 42px); border: 1px solid #4d453a; border-radius: 20px; background: #211d19; }
+.create-card h2 { font: 32px Georgia, serif; margin: 0 0 20px; }
+.campaign-form { display: grid; gap: 10px; }
+.campaign-form textarea { width: 100%; min-height: 88px; resize: vertical; border: 1px solid #5b5145; border-radius: 12px; padding: 12px 14px; color: #fff; background: #151311; font: inherit; }
+.campaign-form fieldset { display: grid; gap: 10px; margin: 14px 0 0; padding: 16px; border: 1px solid #43392f; border-radius: 14px; }
+.campaign-form legend { padding: 0 6px; color: #d79771; font: 17px Georgia, serif; }
+.character-row { display: flex; align-items: flex-end; gap: 10px; }
+.character-fields { flex: 1; display: grid; gap: 8px; }
+.campaign-form .primary-button { margin-top: 16px; }
+.generation-composer { max-width: 760px; margin-top: 2rem; }
+.generation-composer form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: end; }
+.generation-composer form > label { grid-column: 1 / -1; }
+.generation-composer form > textarea,
+.generation-composer [aria-label="Bản nháp kể chuyện"] {
+  width: 100%; min-width: 0; min-height: 88px; resize: vertical; border: 1px solid #5b5145; border-radius: 12px; padding: 12px 14px; color: #fff; background: #151311; font: inherit;
+}
+.generation-composer form > .primary-button { grid-column: 2; margin-top: 0; white-space: nowrap; }
+.generation-composer [aria-label="Trạng thái lượt kể"] > div { display: flex; flex-wrap: wrap; gap: 10px; }
+.generation-composer [aria-label="Trạng thái lượt kể"] > div > button { flex: 1 1 140px; margin-top: 0; }
+@media (max-width: 800px) { .workspace-grid { display: block; margin-top: 24px; } .campaign-nav, .details-column { display: none; } .mobile-actions { display: flex; gap: 10px; margin-top: 24px; } .story-column { margin-top: 32px; } }
+.topbar { max-width: 1240px; margin: auto; display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+.wordmark { display: flex; align-items: center; gap: 10px; font-family: Georgia, serif; font-size: 21px; }
+.account-menu { display: flex; align-items: center; gap: 12px; }
+.account-email { color: #a99f92; font-size: 13px; }
+.welcome-panel { max-width: 1240px; margin: clamp(68px, 14vh, 150px) auto 0; }
+.welcome-copy { max-width: 660px; }
+.welcome-copy h1 { font-size: clamp(42px, 8vw, 84px); }
+.empty-state { margin-top: 64px; max-width: 560px; padding: 28px; border-left: 2px solid #c98257; background: #25211d99; }
+.empty-state h2 { font: 27px Georgia, serif; }
+.empty-icon { color: #d79771; font-size: 42px; }
+@media (max-width: 560px) {
+  .auth-card { padding: 30px 24px; }
+  .account-email { display: none; }
+  .app-shell { padding-inline: 18px; }
+  .topbar { align-items: flex-start; flex-wrap: wrap; gap: 12px; }
+  .wordmark { flex: 1 1 100%; min-width: 0; flex-wrap: wrap; }
+  .demo-badge { max-width: 100%; overflow-wrap: anywhere; }
+  .account-menu { width: 100%; flex-wrap: wrap; gap: 8px; }
+  .account-menu .quiet-button { flex: 1 1 132px; }
+  .generation-composer form { grid-template-columns: minmax(0, 1fr); }
+  .generation-composer form > .primary-button { grid-column: 1; width: 100%; }
+  .generation-composer [aria-label="Trạng thái lượt kể"] > div > button { flex-basis: 100%; width: 100%; }
+}
+/* U4 editors */
+.editor-stack { display: grid; gap: 0.75rem; margin-top: 1rem; }
+.editor-stack fieldset { display: grid; gap: 0.5rem; border: 1px solid var(--line); border-radius: 14px; padding: 0.75rem; }
+.editor-stack textarea { min-height: 5rem; resize: vertical; }
+.editor-tabs { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0.75rem 0; }
+.memory-card { border: 1px solid var(--line); border-radius: 14px; padding: 0.75rem; display: grid; gap: 0.35rem; }
+.memory-card h3, .memory-card p { margin: 0; }
+.settings-panel input,
+.settings-panel select,
+.settings-panel textarea {
+  min-height: 44px;
+}
+.theme-selector { display: grid; gap: 8px; margin: 0 0 18px; }
+.theme-selector select { width: 100%; border: 1px solid #5b5145; border-radius: 12px; padding: 0 12px; color: #fff; background: #151311; }
+.composer-starters { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; }
+.composer-starters .quiet-button { min-height: 44px; }
+:root[data-theme="light"] { color: #2b241e; background: #f7f1e8; }
+:root[data-theme="light"] body { background: radial-gradient(circle at 75% 10%, #fff 0, #f1e7d8 42rem); }
+:root[data-theme="light"] .story-column, :root[data-theme="light"] .details-column { color: #332a23; }
+:root[data-theme="light"] .generation-composer form > textarea, :root[data-theme="light"] .generation-composer [aria-label="Bản nháp kể chuyện"], :root[data-theme="light"] .theme-selector select { color: #2b241e; background: #fffaf3; border-color: #b7a795; }
+:root[data-theme="light"] .quiet-button { color: #3d3026; border-color: #b7a795; }
+:root[data-theme="light"] .markdown-content { color: #3d3026; }
+:root[data-theme="light"] .details-meta, :root[data-theme="light"] .profile-block p { color: #6d5c4d; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) { color: #2b241e; background: #f7f1e8; }
+  :root:not([data-theme]) body { background: radial-gradient(circle at 75% 10%, #fff 0, #f1e7d8 42rem); }
+  :root:not([data-theme]) .generation-composer form > textarea, :root:not([data-theme]) .generation-composer [aria-label="Bản nháp kể chuyện"] { color: #2b241e; background: #fffaf3; border-color: #b7a795; }
+  :root:not([data-theme]) .quiet-button { color: #3d3026; border-color: #b7a795; }
+  :root:not([data-theme]) .markdown-content { color: #3d3026; }
+  :root:not([data-theme]) h1, :root:not([data-theme]) h2, :root:not([data-theme]) h3, :root:not([data-theme]) h4, :root:not([data-theme]) .markdown-content h2, :root:not([data-theme]) .markdown-content h3, :root:not([data-theme]) .markdown-content h4, :root:not([data-theme]) .markdown-content strong { color: #2b241e; }
+  :root:not([data-theme]) label { color: #493a2e; }
+  :root:not([data-theme]) input, :root:not([data-theme]) .campaign-form textarea, :root:not([data-theme]) .editor-stack textarea { color: #2b241e; background: #fffaf3; border-color: #b7a795; }
+  :root:not([data-theme]) .campaign-item:hover, :root:not([data-theme]) .campaign-item.selected { color: #2b241e; border-color: #c6aa90; background: #eadbc9; }
+  :root:not([data-theme]) .mobile-drawer, :root:not([data-theme]) .mobile-sheet, :root:not([data-theme]) .create-card, :root:not([data-theme]) .story-empty, :root:not([data-theme]) .empty-campaign { color: #332a23; background: #fffaf3; border-color: #c6b6a5; }
+  :root:not([data-theme]) .form-error { color: #8d2f27; background: #f9e0dc; border-color: #c8786d; }
+}
+:root[data-theme="light"] .details-meta, :root[data-theme="light"] .profile-block p, :root[data-theme="light"] .story-empty p, :root[data-theme="light"] .empty-campaign p, :root[data-theme="light"] .account-email, :root[data-theme="light"] .loading-screen, :root[data-theme="light"] .eyebrow { color: #6d5c4d; }
+:root[data-theme="light"] .campaign-item, :root[data-theme="light"] .turn-action, :root[data-theme="light"] .campaign-form legend { color: #8a573d; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) .details-meta, :root:not([data-theme]) .profile-block p, :root:not([data-theme]) .story-empty p, :root:not([data-theme]) .empty-campaign p, :root:not([data-theme]) .account-email, :root:not([data-theme]) .loading-screen, :root:not([data-theme]) .eyebrow { color: #6d5c4d; }
+  :root:not([data-theme]) .campaign-item, :root:not([data-theme]) .turn-action, :root:not([data-theme]) .campaign-form legend { color: #8a573d; }
+}
+:root[data-theme="light"] h1, :root[data-theme="light"] h2, :root[data-theme="light"] h3, :root[data-theme="light"] h4, :root[data-theme="light"] .markdown-content h2, :root[data-theme="light"] .markdown-content h3, :root[data-theme="light"] .markdown-content h4, :root[data-theme="light"] .markdown-content strong { color: #2b241e; }
+:root[data-theme="light"] label { color: #493a2e; }
+:root[data-theme="light"] input, :root[data-theme="light"] .campaign-form textarea, :root[data-theme="light"] .editor-stack textarea { color: #2b241e; background: #fffaf3; border-color: #b7a795; }
+:root[data-theme="light"] .campaign-item:hover, :root[data-theme="light"] .campaign-item.selected { color: #2b241e; border-color: #c6aa90; background: #eadbc9; }
+:root[data-theme="light"] .mobile-drawer, :root[data-theme="light"] .mobile-sheet, :root[data-theme="light"] .create-card, :root[data-theme="light"] .story-empty, :root[data-theme="light"] .empty-campaign { color: #332a23; background: #fffaf3; border-color: #c6b6a5; }
+:root[data-theme="light"] .form-error { color: #8d2f27; background: #f9e0dc; border-color: #c8786d; }
+:root[data-theme="light"] .auth-card { color: #332a23; background: #fffaf3; border-color: #c6b6a5; box-shadow: 0 24px 80px #8f7b6655; }
+:root[data-theme="light"] .auth-card h1, :root[data-theme="light"] .auth-card h2, :root[data-theme="light"] .auth-card label { color: #2b241e; }
+:root[data-theme="light"] .auth-card input { color: #2b241e; background: #fff; border-color: #b7a795; }
+:root[data-theme="light"] .auth-intro, :root[data-theme="light"] .auth-card .security-note { color: #6d5c4d; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) .auth-card { color: #332a23; background: #fffaf3; border-color: #c6b6a5; box-shadow: 0 24px 80px #8f7b6655; }
+  :root:not([data-theme]) .auth-card h1, :root:not([data-theme]) .auth-card h2, :root:not([data-theme]) .auth-card label { color: #2b241e; }
+  :root:not([data-theme]) .auth-card input { color: #2b241e; background: #fff; border-color: #b7a795; }
+  :root:not([data-theme]) .auth-intro, :root:not([data-theme]) .auth-card .security-note { color: #6d5c4d; }
+}

@@ -1,0 +1,183 @@
+from __future__ import annotations
+
+import os
+from contextlib import asynccontextmanager
+from urllib.parse import urlsplit
+from uuid import uuid4
+
+from fastapi import FastAPI, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+
+from .api import auth, campaigns, context as context_api, memory, generation, configuration
+from .credentials import CredentialStore
+from .model_profiles import OpenRouterVerifier, ensure_profile_tables
+from .settings import ensure_configuration_tables
+from .db import connect, migrate
+from .domain import NotFound, PlayroomError, RateLimited, StateConflict, Unauthorized, ValidationError
+from .settings import DEFAULT_TEST_CONTEXT_PROFILE
+from .generation import GenerationRuntime
+from .generation import GenerationService
+from .provider import FakeProvider, default_provider_factory
+from .attempt_runtime import PhysicalAttemptRegistry
+
+
+def _allowed_hosts(value: set[str] | None) -> set[str]:
+    if value is not None:
+        return {host.strip().casefold() for host in value if host.strip()}
+    configured = os.getenv("PLAYROOM_ALLOWED_HOSTS", "localhost,127.0.0.1")
+    return {host.strip().casefold() for host in configured.split(",") if host.strip()}
+
+
+def _origin_tuple(value: str):
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError:
+        return None
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password or parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
+        return None
+    port = port or (443 if parsed.scheme == "https" else 80)
+    return parsed.scheme.casefold(), parsed.hostname.casefold(), port
+
+
+def _request_origin(request: Request):
+    host_header = request.headers.get("host", "")
+    try:
+        parsed_host = urlsplit(f"//{host_header}")
+        port = parsed_host.port
+    except ValueError:
+        return None
+    if not parsed_host.hostname:
+        return None
+    scheme = request.url.scheme.casefold()
+    port = port or (443 if scheme == "https" else 80)
+    return scheme, parsed_host.hostname.casefold(), port
+
+
+def create_app(
+    database_url: str | None = None,
+    *,
+    allowed_hosts: set[str] | None = None,
+    secure_cookies: bool = True,
+    login_failure_limit: int = 5,
+    login_failure_window_seconds: int = 900,
+    context_model_profiles: dict | None = None,
+    context_counter=None,
+    context_counter_id: str = "utf8-bytes-div-3",
+    credential_root: str | None = None,
+    provider_verifier=None,
+    generation_provider=None,
+    generation_provider_factory=None,
+) -> FastAPI:
+    configured_url = database_url or os.getenv("PLAYROOM_DATABASE_URL", "./data/playroom.sqlite3")
+    is_memory_database = configured_url in {":memory:", "sqlite:///:memory:"}
+    effective_url = f"file:playroom-{uuid4()}?mode=memory&cache=shared" if is_memory_database else configured_url
+    keeper = connect(effective_url) if is_memory_database else None
+    migration_connection = keeper or connect(effective_url)
+    migrate(migration_connection)
+    ensure_profile_tables(migration_connection)
+    ensure_configuration_tables(migration_connection)
+    if not is_memory_database:
+        migration_connection.close()
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        if app.state.generation_provider is not None and app.state.generation_provider.__class__.__name__ == "FakeProvider" and app.state.generation_provider_factory is default_provider_factory:
+            app.state.generation_provider_factory = None
+        initial_runtime = getattr(app.state, "generation_runtime", None)
+        if initial_runtime is None and (app.state.generation_provider is not None or app.state.generation_provider_factory is not None):
+            resolver = app.state.generation_credential_resolver if app.state.generation_provider_factory is not None else None
+            initial_runtime = GenerationRuntime(app.state.database_url, app.state.generation_provider, provider_factory=app.state.generation_provider_factory, credential_resolver=resolver, attempt_registry=app.state.generation_attempt_registry, context_counter=app.state.context_counter, context_counter_id=app.state.context_counter_id)
+            app.state.generation_runtime = initial_runtime
+        if initial_runtime is None:
+            recovery_connection = connect(app.state.database_url)
+            try:
+                GenerationService(recovery_connection, FakeProvider([])).recover_after_restart()
+            finally:
+                recovery_connection.close()
+        if initial_runtime is not None:
+            initial_runtime.start()
+        yield
+        runtime = getattr(app.state, "generation_runtime", None)
+        if runtime is not None:
+            stopped = runtime.stop()
+        else:
+            stopped = True
+        if app.state.memory_keeper is not None and stopped:
+            app.state.memory_keeper.close()
+
+    app = FastAPI(title="Playroom", version="0.1.0", lifespan=lifespan, docs_url=None, redoc_url=None)
+    app.state.database_url = effective_url
+    app.state.memory_keeper = keeper
+    app.state.allowed_hosts = _allowed_hosts(allowed_hosts)
+    app.state.secure_cookies = secure_cookies
+    app.state.login_failure_limit = login_failure_limit
+    app.state.login_failure_window_seconds = login_failure_window_seconds
+    app.state.context_model_profiles = context_model_profiles if context_model_profiles is not None else {DEFAULT_TEST_CONTEXT_PROFILE["profile_id"]: dict(DEFAULT_TEST_CONTEXT_PROFILE)}
+    app.state.context_model_profiles_explicit = context_model_profiles is not None
+    app.state.context_counter = context_counter
+    app.state.context_counter_id = context_counter_id
+    app.state.credential_store = CredentialStore(credential_root or os.getenv("PLAYROOM_CREDENTIAL_ROOT", "./data/secrets"))
+    app.state.generation_credential_resolver = lambda owner_id, version: app.state.credential_store.get(owner_id, version)
+    app.state.provider_verifier = provider_verifier or OpenRouterVerifier()
+
+    @app.middleware("http")
+    async def protect_host_and_origin(request: Request, call_next):
+        host_header = request.headers.get("host", "")
+        try:
+            host = urlsplit(f"//{host_header}").hostname
+        except ValueError:
+            host = None
+        if not host or host.casefold() not in request.app.state.allowed_hosts:
+            return JSONResponse(status_code=400, content={"detail": "Unrecognized Host header"})
+        if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+            origin = request.headers.get("origin")
+            if not origin or _origin_tuple(origin) != _request_origin(request):
+                return JSONResponse(status_code=403, content={"detail": "Same-origin request required"})
+        return await call_next(request)
+
+    @app.exception_handler(PlayroomError)
+    async def playroom_error_handler(request: Request, exc: PlayroomError):
+        if isinstance(exc, NotFound):
+            status = 404
+        elif isinstance(exc, StateConflict):
+            status = 409
+        elif isinstance(exc, ValidationError):
+            status = 422
+        elif isinstance(exc, RateLimited):
+            status = 429
+        elif isinstance(exc, Unauthorized):
+            status = 401
+        else:
+            status = 400
+        return JSONResponse(status_code=status, content={"detail": str(exc)})
+
+    @app.exception_handler(RequestValidationError)
+    async def request_validation_error_handler(request: Request, exc: RequestValidationError):
+        # Pydantic's default detail includes the rejected input.  Credential
+        # payloads can contain secrets, so redact that field before returning
+        # any validation response for this route.
+        if request.url.path == "/api/provider/credentials":
+            details = []
+            for error in exc.errors():
+                details.append({key: value for key, value in error.items() if key not in {"input", "ctx"}})
+            return JSONResponse(status_code=422, content={"detail": details})
+        return await request_validation_exception_handler(request, exc)
+
+    @app.get("/health", include_in_schema=False)
+    def health():
+        return {"status": "ok"}
+
+    app.include_router(auth.router)
+    app.include_router(campaigns.router)
+    app.include_router(memory.router)
+    app.include_router(context_api.router)
+    app.state.generation_provider = generation_provider
+    app.state.generation_provider_factory = generation_provider_factory or (default_provider_factory if generation_provider is None else None)
+    app.state.generation_attempt_registry = PhysicalAttemptRegistry()
+    app.state.generation_runtime = None
+    app.include_router(generation.router)
+    app.include_router(configuration.router)
+    return app

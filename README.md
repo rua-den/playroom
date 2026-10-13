@@ -6,7 +6,19 @@ Trọng tâm là quản lý context qua nhiều chương: lưu hồ sơ, cảnh,
 
 ## Trạng thái
 
-Repo hiện chứa tài liệu thiết kế, kế hoạch triển khai và review ngày 12/10/2026. Chưa có code ứng dụng, lệnh chạy app, kết quả test ứng dụng hoặc production deployment.
+Backend có storage/auth/checkpoint/memory, context deterministic, OpenRouter adapter và pipeline quality/economy. U1–U7 đã qua kiểm chứng local synthetic, gồm browser smoke và layout 360/390/430px cùng desktop. Snapshot bàn giao 13/10/2026 có **135 test backend qua** là số liệu lịch sử, không phải bằng chứng nghiệm thu Task3. Chưa gọi model thật hay deploy VPS; chất lượng model thật và thử cài trên điện thoại vẫn mở.
+
+**Tiếp tục từ [handoff hiện tại](docs/handoff/2026-10-13-state.md) và [plan chia nhỏ cho Luna](docs/superpowers/plans/2026-10-13-playroom-resume-plan.md).** Nhánh chứa code là `feat/playroom-mvp`, [draft PR #1](https://github.com/rua-den/playroom/pull/1); chưa merge main. Yêu cầu mới nhất là chạy/test local trước, SSH/domain/Caddy sau.
+
+Kiểm tra backend tại root repo:
+
+```powershell
+rtk proxy uv sync --locked --extra test
+rtk proxy uv run --locked --extra test pytest backend/tests -q
+rtk proxy uv run --locked python -m compileall -q backend/playroom
+```
+
+Mỗi mốc cần dùng đúng focused tests và verification commands trong handoff hiện tại. U7 local browser flow đã qua; không dùng số test lịch sử làm bằng chứng thay thế cho các gate của Task3 hoặc chất lượng model thật.
 
 ## Đọc theo thứ tự
 
@@ -24,7 +36,8 @@ Agent đọc [AGENTS.md](AGENTS.md) trước khi thay đổi repo.
 - Backend: Python + FastAPI + Uvicorn; bộ chọn context, phiên bản truyện và AI provider adapter tách riêng.
 - Dữ liệu: SQLite trên thư mục lưu trữ bền, có nguồn dữ kiện và checkpoint của từng trạng thái.
 - Deploy: VPS hiện có của người dùng, qua **Caddy đang hoạt động**; Playroom có service, thư mục, database và subdomain riêng.
-- AI: endpoint/model qua API được chọn khi triển khai; tài khoản ChatGPT hiện tại không được giả định là API access.
+- AI: OpenRouter là integration đầu tiên do người dùng chọn; model/role được cấu hình riêng. API key nhập ở máy/server, không dùng session ChatGPT làm API access.
+- Domain dự kiến: https://play.nhkhuy.run.place; DNS/SSH/Caddy thực tế chưa được audit hay thay đổi.
 - Quality có AI hỗ trợ chọn context; economy giảm số call. Cả hai giữ nguyên dữ liệu/style, có free-only policy và không tự chuyển paid khi hết quota.
 
 ## Các mốc
@@ -42,3 +55,17 @@ Canon do người chơi chốt không bị AI âm thầm ghi đè. Transcript g�
 Caddy là thông tin mới nhất do người dùng xác nhận. Tài liệu Nginx/Certbot cũ của `wedding-online` chỉ dùng tham khảo lịch sử; không copy làm cấu hình Playroom.
 
 Domain, model/API, tài nguyên và cấu hình VPS thực tế cần xác minh trước khi nối/deploy. Chất lượng kể chuyện và giữ mạch phải được kiểm chứng bằng phiên chơi thật, ngoài các test dữ liệu.
+
+## Chạy demo cục bộ
+
+Demo tổng hợp là chế độ opt-in riêng, chỉ bind loopback và không gọi model thật.
+
+```powershell
+rtk proxy uv sync --locked --extra test
+rtk cmd /c "cd frontend && npm ci && npm run build"
+rtk proxy uv run playroom-demo --data-dir .playroom-demo
+```
+
+Mở `http://127.0.0.1:8000`. Lần chạy đầu tạo owner password ngẫu nhiên an toàn và in password đúng một lần. Có thể tự đặt password tối thiểu 12 ký tự bằng `--password`; thư mục `.playroom-demo/` giữ SQLite và secrets để dữ liệu còn sau khi khởi động lại. Giao diện hiển thị nhãn synthetic/demo và narrative xác định để thử nhiều lượt.
+
+Thêm `--email demo@example.test` nếu cần email khác. Không dùng thư mục demo hoặc `secure_cookies=False` cho production; production factory vẫn yêu cầu cấu hình provider/credential thật và cookie bảo mật.
