@@ -221,15 +221,15 @@ finally:
 | scene/retrieval | memory.update_scene/set_retrieval_policy |
 | public checkpoint/revision | timeline.create_state_checkpoint/create_committed_revision |
 
-- [ ] One fresh fixture per mutation x queued/running. All arguments valid; unused removable actor has no scene/memory reference.
-- [ ] Prepare approved/pending memory before reservation; use its current state version.
-- [ ] Expect StateConflict from services or HTTP409 from owned routes; not ValidationError caused by malformed payload.
-- [ ] Compare head checkpoint/state version plus row counts in profile_versions, memory_versions, scene_versions, state_checkpoints, turn_revisions (read actual schema names).
-- [ ] No silent partial archive/title/pin changes. Add valid unguarded success control for each family so a permanently failing request cannot satisfy the test.
+- [x] One fresh fixture per mutation x queued/running. All arguments valid; unused removable actor has no scene/memory reference.
+- [x] Prepare approved/pending memory before reservation; use its current state version.
+- [x] Expect StateConflict from services; malformed-payload ValidationError cannot satisfy the test.
+- [x] Compare head checkpoint/state version, counts for profile_versions, memory_versions, scene_versions, state_checkpoints, turn_revisions, and persisted profile/memory/scene/checkpoint/campaign rows.
+- [x] No silent partial archive/title/pin changes; valid unguarded success controls cover all 19 operations and assert persisted state changes.
 - [ ] Future consolidation/fork/transfer mutations add their own guard regressions when implemented.
-- [ ] Run only this file then relevant campaign/memory tests.
+- [x] Run only this file then relevant campaign/memory tests.
 
-**Gate:** report names every matrix row, phase, real assertion and success control. “Existing guards covered” is not evidence.
+**B4 accepted 2026-10-13:** commit `262503250cd6ce9d375d38d25e06634dd9a21f04`. The test matrix expands the table into 19 operation rows x queued/running (38 guard cases), each with its own fixture, and adds 19 valid unguarded success controls. Guard cases assert `StateConflict` and compare branch head/state version, required table counts, campaign fields, current checkpoint snapshot, and persisted profile/memory/scene rows. Approved and pending memory fixtures are created before reservation; removable actor has no scene/memory references. Sol independently ran `rtk uv run --extra test pytest backend/tests/test_generation_mutation_guards.py` — 57 passed, and `rtk uv run --extra test pytest backend/tests/test_campaign_storage.py backend/tests/test_memory_versions.py` — 20 passed. `rtk git diff --check` clean. No production defect found. B5 remains next; this does not accept Task3.
 
 ### B5: Prove real adapter wire and role-version identity
 
