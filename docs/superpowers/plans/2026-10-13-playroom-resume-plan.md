@@ -193,14 +193,16 @@ finally:
 **Consumes:** local Uvicorn helper, HTTP generate/cancel/status, shared registry final invocation gate.
 **Produces:** HTTP cancellation before claim CAS causes zero provider invocation and no stranded guard.
 
-- [ ] Keep or rename the old always-false claim test as a smoke test; it is not the required race.
-- [ ] Hold worker at a narrow hook immediately before claim/invocation CAS.
-- [ ] POST cancel over another authenticated loopback socket, confirm terminal/cancel flag persisted, then release worker.
-- [ ] Assert provider calls0, no physically dispatched_at, no candidate/ContextRun, no guard. GET recovery must not add attempts.
-- [ ] Repeat for queue waiting after a physical slot is released if the same gate path needs separate proof.
-- [ ] Focused command: `pytest backend/tests/test_generation_durable.py -k "zero_row or claim_race" -q` via rtk/uv.
+- [x] Keep or rename the old always-false claim test as a smoke test; it is not the required race.
+- [x] Hold worker at a narrow hook immediately before claim/invocation CAS.
+- [x] POST cancel over another authenticated loopback socket, confirm terminal/cancel flag persisted, then release worker.
+- [x] Assert provider calls0, no physically dispatched_at, no candidate/ContextRun, no guard. GET recovery must not add attempts.
+- [x] Consider queue waiting after physical slot release: the existing registry-level `test_waiting_attempt_can_cancel_before_a_slot_and_never_invokes` covers the slot-wait cancellation path; B3 adds separate HTTP proof for the DB invocation CAS after claim.
+- [x] Focused command: `pytest backend/tests/test_generation_durable.py -k "zero_row or claim_race" -q` via rtk/uv.
 
 **Gate:** no lambda-false shortcut replacing cancellation and no blanket stage-count assertion hiding dispatch timestamps.
+
+**B3 accepted 2026-10-13:** test commits `072a829` and `515226d`. The real authenticated HTTP race cancels while the context attempt is `claimed` and paused at `_invocation_gate`; cancellation is persisted as terminal before release. After release: provider calls0, attempt `interrupted`, `dispatched_at IS NULL`, no ContextRun/guard/candidate, and status/by-key GET returns the same job without another attempt. Focused command: `pytest backend/tests/test_generation_durable.py -k "zero_row or claim_race" -q` — 3 passed, 39 deselected. No production defect found. B4 remains unstarted.
 
 ### B4: Inventory every existing story mutation guard
 
