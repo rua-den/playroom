@@ -27,6 +27,7 @@ from .settings import get_owner_settings, ROLE_BUDGET_DEFAULTS
 from .provider import ProviderAdapter, ProviderFailure, ProviderResult
 from .context_director import deterministic_selection, validate_director_plan
 from .timeline import _create_committed_revision_in_transaction, get_branch_head, load_state_checkpoint
+from .roleplay_segments import parse_narrator_payload, validate_narrator_segments
 from .attempt_runtime import PhysicalAttemptRegistry
 from .wire_cost import (
     DEFAULT_COUNTER_ID,
@@ -72,7 +73,7 @@ DEFAULT_PROFILE = {
 
 SELECTION_SCHEMA = {
     "type": "object", "additionalProperties": False,
-    "required": ["checkpoint_id", "action_hash", "selected_memory_ids", "reasons", "reason_sources", "scene_ids", "conflict_flags"],
+    "required": ["checkpoint_id", "action_hash", "selected_memory_ids", "reasons", "reason_sources", "scene_ids", "conflict_flags", "selected_characters"],
     "properties": {
         "checkpoint_id": {"type": "string"}, "action_hash": {"type": "string"},
         "selected_memory_ids": {"type": "array", "items": {"type": "string"}, "maxItems": 20, "uniqueItems": True},
@@ -80,6 +81,31 @@ SELECTION_SCHEMA = {
         "reason_sources": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "string"}, "minItems": 1}},
         "scene_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": True},
         "conflict_flags": {"type": "array", "items": {"type": "string", "maxLength": 160}},
+        "selected_characters": {"type": "array", "maxItems": 32, "items": {"type": "object", "additionalProperties": False, "required": ["character_id", "profile_version_id"], "properties": {"character_id": {"type": "string"}, "profile_version_id": {"type": "string"}}}},
+    },
+}
+
+NARRATOR_SCHEMA = {
+    "type": "object", "additionalProperties": False,
+    "required": ["segments"],
+    "properties": {
+        "segments": {
+            "type": "array", "minItems": 1, "maxItems": 128,
+            "items": {
+                "type": "object", "additionalProperties": False,
+                "required": ["kind", "text"],
+                "allOf": [
+                    {"if": {"properties": {"kind": {"const": "dialogue"}}}, "then": {"required": ["character_id", "profile_version_id"]}},
+                    {"if": {"properties": {"kind": {"const": "narration"}}}, "then": {"not": {"anyOf": [{"required": ["character_id"]}, {"required": ["profile_version_id"]}]}}},
+                ],
+                "properties": {
+                    "kind": {"enum": ["narration", "dialogue"]},
+                    "text": {"type": "string", "minLength": 1},
+                    "character_id": {"type": "string"},
+                    "profile_version_id": {"type": "string"},
+                },
+            },
+        },
     },
 }
 
@@ -368,6 +394,7 @@ class GenerationService:
                 "mandatory": pool.get("mandatory", []),
                 "optional": [],
                 "scene_ids": pool.get("scene_ids", []),
+                "selected_characters": pool.get("selected_characters", []),
                 "omission_reasons": list(pool.get("omission_reasons", [])),
             },
             "recent_context": pool.get("recent_context", [])[-8:],
@@ -444,18 +471,26 @@ class GenerationService:
 
     def _narrator_request(self, job, profile: dict, preview: dict, settings: dict, *, required_only: bool = False):
         budget = self._role_budget(profile, settings, "narrator")
+        supported_parameters = set(profile.get("supported_parameters", ()))
+        native_schema_capable = bool(profile.get("structured_output") and profile.get("native_structured_output") and profile.get("structured_schema_parameter") in supported_parameters)
+        narrator_schema = None if profile.get("is_test_profile") or profile.get("legacy_plain_output") or not native_schema_capable else NARRATOR_SCHEMA
         system = (
-            "Continue the story in Vietnamese using only supplied context. Canon and approved invariants are authoritative. "
-            "Dynamic facts are valid only as of their supplied cursor; later committed raw turns take precedence over older summaries. "
-            "Pending, foreign, rejected and future facts are excluded. Actor associations and known_by describe knowledge or dependency, "
-            "not scene presence. A narrator-known fact is not automatically an NPC-known fact. Respect focus and parallel scenes. "
-            "The player-controlled persona's choices and agency belong to the player. Follow the supplied StyleProfile voice."
+            "Continue Vietnamese using supplied context. Canon/invariants; later committed raw turns override summaries. "
+            "Exclude pending/foreign/rejected/future facts. Associations/known_by describe knowledge, not presence; narrator knowledge may differ from NPC. "
+            "Respect focus/parallel scenes; StyleProfile voice; player controls choices. "
+            "Use selected_characters only; never invent speakers. Dialogue only for selected chars; stable IDs character_id/profile_version_id; narration prose. "
+            "Respond to the latest player action or dialogue with eligible context. Avoid generic atmosphere-setting. "
+            "Advance with concrete reaction, consequence, or change when context supports it. Preserve selected voice/knowledge; plausibly present. "
+            "Player controls actions and thoughts. Do not force A/B choices, quests, stats, or other game mechanics. "
+            "No invented canon"
         )
+        if not profile.get("is_test_profile") and not profile.get("legacy_plain_output"):
+            system += " Return exactly one JSON object with a segments array when structured roleplay output is enabled."
         required = [block for block in preview.get("blocks", []) if block.get("mandatory")]
         optional = [block for block in preview.get("blocks", []) if not block.get("mandatory")]
 
         def make_request(blocks):
-            return {
+            request = {
                 "stage": "narration",
                 "messages": [
                     {"role": "system", "content": system},
@@ -464,6 +499,7 @@ class GenerationService:
                         "content": json.dumps({
                             "blocks": blocks,
                             "action": preview["action"],
+                            "selected_characters": preview.get("selected_characters", []),
                             "selected_memory_ids": [block["id"] for block in blocks if block.get("type") == "memory" and not block.get("mandatory")],
                         }, ensure_ascii=False, sort_keys=True),
                     },
@@ -472,9 +508,13 @@ class GenerationService:
                 "model": profile.get("model"),
                 "payload_hash": preview.get("payload_hash"),
             }
+            if narrator_schema is not None:
+                request["schema"] = narrator_schema
+                request["schema_name"] = "narrator_segments"
+            return request
 
         request = make_request(required)
-        required_meta = self._wire_metadata(request, profile, role="narrator", budget=budget)
+        required_meta = self._wire_metadata(request, profile, schema=narrator_schema, role="narrator", budget=budget)
         if not required_meta["fits"]:
             raise ValidationError("Required narrator context exceeds the configured input budget")
         if required_only:
@@ -501,7 +541,7 @@ class GenerationService:
                 if actor.get("id") not in selected_ids:
                     unit.append(actor)
             trial = make_request([*selected, *unit])
-            trial_meta = self._wire_metadata(trial, profile, role="narrator", budget=budget)
+            trial_meta = self._wire_metadata(trial, profile, schema=narrator_schema, role="narrator", budget=budget)
             if trial_meta["fits"]:
                 selected.extend(unit)
                 selected_ids.update(item.get("id") for item in unit)
@@ -512,7 +552,7 @@ class GenerationService:
             if block.get("id") in selected_ids:
                 continue
             trial = make_request([*selected, block])
-            trial_meta = self._wire_metadata(trial, profile, role="narrator", budget=budget)
+            trial_meta = self._wire_metadata(trial, profile, schema=narrator_schema, role="narrator", budget=budget)
             if trial_meta["fits"]:
                 selected.append(block)
                 selected_ids.add(block.get("id"))
@@ -524,7 +564,7 @@ class GenerationService:
                 if not any(item.get("id") == actor.get("id") and item.get("reason") == reason for item in omissions):
                     omissions.append({"id": actor.get("id"), "reason": reason})
         request = make_request(selected)
-        metadata = self._wire_metadata(request, profile, role="narrator", budget=budget)
+        metadata = self._wire_metadata(request, profile, schema=narrator_schema, role="narrator", budget=budget)
         if not metadata["fits"]:
             raise ValidationError("Narrator wire exceeds the configured input budget")
         selected_ids = [block["id"] for block in selected]
@@ -781,6 +821,8 @@ class GenerationService:
             blocks.append(actor)
         packed = _copy(preview)
         packed["blocks"], packed["selected_memory_ids"] = blocks, list(plan.get("selected_memory_ids", []))
+        allowed_cast = {(item.get("character_id"), item.get("profile_version_id")): item for item in preview.get("selected_characters", [])}
+        packed["selected_characters"] = [allowed_cast[(item["character_id"], item["profile_version_id"])] for item in plan.get("selected_characters", []) if isinstance(item, dict) and (item.get("character_id"), item.get("profile_version_id")) in allowed_cast]
         packed["payload_hash"] = _hash({"blocks": blocks, "action": preview["action"], "profile": profile})
         packed["budget"] = {**preview.get("budget", {}), "selected_memory_ids": packed["selected_memory_ids"]}
         return packed
@@ -845,6 +887,8 @@ class GenerationService:
         if not self._mark_dispatched(key):
             raise _ProviderError(ProviderFailure("CANCELLED", "Generation attempt was claimed by another worker"))
         parts, result = [], None
+        structured_required = bool(not profile.get("is_test_profile") and not profile.get("legacy_plain_output"))
+        progress_emitted = False
         try:
             try:
                 for event in self.attempt_registry.stream(
@@ -863,10 +907,20 @@ class GenerationService:
                         raise _ProviderError(event)
                     if isinstance(event, ProviderResult):
                         result = event
-                        if not parts and event.text:
+                        if structured_required:
+                            if not parts and event.text:
+                                self._append_private_structured_output(job["id"], key, event.text, progress=not progress_emitted)
+                                progress_emitted = True
+                                parts.append(event.text)
+                        elif not parts and event.text:
                             self._append_output(job["id"], "narration", event.text, parts)
                     elif isinstance(event, str) and event:
-                        self._append_output(job["id"], "narration", event, parts)
+                        if structured_required:
+                            self._append_private_structured_output(job["id"], key, event, progress=not progress_emitted)
+                            progress_emitted = True
+                            parts.append(event)
+                        else:
+                            self._append_output(job["id"], "narration", event, parts)
             except TimeoutError as exc:
                 code = "CANCELLED" if str(exc) == "cancelled" or self._cancel_requested(job["id"]) else "PROVIDER_TIMEOUT"
                 raise _ProviderError(ProviderFailure(code, "Generation was cancelled" if code == "CANCELLED" else "Narration attempt exceeded its timeout"))
@@ -879,11 +933,28 @@ class GenerationService:
             draft = "".join(parts)
             if not draft:
                 raise _ProviderError(ProviderFailure("MISSING_TERMINAL", "Provider returned empty narrative"))
+            selected = {}
+            context = preview
+            for item in context.get("selected_characters", []):
+                if isinstance(item, dict) and isinstance(item.get("character_id"), str) and isinstance(item.get("profile_version_id"), str):
+                    selected[item["character_id"]] = item["profile_version_id"]
+            try:
+                normalized_draft, output_segments = parse_narrator_payload(draft, selected)
+                if narrator_requires_structured := (not profile.get("is_test_profile", False) and not profile.get("legacy_plain_output", False)):
+                    if output_segments is None:
+                        raise ValidationError("Narrator must return attributed structured segments")
+                draft = normalized_draft
+            except Exception as exc:
+                failure = ProviderFailure("SCHEMA_INVALID", str(exc))
+                with transaction(self.connection):
+                    self._require_active(key, job["id"])
+                    self._record_usage(job["id"], "narration", result)
+                raise _ProviderError(failure) from exc
             with transaction(self.connection):
                 self._require_active(key, job["id"])
-                self._finish_attempt(key, "completed", result, draft)
+                self._finish_attempt(key, "completed", result, "".join(parts))
                 self._record_usage(job["id"], "narration", result)
-                changed = self.connection.execute("UPDATE generation_jobs SET status='candidate',draft=?,usage_json=? WHERE id=? AND status='running' AND cancel_requested=0 AND execution_epoch=(SELECT epoch FROM execution_epochs WHERE id=1)", (draft, json.dumps(result.usage or {"status": "unknown"}, ensure_ascii=False), job["id"]))
+                changed = self.connection.execute("UPDATE generation_jobs SET status='candidate',draft=?,output_segments_json=?,usage_json=? WHERE id=? AND status='running' AND cancel_requested=0 AND execution_epoch=(SELECT epoch FROM execution_epochs WHERE id=1)", (draft, json.dumps(output_segments, ensure_ascii=False) if output_segments is not None else None, json.dumps(result.usage or {"status": "unknown"}, ensure_ascii=False), job["id"]))
                 if changed.rowcount != 1:
                     raise _ProviderError(ProviderFailure("CANCELLED", "Generation was cancelled"))
                 self.connection.execute("DELETE FROM generation_branch_guards WHERE generation_job_id=?", (job["id"],))
@@ -909,6 +980,23 @@ class GenerationService:
                 if changed != 1:
                     raise _ProviderError(ProviderFailure("CANCELLED", "Generation is no longer active"))
                 self._event(job_id, stage, "delta", self._offset(output), text, {"offset_unit": "utf16_code_units"})
+
+    def _append_private_structured_output(self, job_id, stage_key, text, *, progress: bool):
+        """Retain raw structured chunks privately while exposing safe progress only."""
+        with self._db_lock:
+            row = self.connection.execute("SELECT output_text FROM provider_attempts WHERE stage_key=?", (stage_key,)).fetchone()
+            if row is None:
+                raise _ProviderError(ProviderFailure("CANCELLED", "Generation attempt is no longer active"))
+            raw = (row["output_text"] or "") + text
+            with transaction(self.connection):
+                self._require_active(stage_key, job_id)
+                changed = self.connection.execute("UPDATE provider_attempts SET output_text=?,output_offset=? WHERE stage_key=? AND status='dispatched' AND claim_epoch=?", (raw, self._offset(raw), stage_key, self._epoch())).rowcount
+                if changed != 1:
+                    raise _ProviderError(ProviderFailure("CANCELLED", "Generation attempt is no longer active"))
+                if progress:
+                    current = self._epoch()
+                    self.connection.execute("UPDATE generation_jobs SET draft=? WHERE id=? AND status='running' AND cancel_requested=0 AND execution_epoch=?", ("Đang xử lý…", job_id, current))
+                    self._event(job_id, "narration", "delta", self._offset("Đang xử lý…"), "Đang xử lý…", {"offset_unit": "utf16_code_units", "private_raw": True})
 
     def _after_narration_completion(self, job_id):
         """Test hook for the boundary after the narration completion commit."""
@@ -1115,13 +1203,19 @@ class GenerationService:
         values = dict(row)
         values["failure"] = json.loads(values["failure_json"]) if values.get("failure_json") else None
         values["usage"] = json.loads(values["usage_json"]) if values.get("usage_json") else None
+        values["output_segments"] = json.loads(values["output_segments_json"]) if values.get("output_segments_json") else None
         values["settings_snapshot"] = json.loads(values.get("settings_snapshot_json") or "{}")
         values["profile_snapshot"] = json.loads(values.get("profile_snapshot_json") or "{}")
         values["cost_ledger"] = json.loads(values.get("reserved_cost_json") or "{}")
         values["remaining_cost_usd"] = self._remaining_cost(values)
         attempts = self.connection.execute("SELECT stage,status,stage_key,output_offset,output_text,usage_json,failure_json,payload_hash,profile_snapshot_json,request_json,dispatched_at,claim_epoch,finished_at FROM provider_attempts WHERE generation_job_id=? ORDER BY created_at", (job_id,)).fetchall()
         values["attempts"] = [item["stage"] for item in attempts]
-        values["attempt_details"] = [{**dict(item), "usage": json.loads(item["usage_json"]) if item["usage_json"] else None, "failure": json.loads(item["failure_json"]) if item["failure_json"] else None, "profile_snapshot": json.loads(item["profile_snapshot_json"]), "request": json.loads(item["request_json"] or "{}") if item["request_json"] else {}} for item in attempts]
+        attempt_details = []
+        for item in attempts:
+            detail = {**dict(item), "usage": json.loads(item["usage_json"]) if item["usage_json"] else None, "failure": json.loads(item["failure_json"]) if item["failure_json"] else None, "profile_snapshot": json.loads(item["profile_snapshot_json"]), "request": json.loads(item["request_json"] or "{}") if item["request_json"] else {}}
+            detail.pop("output_text", None)
+            attempt_details.append(detail)
+        values["attempt_details"] = attempt_details
         phase_counts = {phase: sum(1 for item in attempts if item["status"] == phase) for phase in ("queued", "claimed", "dispatched", "completed", "failed", "interrupted")}
         values["attempt_counts"] = {"planned": len(attempts), **phase_counts}
         values["attempt_counts_by_stage"] = {stage: {phase: sum(1 for item in attempts if item["stage"] == stage and item["status"] == phase) for phase in ("queued", "claimed", "dispatched", "completed", "failed", "interrupted")} for stage in {item["stage"] for item in attempts}}
@@ -1162,7 +1256,18 @@ class GenerationService:
             competing = self.connection.execute("SELECT generation_job_id FROM generation_branch_guards WHERE branch_id=? AND generation_job_id<>?", (job["branch_id"], job_id)).fetchone()
             if competing:
                 raise StateConflict("An active generation owns this branch")
-            _create_committed_revision_in_transaction(self.connection, job["campaign_id"], job["branch_id"], job["action"], job["draft"], expected_state_version=head.state_version)
+            selected = {}
+            selected_context = json.loads(job.get("final_context_json") or job.get("preview_snapshot_json") or "{}")
+            for item in selected_context.get("selected_characters", []):
+                if isinstance(item, dict) and isinstance(item.get("character_id"), str) and isinstance(item.get("profile_version_id"), str):
+                    selected[item["character_id"]] = item["profile_version_id"]
+            output_segments = job.get("output_segments")
+            if output_segments is not None:
+                validate_narrator_segments(output_segments, selected)
+                narrative_text = job["draft"]
+            else:
+                narrative_text, output_segments = parse_narrator_payload(job["draft"], selected)
+            _create_committed_revision_in_transaction(self.connection, job["campaign_id"], job["branch_id"], job["action"], narrative_text, expected_state_version=head.state_version, output_segments=output_segments)
             if self.connection.execute("UPDATE generation_jobs SET status='committed' WHERE id=? AND status='candidate'", (job_id,)).rowcount != 1:
                 raise StateConflict("Candidate was already committed")
             self.connection.execute("DELETE FROM generation_branch_guards WHERE generation_job_id=?", (job_id,))

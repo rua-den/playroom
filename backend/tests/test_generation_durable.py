@@ -71,7 +71,7 @@ def test_quality_dispatches_real_director_then_narrator_and_saves_context_run(tm
     db, owner, campaign = _story(tmp_path)
     head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
     pool = build_candidate_pool(db, campaign.id, campaign.initial_branch_id, "Look", checkpoint_id=head.checkpoint_id, owner_id=owner.id)
-    plan = {"checkpoint_id": pool["checkpoint_id"], "action_hash": pool["action_hash"], "selected_memory_ids": [], "reasons": {}, "reason_sources": {}, "scene_ids": pool["scene_ids"], "conflict_flags": []}
+    plan = {"checkpoint_id": pool["checkpoint_id"], "action_hash": pool["action_hash"], "selected_memory_ids": [], "reasons": {}, "reason_sources": {}, "scene_ids": pool["scene_ids"], "conflict_flags": [], "selected_characters": []}
     provider = FakeProvider([json.dumps(plan), "Narrator output."])
     service = GenerationService(db, provider, profile={"roles": {"context": {**DEFAULT_PROFILE, "id": "director"}, "narrator": DEFAULT_PROFILE}})
     job = service.generate(owner.id, campaign.id, campaign.initial_branch_id, "Look", idempotency_key="quality-1", expected_checkpoint_id=head.checkpoint_id, mode="quality")
@@ -100,6 +100,7 @@ def test_multiple_quality_jobs_release_all_global_capacity(tmp_path):
             "reason_sources": {},
             "scene_ids": pool["scene_ids"],
             "conflict_flags": [],
+        "selected_characters": [],
         }
         provider = FakeProvider([json.dumps(plan), f"Narrator output {index}."])
         service = GenerationService(db, provider, profile={"roles": {"context": {**DEFAULT_PROFILE, "id": f"director-{index}"}, "narrator": DEFAULT_PROFILE}})
@@ -127,7 +128,7 @@ def test_quality_narrator_wire_uses_only_validated_director_selection(tmp_path):
     append_memory_version(db, campaign.id, campaign.initial_branch_id, "lore", "OPTIONAL LIGHTHOUSE MEMORY", origin="user", expected_state_version=head.state_version, source_revision_ids=[], status="approved")
     head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
     pool = build_candidate_pool(db, campaign.id, campaign.initial_branch_id, "lighthouse", checkpoint_id=head.checkpoint_id, owner_id=owner.id)
-    plan = {"checkpoint_id": pool["checkpoint_id"], "action_hash": pool["action_hash"], "selected_memory_ids": [], "reasons": {}, "reason_sources": {}, "scene_ids": pool["scene_ids"], "conflict_flags": []}
+    plan = {"checkpoint_id": pool["checkpoint_id"], "action_hash": pool["action_hash"], "selected_memory_ids": [], "reasons": {}, "reason_sources": {}, "scene_ids": pool["scene_ids"], "conflict_flags": [], "selected_characters": []}
     provider = FakeProvider([json.dumps(plan), "Narrator output."])
     service = GenerationService(db, provider, profile={"roles": {"context": {**DEFAULT_PROFILE, "id": "director"}, "narrator": DEFAULT_PROFILE}})
     job = service.generate(owner.id, campaign.id, campaign.initial_branch_id, "lighthouse", idempotency_key="quality-pack", expected_checkpoint_id=head.checkpoint_id, mode="quality")
@@ -136,6 +137,26 @@ def test_quality_narrator_wire_uses_only_validated_director_selection(tmp_path):
     assert job["status"] == "candidate"
     assert pool["action_hash"] in director_wire
     assert "OPTIONAL LIGHTHOUSE MEMORY" not in wire
+    system = provider.calls[-1]["messages"][0]["content"]
+    assert "Continue Vietnamese using supplied context" in system
+    assert "later committed raw turns" in system
+    assert "pending/foreign/rejected/future facts" in system
+    assert "Associations/known_by describe knowledge, not presence" in system
+    assert "narrator knowledge may differ from NPC" in system
+    assert "focus/parallel scenes" in system
+    assert "StyleProfile voice" in system
+    assert "player controls choices" in system
+    assert "Use selected_characters only" in system
+    assert "never invent speakers" in system
+    assert "Dialogue only for selected chars" in system
+    assert "IDs character_id/profile_version_id" in system
+    assert "narration prose" in system
+    assert "Respond to the latest player action or dialogue" in system
+    assert "Avoid generic atmosphere-setting" in system
+    assert "Advance with concrete reaction, consequence, or change when context supports it" in system
+    assert "Preserve selected voice/knowledge" in system
+    assert "Player controls actions and thoughts" in system
+    assert "Do not force A/B choices, quests, stats, or other game mechanics" in system
 
 
 def test_free_only_rejects_paid_profile_before_provider_call(tmp_path):
@@ -295,7 +316,7 @@ def test_local_http_lost_response_runs_each_mode_once(tmp_path, mode):
     head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
     if mode == "quality":
         pool = build_candidate_pool(db, campaign.id, campaign.initial_branch_id, "Look", checkpoint_id=head.checkpoint_id, owner_id=owner.id)
-        plan = {"checkpoint_id": pool["checkpoint_id"], "action_hash": pool["action_hash"], "selected_memory_ids": [], "reasons": {}, "reason_sources": {}, "scene_ids": pool["scene_ids"], "conflict_flags": []}
+        plan = {"checkpoint_id": pool["checkpoint_id"], "action_hash": pool["action_hash"], "selected_memory_ids": [], "reasons": {}, "reason_sources": {}, "scene_ids": pool["scene_ids"], "conflict_flags": [], "selected_characters": []}
         provider = FakeProvider([json.dumps(plan), "HTTP quality result"])
     else:
         provider = FakeProvider(["HTTP economy result"])
@@ -377,6 +398,7 @@ class _QualitySSEPhaseProvider(ProviderAdapter):
             "reason_sources": {},
             "scene_ids": payload["candidate_pool"]["scene_ids"],
             "conflict_flags": [],
+        "selected_characters": [],
         }
         return ProviderResult(text=json.dumps(value), usage={"input_tokens": 5, "output_tokens": 5, "total_tokens": 10})
 
@@ -740,7 +762,7 @@ def test_factory_resolves_distinct_role_profiles_and_pinned_credentials(tmp_path
     head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
     context_profile = {**DEFAULT_PROFILE, "id": "director", "version": 2, "profile_hash": "director-hash", "secret_version": "context-key"}
     narrator_profile = {**DEFAULT_PROFILE, "id": "narrator", "version": 3, "profile_hash": "narrator-hash", "secret_version": "narrator-key"}
-    plan = {"checkpoint_id": head.checkpoint_id, "action_hash": "", "selected_memory_ids": [], "reasons": {}, "reason_sources": {}, "scene_ids": [], "conflict_flags": []}
+    plan = {"checkpoint_id": head.checkpoint_id, "action_hash": "", "selected_memory_ids": [], "reasons": {}, "reason_sources": {}, "scene_ids": [], "conflict_flags": [], "selected_characters": []}
     calls = []
 
     def factory(**kwargs):

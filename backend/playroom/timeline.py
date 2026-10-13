@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import sqlite3
 import unicodedata
+import json
 from datetime import datetime, timezone
 from uuid import uuid4
 
 from .db import assert_branch_mutable, transaction
 from .domain import BranchHead, NotFound, StateCheckpoint, StateConflict, ValidationError
+from .roleplay_segments import parse_player_input
 
 
 def utc_now() -> str:
@@ -151,13 +153,13 @@ def create_state_checkpoint(
         return _advance_checkpoint(connection, campaign_id, branch_id, expected_state_version, snapshot)
 
 
-def create_committed_revision(connection: sqlite3.Connection, campaign_id: str, branch_id: str, action_text: str, narrative_text: str, *, expected_state_version: int) -> tuple[str, str]:
+def create_committed_revision(connection: sqlite3.Connection, campaign_id: str, branch_id: str, action_text: str, narrative_text: str, *, expected_state_version: int, output_segments: list[dict] | None = None) -> tuple[str, str]:
     with transaction(connection):
         assert_branch_mutable(connection, branch_id)
-        return _create_committed_revision_in_transaction(connection, campaign_id, branch_id, action_text, narrative_text, expected_state_version=expected_state_version)
+        return _create_committed_revision_in_transaction(connection, campaign_id, branch_id, action_text, narrative_text, expected_state_version=expected_state_version, output_segments=output_segments)
 
 
-def _create_committed_revision_in_transaction(connection: sqlite3.Connection, campaign_id: str, branch_id: str, action_text: str, narrative_text: str, *, expected_state_version: int) -> tuple[str, str]:
+def _create_committed_revision_in_transaction(connection: sqlite3.Connection, campaign_id: str, branch_id: str, action_text: str, narrative_text: str, *, expected_state_version: int, output_segments: list[dict] | None = None) -> tuple[str, str]:
     if not action_text.strip() or not narrative_text.strip():
         raise ValidationError("A committed turn needs both player action and complete narrative")
     branch = _branch_row(connection, campaign_id, branch_id)
@@ -167,8 +169,10 @@ def _create_committed_revision_in_transaction(connection: sqlite3.Connection, ca
     sequence = connection.execute("SELECT COALESCE(MAX(sequence), 0) + 1 FROM turns WHERE branch_id = ?", (branch_id,)).fetchone()[0]
     turn_id, revision_id = str(uuid4()), str(uuid4())
     now = utc_now()
-    connection.execute("INSERT INTO turns(id, campaign_id, branch_id, sequence, action_text, created_at) VALUES (?, ?, ?, ?, ?, ?)", (turn_id, campaign_id, branch_id, sequence, action_text, now))
-    connection.execute("INSERT INTO turn_revisions(id, turn_id, revision, narrative_text, complete, selected, created_at) VALUES (?, ?, 1, ?, 1, 1, ?)", (revision_id, turn_id, narrative_text, now))
+    input_segments = json.dumps(parse_player_input(action_text), ensure_ascii=False)
+    connection.execute("INSERT INTO turns(id, campaign_id, branch_id, sequence, action_text, input_segments_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", (turn_id, campaign_id, branch_id, sequence, action_text, input_segments, now))
+    output_json = json.dumps(output_segments, ensure_ascii=False) if output_segments is not None else None
+    connection.execute("INSERT INTO turn_revisions(id, turn_id, revision, narrative_text, output_segments_json, complete, selected, created_at) VALUES (?, ?, 1, ?, ?, 1, 1, ?)", (revision_id, turn_id, narrative_text, output_json, now))
     connection.execute("INSERT INTO selected_revisions(branch_id, turn_id, revision_id) VALUES (?, ?, ?)", (branch_id, turn_id, revision_id))
     snapshot = dict(head.snapshot)
     snapshot["turn_id"] = turn_id

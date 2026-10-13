@@ -11,11 +11,23 @@ import pytest
 
 from playroom.auth import create_owner
 from playroom.campaigns import create_campaign
-from playroom.context import build_context_preview, build_candidate_pool, load_context_preview
+from playroom.context import build_context_preview, build_candidate_pool, load_context_preview, validate_selection_plan
 from playroom.db import connect, migrate
 from playroom.domain import StateConflict, ValidationError
 from playroom.memory import append_memory_version, update_scene
 from playroom.timeline import create_committed_revision, get_branch_head
+
+
+def test_director_selection_rejects_invented_character_and_preserves_selected_subset():
+    pool = {
+        "checkpoint_id": "checkpoint-1", "branch_id": "branch-1", "action_hash": "hash-1",
+        "optional": [], "scene_ids": [],
+        "selected_characters": [{"character_id": "npc-1", "profile_version_id": "profile-npc-v2", "present": True}],
+    }
+    valid = validate_selection_plan("checkpoint-1", "hash-1", pool, {"checkpoint_id": "checkpoint-1", "action_hash": "hash-1", "selected_memory_ids": [], "selected_characters": [{"character_id": "npc-1", "profile_version_id": "profile-npc-v2"}], "reasons": {}, "reason_sources": {}, "scene_ids": [], "conflict_flags": []})
+    assert valid["selected_characters"][0]["profile_version_id"] == "profile-npc-v2"
+    with pytest.raises(ValidationError):
+        validate_selection_plan("checkpoint-1", "hash-1", pool, {"checkpoint_id": "checkpoint-1", "action_hash": "hash-1", "selected_memory_ids": [], "selected_characters": [{"character_id": "invented", "profile_version_id": "profile-npc-v2"}], "reasons": {}, "reason_sources": {}, "scene_ids": [], "conflict_flags": []})
 
 
 @pytest.fixture

@@ -67,7 +67,7 @@ def _transcript_projection(connection: sqlite3.Connection, campaign_id: str, sel
     for offset in range(0, len(selected_ids), 500):
         chunk = selected_ids[offset:offset + 500]
         rows = connection.execute(
-            "SELECT tr.id, tr.turn_id, tr.revision, tr.narrative_text, tr.complete, tr.selected, t.branch_id, t.sequence, t.action_text "
+            "SELECT tr.id, tr.turn_id, tr.revision, tr.narrative_text, tr.output_segments_json, tr.complete, tr.selected, t.branch_id, t.sequence, t.action_text, t.input_segments_json "
             "FROM turn_revisions tr JOIN turns t ON t.id=tr.turn_id WHERE tr.id IN ({}) AND t.campaign_id=?".format(",".join("?" for _ in chunk) or "NULL"),
             [*chunk, campaign_id],
         ).fetchall()
@@ -84,6 +84,8 @@ def _transcript_projection(connection: sqlite3.Connection, campaign_id: str, sel
             "narrative_text": row["narrative_text"],
             "complete": bool(row["complete"]),
             "selected": bool(row["selected"]),
+            "input_segments": json.loads(row["input_segments_json"]) if row["input_segments_json"] else None,
+            "output_segments": json.loads(row["output_segments_json"]) if row["output_segments_json"] else None,
         }
         for revision_id in selected_ids
         for row in [by_id[revision_id]]

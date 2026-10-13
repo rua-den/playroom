@@ -34,6 +34,7 @@ describe("SettingsPanel", () => {
     expect(screen.getByText(/Đang ghim.*v1.*hash-v1/)).toBeInTheDocument();
     expect(screen.getByLabelText("Model narrator")).toHaveValue("");
     await user.selectOptions(screen.getByLabelText("Chính sách chi phí"), "capped_paid");
+    await user.click(screen.getByText("Nâng cao"));
     await user.type(screen.getByLabelText("Giới hạn USD"), "1");
     await user.clear(screen.getByLabelText("Narrator input tokens")); await user.type(screen.getByLabelText("Narrator input tokens"), "9000");
     await user.click(screen.getByRole("button", { name: "Lưu ngân sách" }));
@@ -72,6 +73,7 @@ describe("SettingsPanel", () => {
     render(<SettingsPanel />);
     await screen.findByLabelText("OpenRouter API key");
     await user.selectOptions(screen.getByLabelText("Chính sách chi phí"), "capped_paid");
+    await user.click(screen.getByText("Nâng cao"));
     await user.type(screen.getByLabelText("Giới hạn USD"), "0");
     await user.click(screen.getByRole("button", { name: "Lưu ngân sách" }));
     expect(screen.getByLabelText("Giới hạn USD")).toHaveValue("0");
@@ -107,4 +109,48 @@ describe("SettingsPanel", () => {
     const panel = await screen.findByRole("region", { name: "Cài đặt provider" });
     expect(Array.from(panel.querySelectorAll("input, select, textarea")).every((control) => control.classList.contains("touch-target"))).toBe(true);
   });
+
+  it("hides a saved paid cap until Advanced is expanded", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ mode: "economy", policy: "capped_paid", confirmed_usd_cap: "0.02", roles: {}, budgets: {} }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<SettingsPanel />);
+    await screen.findByLabelText("Chính sách chi phí");
+    expect(screen.getByLabelText("Giới hạn USD")).not.toBeVisible();
+    await user.click(screen.getByText("Nâng cao"));
+    expect(screen.getByLabelText("Giới hạn USD")).toHaveValue("0.02");
+  });
 });
+
+  it("offers Ollama Cloud credential and fixed model verification without an endpoint field", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ mode: "economy", policy: "free_only", roles: {}, budgets: {} }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<SettingsPanel />);
+    await screen.findByLabelText("Provider");
+    await userEvent.setup().selectOptions(screen.getByLabelText("Provider"), "ollama");
+    expect(screen.getByLabelText("Ollama Cloud API key")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("gpt-oss:120b-cloud")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Endpoint")).not.toBeInTheDocument();
+  });
+
+  it("verifies Ollama Cloud with the saved credential and fixed model endpoint", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([{ id: "cred-1", masked: "ol-••••1234" }]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ mode: "economy", policy: "free_only", roles: {}, budgets: {} }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "ollama-profile", version: 1, model: "gpt-oss:120b-cloud", provider: "ollama" }), { status: 201 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<SettingsPanel />);
+    await screen.findByLabelText("Provider");
+    await user.selectOptions(screen.getByLabelText("Provider"), "ollama");
+    await user.selectOptions(screen.getByLabelText("Credential"), "cred-1");
+    await user.click(screen.getByRole("button", { name: "Xác minh profile" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/provider/profiles/verify", expect.objectContaining({ method: "POST", body: JSON.stringify({ provider: "ollama", credential_id: "cred-1", model: "gpt-oss:120b-cloud", endpoint: "https://ollama.com/v1" }) })));
+  });

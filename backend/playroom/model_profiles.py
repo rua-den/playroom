@@ -11,6 +11,10 @@ import httpx2 as httpx
 
 from .domain import NotFound, ValidationError
 
+OLLAMA_CLOUD_ENDPOINT = "https://ollama.com/v1"
+OLLAMA_CLOUD_MODEL = "gpt-oss:120b-cloud"
+OLLAMA_CLOUD_API_MODEL = "gpt-oss:120b"
+
 
 @dataclass(frozen=True)
 class ModelProfile:
@@ -168,6 +172,44 @@ class OpenRouterVerifier:
         native_structured = "structured_outputs" in supported and "response_format" in supported
         schema_parameter = "response_format" if native_structured else None
         return {"provider": "openrouter", "endpoint": endpoint, "endpoint_id": selected.get("id") or selected_tag, "model": model, "provider_tag": selected_tag, "context_limit": context_limit, "output_limit": output_limit, "pricing": {"prompt": str(prompt), "completion": str(completion), "currency": "USD", "unit": "USD/token"}, "credential_tier": tier, "structured_output": native_structured and schema_parameter is not None, "native_structured_output": native_structured, "structured_schema_parameter": schema_parameter, "supported_parameters": list(supported), "reasoning_parameters": [item for item in supported if "reason" in item], "data_policy": selected.get("data_policy"), "metadata_source": source, "credential_metadata": {"is_free_tier": key_flag, "free_model_daily_requests": key_data.get("free_model_daily_requests")}, "verified_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"), "pricing_verified": True}
+
+
+class OllamaCloudVerifier:
+    def __init__(self, *, http_client: httpx.Client | None = None):
+        self.client = http_client or httpx.Client(timeout=30)
+
+    def verify(self, api_key: str, model: str, endpoint: str, *, provider_tag: str | None = None) -> dict:
+        if endpoint != OLLAMA_CLOUD_ENDPOINT:
+            raise ValidationError("Only the pinned Ollama Cloud endpoint is supported")
+        if model != OLLAMA_CLOUD_MODEL:
+            raise ValidationError("The requested Ollama Cloud model is unavailable")
+        if not api_key:
+            raise ValidationError("Provider credential could not be verified")
+        try:
+            response = self.client.get(f"{OLLAMA_CLOUD_ENDPOINT}/models", headers={"Authorization": f"Bearer {api_key}"})
+        except Exception as exc:
+            raise ValidationError("Ollama Cloud metadata could not be reached") from exc
+        if response.status_code != 200:
+            raise ValidationError("Ollama Cloud credential could not be verified")
+        try:
+            models = response.json().get("data", [])
+        except Exception as exc:
+            raise ValidationError("Ollama Cloud metadata could not be verified") from exc
+        if not any(isinstance(item, dict) and item.get("id") == OLLAMA_CLOUD_API_MODEL for item in models):
+            raise ValidationError("Requested Ollama Cloud model is unavailable")
+        source = f"{OLLAMA_CLOUD_ENDPOINT}/models"
+        return {
+            "provider": "ollama", "endpoint": OLLAMA_CLOUD_ENDPOINT, "model": OLLAMA_CLOUD_API_MODEL, "model_label": OLLAMA_CLOUD_MODEL,
+            "provider_tag": None, "context_limit": 131072, "output_limit": 4096,
+            "pricing": {"prompt": "0.00000015", "completion": "0.00000060", "currency": "USD", "unit": "USD/token"},
+            "credential_tier": "paid", "structured_output": False, "native_structured_output": False,
+            "structured_schema_parameter": None, "supported_parameters": ["max_tokens"],
+            "reasoning_parameters": [], "metadata_source": source,
+            "pricing_source": "https://ollama.com/library/gpt-oss:120b-cloud",
+            "pricing_retrieved_at": datetime.now(timezone.utc).date().isoformat(),
+            "verified_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "pricing_verified": True,
+        }
 
 
 def ensure_profile_tables(connection) -> None:

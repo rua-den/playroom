@@ -2,9 +2,11 @@ import type { ReactNode } from "react";
 
 function inline(text: string): ReactNode[] {
   const safe = text.replace(/<[^>]*>/g, "");
-  return safe.split(/(\*\*[^*]+\*\*)/g).map((part, index) => part.startsWith("**") && part.endsWith("**")
+  return safe.split(/(\*\*[^*]+\*\*|\*[^*]+\*)/g).map((part, index) => part.startsWith("**") && part.endsWith("**")
     ? <strong key={index}>{part.slice(2, -2)}</strong>
-    : <span key={index}>{part}</span>);
+    : part.startsWith("*") && part.endsWith("*")
+      ? <em key={index}>{part.slice(1, -1)}</em>
+      : <span key={index}>{part}</span>);
 }
 
 export function Markdown({ source }: { source: string }) {
