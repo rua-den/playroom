@@ -895,13 +895,20 @@ class GenerationService:
 
     def _append_output(self, job_id, stage, text, parts):
         with self._db_lock:
-            parts.append(text)
-            output = "".join(parts)
             row = self.connection.execute("SELECT stage_key FROM provider_attempts WHERE generation_job_id=? AND stage=?", (job_id, stage)).fetchone()
             self._require_active(row["stage_key"], job_id)
-            self.connection.execute("UPDATE provider_attempts SET output_text=?,output_offset=? WHERE stage_key=? AND status='dispatched'", (output, self._offset(output), row["stage_key"]))
-            self.connection.execute("UPDATE generation_jobs SET draft=? WHERE id=?", (output, job_id))
-            self._event(job_id, stage, "delta", self._offset(output), text, {"offset_unit": "utf16_code_units"})
+            with transaction(self.connection):
+                self._require_active(row["stage_key"], job_id)
+                parts.append(text)
+                output = "".join(parts)
+                current = self._epoch()
+                changed = self.connection.execute("UPDATE provider_attempts SET output_text=?,output_offset=? WHERE stage_key=? AND status='dispatched' AND claim_epoch=?", (output, self._offset(output), row["stage_key"], current)).rowcount
+                if changed != 1:
+                    raise _ProviderError(ProviderFailure("CANCELLED", "Generation attempt is no longer active"))
+                changed = self.connection.execute("UPDATE generation_jobs SET draft=? WHERE id=? AND status='running' AND cancel_requested=0 AND execution_epoch=?", (output, job_id, current)).rowcount
+                if changed != 1:
+                    raise _ProviderError(ProviderFailure("CANCELLED", "Generation is no longer active"))
+                self._event(job_id, stage, "delta", self._offset(output), text, {"offset_unit": "utf16_code_units"})
 
     def _after_narration_completion(self, job_id):
         """Test hook for the boundary after the narration completion commit."""
@@ -954,9 +961,9 @@ class GenerationService:
 
     def _require_active(self, key, job_id):
         with self._db_lock:
-            row = self.connection.execute("SELECT a.status,a.claim_epoch,j.execution_epoch,j.cancel_requested FROM provider_attempts a JOIN generation_jobs j ON j.id=a.generation_job_id WHERE a.stage_key=? AND j.id=?", (key, job_id)).fetchone()
+            row = self.connection.execute("SELECT a.status,a.claim_epoch,j.status AS job_status,j.execution_epoch,j.cancel_requested FROM provider_attempts a JOIN generation_jobs j ON j.id=a.generation_job_id WHERE a.stage_key=? AND j.id=?", (key, job_id)).fetchone()
             current = self._epoch()
-            if row is None or row["status"] != "dispatched" or row["claim_epoch"] != current or row["execution_epoch"] != current or row["cancel_requested"]:
+            if row is None or row["status"] != "dispatched" or row["job_status"] != "running" or row["claim_epoch"] != current or row["execution_epoch"] != current or row["cancel_requested"]:
                 raise _ProviderError(ProviderFailure("CANCELLED", "Generation attempt is no longer active"))
 
     def _record_usage(self, job_id, stage, result):

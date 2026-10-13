@@ -616,6 +616,133 @@ def test_old_director_result_cannot_write_after_transition(tmp_path, monkeypatch
         other.close()
 
 
+def test_old_director_result_cannot_write_after_status_transition(tmp_path, monkeypatch):
+    db, owner, campaign = _story(tmp_path)
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    pool = build_candidate_pool(
+        db, campaign.id, campaign.initial_branch_id, "Look",
+        checkpoint_id=head.checkpoint_id, owner_id=owner.id,
+    )
+    selection = {
+        "checkpoint_id": head.checkpoint_id,
+        "action_hash": pool["action_hash"],
+        "selected_memory_ids": [], "reasons": {}, "reason_sources": {},
+        "scene_ids": pool["scene_ids"], "conflict_flags": [],
+    }
+    provider = FakeProvider([json.dumps(selection), "must not narrate"])
+    service = GenerationService(db, provider)
+    job = service.generate(
+        owner.id, campaign.id, campaign.initial_branch_id, "Look",
+        idempotency_key="old-writer-status", expected_checkpoint_id=head.checkpoint_id,
+        mode="quality", execute=False,
+    )
+    entered = threading.Event()
+    release = threading.Event()
+
+    def held_pack(*args, **kwargs):
+        entered.set()
+        assert release.wait(5), "post-result status test barrier timed out"
+        raise RuntimeError("synthetic status-transition packing failure")
+
+    monkeypatch.setattr(service, "_pack_selected", held_pack)
+    worker = threading.Thread(target=lambda: service.run(job["id"]), daemon=True)
+    db_path = db.execute("PRAGMA database_list").fetchone()[2]
+    other = connect(db_path)
+    try:
+        worker.start()
+        assert entered.wait(3)
+        before = {
+            "epoch": db.execute("SELECT epoch FROM execution_epochs WHERE id=1").fetchone()[0],
+            "cancel": db.execute("SELECT cancel_requested FROM generation_jobs WHERE id=?", (job["id"],)).fetchone()[0],
+            "reserved": db.execute("SELECT reserved_cost_json FROM generation_jobs WHERE id=?", (job["id"],)).fetchone()[0],
+            "context": db.execute("SELECT final_context_json FROM generation_jobs WHERE id=?", (job["id"],)).fetchone()[0],
+            "runs": db.execute("SELECT COUNT(*) FROM context_runs WHERE generation_job_id=?", (job["id"],)).fetchone()[0],
+            "attempt": tuple(db.execute("SELECT output_text,usage_json FROM provider_attempts WHERE generation_job_id=? AND stage='context'", (job["id"],)).fetchone()),
+            "events": db.execute("SELECT COUNT(*) FROM generation_events WHERE generation_job_id=?", (job["id"],)).fetchone()[0],
+        }
+        updated = other.execute("UPDATE generation_jobs SET status='failed' WHERE id=? AND status='running'", (job["id"],))
+        other.commit()
+        assert updated.rowcount == 1
+        state = db.execute("SELECT status,cancel_requested FROM generation_jobs WHERE id=?", (job["id"],)).fetchone()
+        assert state["status"] == "failed"
+        assert state["cancel_requested"] == before["cancel"] == 0
+        assert db.execute("SELECT epoch FROM execution_epochs WHERE id=1").fetchone()[0] == before["epoch"]
+        release.set()
+        worker.join(3)
+        assert not worker.is_alive()
+        assert db.execute("SELECT reserved_cost_json FROM generation_jobs WHERE id=?", (job["id"],)).fetchone()[0] == before["reserved"]
+        assert db.execute("SELECT final_context_json FROM generation_jobs WHERE id=?", (job["id"],)).fetchone()[0] == before["context"]
+        assert db.execute("SELECT COUNT(*) FROM context_runs WHERE generation_job_id=?", (job["id"],)).fetchone()[0] == before["runs"]
+        assert tuple(db.execute("SELECT output_text,usage_json FROM provider_attempts WHERE generation_job_id=? AND stage='context'", (job["id"],)).fetchone()) == before["attempt"]
+        late_events = db.execute("SELECT event_type,payload_json FROM generation_events WHERE generation_job_id=? ORDER BY id", (job["id"],)).fetchall()[before["events"]:]
+        assert not any(row[0] in {"completed", "candidate", "success"} for row in late_events)
+        assert not any(row[0] == "phase_changed" and json.loads(row[1]).get("phase") == "context_completed" for row in late_events)
+        assert provider.stage_counts.get("narration", 0) == 0
+    finally:
+        release.set()
+        worker.join(3)
+        other.close()
+
+
+@pytest.mark.parametrize("transition", ["recover", "cancel"])
+def test_narration_delta_cannot_write_after_post_gate_transition(tmp_path, monkeypatch, transition):
+    db, owner, campaign = _story(tmp_path)
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    provider = FakeProvider([{"events": ["late output"], "finish_reason": "stop", "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}}])
+    service = GenerationService(db, provider)
+    job = service.generate(
+        owner.id, campaign.id, campaign.initial_branch_id, "Look",
+        idempotency_key=f"narration-delta-{transition}", expected_checkpoint_id=head.checkpoint_id,
+        execute=False,
+    )
+    entered = threading.Event()
+    release = threading.Event()
+    original_require = service._require_active
+    paused = False
+
+    def gated_require(key, job_id):
+        nonlocal paused
+        original_require(key, job_id)
+        if key.endswith(":narration") and not paused:
+            paused = True
+            entered.set()
+            assert release.wait(5), "post-gate narration test barrier timed out"
+
+    monkeypatch.setattr(service, "_require_active", gated_require)
+    worker = threading.Thread(target=lambda: service.run(job["id"]), daemon=True)
+    db_path = db.execute("PRAGMA database_list").fetchone()[2]
+    other = connect(db_path)
+    try:
+        worker.start()
+        assert entered.wait(3)
+        before = {
+            "draft": db.execute("SELECT draft FROM generation_jobs WHERE id=?", (job["id"],)).fetchone()[0],
+            "attempt_output": db.execute("SELECT output_text FROM provider_attempts WHERE generation_job_id=? AND stage='narration'", (job["id"],)).fetchone()[0],
+            "last_event": db.execute("SELECT COALESCE(MAX(id), 0) FROM generation_events WHERE generation_job_id=?", (job["id"],)).fetchone()[0],
+            "epoch": db.execute("SELECT epoch FROM execution_epochs WHERE id=1").fetchone()[0],
+        }
+        competing = GenerationService(other, FakeProvider([]))
+        if transition == "recover":
+            competing.recover_after_restart()
+            assert db.execute("SELECT epoch FROM execution_epochs WHERE id=1").fetchone()[0] != before["epoch"]
+        else:
+            competing.cancel(owner.id, job["id"])
+            state = db.execute("SELECT cancel_requested,status FROM generation_jobs WHERE id=?", (job["id"],)).fetchone()
+            assert state["cancel_requested"] == 1
+            assert state["status"] in {"cancelling", "cancelled"}
+        release.set()
+        worker.join(3)
+        assert not worker.is_alive()
+        assert db.execute("SELECT draft FROM generation_jobs WHERE id=?", (job["id"],)).fetchone()[0] == before["draft"]
+        assert db.execute("SELECT output_text FROM provider_attempts WHERE generation_job_id=? AND stage='narration'", (job["id"],)).fetchone()[0] == before["attempt_output"]
+        late_events = db.execute("SELECT event_type,payload_json FROM generation_events WHERE generation_job_id=? AND id>?", (job["id"], before["last_event"])).fetchall()
+        assert not any(row[0] == "delta" for row in late_events)
+    finally:
+        release.set()
+        worker.join(3)
+        other.close()
+
+
 def test_narration_completion_event_cannot_follow_cancel_after_commit(tmp_path, monkeypatch):
     db, owner, campaign = _story(tmp_path)
     head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
