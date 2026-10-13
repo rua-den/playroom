@@ -612,20 +612,20 @@ class GenerationService:
                 raise
             self._require_active(key, job["id"])
             if isinstance(result, ProviderFailure):
-                self._finish_attempt(key, "failed", result, "")
+                self._finish_active_attempt(key, job["id"], "failed", result, "")
                 raise _ProviderError(result)
             if not isinstance(result, ProviderResult):
                 failure = ProviderFailure("MISSING_TERMINAL", "Context director did not return a terminal result")
-                self._finish_attempt(key, "failed", failure, "")
+                self._finish_active_attempt(key, job["id"], "failed", failure, "")
                 raise _ProviderError(failure)
             if result.failure:
                 failure = result.failure
-                self._finish_attempt(key, "failed", failure, result.text or "")
+                self._finish_active_attempt(key, job["id"], "failed", failure, result.text or "")
                 raise _ProviderError(failure)
             if result.finish_reason != "stop":
                 code = "OUTPUT_TRUNCATED" if result.finish_reason in {"length", "max_tokens"} else "MODEL_REFUSED" if result.finish_reason == "refusal" else "MISSING_TERMINAL"
                 failure = ProviderFailure(code, "Context director did not complete normally")
-                self._finish_attempt(key, "failed", failure, result.text or "")
+                self._finish_active_attempt(key, job["id"], "failed", failure, result.text or "")
                 raise _ProviderError(failure)
             try:
                 value = json.loads(result.text)
@@ -633,7 +633,7 @@ class GenerationService:
                 plan = validate_director_plan(bounded_pool, bounded_pool["checkpoint_id"], bounded_pool["action_hash"], value)
             except Exception as exc:
                 failure = ProviderFailure("SCHEMA_INVALID", str(exc))
-                self._finish_attempt(key, "failed", failure, "")
+                self._finish_active_attempt(key, job["id"], "failed", failure, "")
                 raise _ProviderError(failure)
             director_meta["usage"] = result.usage or {"status": "unknown"}
             director_result = result
@@ -642,8 +642,11 @@ class GenerationService:
                 final_preview["omission_reasons"] = [*final_preview.get("omission_reasons", []), *[item for item in director_omissions if item not in final_preview.get("omission_reasons", [])]]
             except Exception as exc:
                 failure = ProviderFailure("PACKING_FAILED", "Validated director output could not be packed")
-                self._record_usage(job["id"], "context", result)
-                self._finish_attempt(director_key, "failed", result, result.text or "")
+                with transaction(self.connection):
+                    self._require_active(director_key, job["id"])
+                    self._record_usage(job["id"], "context", result)
+                    if self._finish_attempt(director_key, "failed", result, result.text or "") != 1:
+                        raise _ProviderError(ProviderFailure("CANCELLED", "Generation attempt is no longer active"))
                 raise _ProviderError(failure) from exc
         else:
             final_preview = self._pack_selected(preview, plan, narrator)
@@ -653,8 +656,11 @@ class GenerationService:
             if director_result is None:
                 raise
             failure = ProviderFailure("PACKING_FAILED", "Validated director output could not be packed")
-            self._record_usage(job["id"], "context", director_result)
-            self._finish_attempt(director_key, "failed", director_result, director_result.text or "")
+            with transaction(self.connection):
+                self._require_active(director_key, job["id"])
+                self._record_usage(job["id"], "context", director_result)
+                if self._finish_attempt(director_key, "failed", director_result, director_result.text or "") != 1:
+                    raise _ProviderError(ProviderFailure("CANCELLED", "Generation attempt is no longer active"))
             raise _ProviderError(failure) from exc
         saved_narrator = self.connection.execute("SELECT request_json FROM provider_attempts WHERE generation_job_id=? AND stage='narration' AND status='queued'", (job["id"],)).fetchone()
         if saved_narrator and saved_narrator["request_json"] and saved_narrator["request_json"] != "{}":
@@ -668,7 +674,6 @@ class GenerationService:
             # Update the ledger before checking the narrator allowance. A
             # provider-reported director cost must reduce the remaining
             # parent cap before narration can be dispatched.
-            self._record_usage(job["id"], "context", director_result)
             # The validated selection, immutable final context, usage ledger,
             # and completed director attempt form one durable boundary.  The
             # narrator claim is made only after this transaction commits, so
@@ -882,7 +887,8 @@ class GenerationService:
                 if changed.rowcount != 1:
                     raise _ProviderError(ProviderFailure("CANCELLED", "Generation was cancelled"))
                 self.connection.execute("DELETE FROM generation_branch_guards WHERE generation_job_id=?", (job["id"],))
-            self._event(job["id"], "narration", "completed", self._offset(draft), "", {"usage": result.usage or {"status": "unknown"}, "offset_unit": "utf16_code_units"})
+                self._event(job["id"], "narration", "completed", self._offset(draft), "", {"usage": result.usage or {"status": "unknown"}, "offset_unit": "utf16_code_units"})
+            self._after_narration_completion(job["id"])
         except _ProviderError as exc:
             self._finish_attempt(key, "interrupted" if exc.failure.code == "CANCELLED" else "failed", exc.failure, "".join(parts))
             raise
@@ -896,6 +902,10 @@ class GenerationService:
             self.connection.execute("UPDATE provider_attempts SET output_text=?,output_offset=? WHERE stage_key=? AND status='dispatched'", (output, self._offset(output), row["stage_key"]))
             self.connection.execute("UPDATE generation_jobs SET draft=? WHERE id=?", (output, job_id))
             self._event(job_id, stage, "delta", self._offset(output), text, {"offset_unit": "utf16_code_units"})
+
+    def _after_narration_completion(self, job_id):
+        """Test hook for the boundary after the narration completion commit."""
+        return None
 
     def _insert_attempt(self, job, stage, key, payload_hash, profile, request):
         with self._db_lock:
@@ -998,6 +1008,15 @@ class GenerationService:
         changed = self.connection.execute("UPDATE provider_attempts SET status=?,output_text=?,output_offset=?,usage_json=?,failure_json=?,finished_at=? WHERE stage_key=? AND status IN ('claimed','dispatched') AND claim_epoch=(SELECT epoch FROM execution_epochs WHERE id=1)", (status, output, self._offset(output), json.dumps(usage or {"status": "unknown"}), json.dumps({"code": failure.code, "message": failure.message}) if failure else None, _now(), key)).rowcount
         self._attempt_cancel_events.pop(key, None)
         return changed
+
+    def _finish_active_attempt(self, key, job_id, status, result, output):
+        """Finish a provider result only while its claim is still current."""
+        with transaction(self.connection):
+            self._require_active(key, job_id)
+            changed = self._finish_attempt(key, status, result, output)
+            if changed != 1:
+                raise _ProviderError(ProviderFailure("CANCELLED", "Generation attempt is no longer active"))
+            return changed
 
     def _fail(self, job_id, failure):
         changed = self.connection.execute("UPDATE generation_jobs SET status=?,failure_json=? WHERE id=? AND status IN ('queued','running','cancelling')", ("cancelled" if failure.code == "CANCELLED" else "failed", json.dumps({"code": failure.code, "message": failure.message}, ensure_ascii=False), job_id)).rowcount

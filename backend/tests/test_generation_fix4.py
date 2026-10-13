@@ -310,21 +310,154 @@ def test_post_director_pack_failure_terminalizes_attempt_and_usage(tmp_path, mon
     head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
     pool = build_candidate_pool(db, campaign.id, campaign.initial_branch_id, "Look", checkpoint_id=head.checkpoint_id, owner_id=owner.id)
     plan = {"checkpoint_id": pool["checkpoint_id"], "action_hash": pool["action_hash"], "selected_memory_ids": [], "reasons": {}, "reason_sources": {}, "scene_ids": pool["scene_ids"], "conflict_flags": []}
+    director_text = json.dumps({**plan, "action_hash": pool["action_hash"]})
 
     class DirectorOnly(FakeProvider):
         def generate_structured(self, request, schema):
-            return ProviderResult(text=json.dumps({**plan, "action_hash": request["action_hash"]}), usage={"input_tokens": 17, "output_tokens": 5, "total_tokens": 22})
+            return ProviderResult(text=director_text, usage={"input_tokens": 17, "output_tokens": 5, "total_tokens": 22})
 
-    service = GenerationService(db, DirectorOnly([]), profile={"roles": {"context": DEFAULT_PROFILE, "narrator": DEFAULT_PROFILE}})
+    provider = DirectorOnly([])
+    service = GenerationService(db, provider, profile={"roles": {"context": DEFAULT_PROFILE, "narrator": DEFAULT_PROFILE}})
     monkeypatch.setattr(service, "_pack_selected", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("forced pack failure")))
     job = service.generate(owner.id, campaign.id, campaign.initial_branch_id, "Look", idempotency_key="post-director-pack-failure", expected_checkpoint_id=head.checkpoint_id, mode="quality")
 
     assert job["status"] == "failed"
-    attempt = db.execute("SELECT status,usage_json FROM provider_attempts WHERE generation_job_id=? AND stage='context'", (job["id"],)).fetchone()
+    attempt = db.execute("SELECT status,output_text,usage_json FROM provider_attempts WHERE generation_job_id=? AND stage='context'", (job["id"],)).fetchone()
     assert attempt["status"] == "failed"
+    assert attempt["output_text"] == director_text
     assert json.loads(attempt["usage_json"])["total_tokens"] == 22
+    assert provider.stage_counts.get("narration", 0) == 0
     assert db.execute("SELECT COUNT(*) FROM provider_attempts WHERE status='dispatched'").fetchone()[0] == 0
     assert db.execute("SELECT COUNT(*) FROM generation_branch_guards WHERE generation_job_id=?", (job["id"],)).fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("transition", ["recover", "cancel"])
+@pytest.mark.parametrize("packing_error", [False, True])
+def test_old_director_result_cannot_write_after_transition(tmp_path, monkeypatch, transition, packing_error):
+    db, owner, campaign = _story(tmp_path)
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    pool = build_candidate_pool(
+        db, campaign.id, campaign.initial_branch_id, "Look",
+        checkpoint_id=head.checkpoint_id, owner_id=owner.id,
+    )
+    selection = {
+        "checkpoint_id": head.checkpoint_id,
+        "action_hash": pool["action_hash"],
+        "selected_memory_ids": [], "reasons": {}, "reason_sources": {},
+        "scene_ids": pool["scene_ids"], "conflict_flags": [],
+    }
+    provider = FakeProvider([json.dumps(selection), "must not narrate"])
+    service = GenerationService(db, provider)
+    job = service.generate(
+        owner.id, campaign.id, campaign.initial_branch_id, "Look",
+        idempotency_key="old-writer", expected_checkpoint_id=head.checkpoint_id,
+        mode="quality", execute=False,
+    )
+    entered = threading.Event()
+    release = threading.Event()
+    original = service._pack_selected
+
+    def held_pack(*args, **kwargs):
+        entered.set()
+        assert release.wait(5), "post-result test barrier timed out"
+        if packing_error:
+            raise RuntimeError("synthetic packing failure")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(service, "_pack_selected", held_pack)
+    worker = threading.Thread(target=lambda: service.run(job["id"]), daemon=True)
+    db_path = db.execute("PRAGMA database_list").fetchone()[2]
+    other = connect(db_path)
+    try:
+        worker.start()
+        assert entered.wait(3)
+        competing = GenerationService(other, FakeProvider([]))
+        epoch_before = db.execute("SELECT epoch FROM execution_epochs WHERE id=1").fetchone()[0]
+        if transition == "recover":
+            competing.recover_after_restart()
+            assert db.execute("SELECT epoch FROM execution_epochs WHERE id=1").fetchone()[0] != epoch_before
+            assert db.execute("SELECT status FROM provider_attempts WHERE generation_job_id=? AND stage='context'", (job["id"],)).fetchone()[0] == "interrupted"
+        else:
+            competing.cancel(owner.id, job["id"])
+            cancel_state = db.execute("SELECT cancel_requested,status FROM generation_jobs WHERE id=?", (job["id"],)).fetchone()
+            assert cancel_state["cancel_requested"] == 1
+            assert cancel_state["status"] in {"cancelling", "cancelled"}
+        before = {
+            "reserved": db.execute("SELECT reserved_cost_json FROM generation_jobs WHERE id=?", (job["id"],)).fetchone()[0],
+            "context": db.execute("SELECT final_context_json FROM generation_jobs WHERE id=?", (job["id"],)).fetchone()[0],
+            "events": db.execute("SELECT COUNT(*) FROM generation_events WHERE generation_job_id=?", (job["id"],)).fetchone()[0],
+            "runs": db.execute("SELECT COUNT(*) FROM context_runs WHERE generation_job_id=?", (job["id"],)).fetchone()[0],
+            "attempt": tuple(db.execute("SELECT output_text,usage_json FROM provider_attempts WHERE generation_job_id=? AND stage='context'", (job["id"],)).fetchone()),
+        }
+        release.set()
+        worker.join(3)
+        assert not worker.is_alive()
+        assert db.execute("SELECT reserved_cost_json FROM generation_jobs WHERE id=?", (job["id"],)).fetchone()[0] == before["reserved"]
+        assert db.execute("SELECT final_context_json FROM generation_jobs WHERE id=?", (job["id"],)).fetchone()[0] == before["context"]
+        events_after = db.execute("SELECT event_type FROM generation_events WHERE generation_job_id=? ORDER BY id", (job["id"],)).fetchall()
+        late_events = [row[0] for row in events_after[before["events"]:]]
+        assert not ({"context_completed", "completed", "candidate", "success"} & set(late_events))
+        if transition == "recover":
+            assert late_events == []
+        assert db.execute("SELECT COUNT(*) FROM context_runs WHERE generation_job_id=?", (job["id"],)).fetchone()[0] == before["runs"]
+        assert tuple(db.execute("SELECT output_text,usage_json FROM provider_attempts WHERE generation_job_id=? AND stage='context'", (job["id"],)).fetchone()) == before["attempt"]
+        assert provider.stage_counts.get("narration", 0) == 0
+    finally:
+        release.set()
+        worker.join(3)
+        other.close()
+
+
+def test_narration_completion_event_cannot_follow_cancel_after_commit(tmp_path, monkeypatch):
+    db, owner, campaign = _story(tmp_path)
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    provider = FakeProvider(["completed narrative"])
+    service = GenerationService(db, provider)
+    job = service.generate(
+        owner.id, campaign.id, campaign.initial_branch_id, "Look",
+        idempotency_key="narration-event-boundary", expected_checkpoint_id=head.checkpoint_id,
+        execute=False,
+    )
+    entered = threading.Event()
+    release = threading.Event()
+
+    def after_completion(_job_id):
+        entered.set()
+        assert release.wait(5), "narration completion barrier timed out"
+
+    monkeypatch.setattr(service, "_after_narration_completion", after_completion)
+    worker = threading.Thread(target=lambda: service.run(job["id"]), daemon=True)
+    db_path = db.execute("PRAGMA database_list").fetchone()[2]
+    other = connect(db_path)
+    try:
+        worker.start()
+        assert entered.wait(3)
+        completed_before = db.execute(
+            "SELECT id FROM generation_events WHERE generation_job_id=? AND stage='narration' AND event_type='completed' ORDER BY id DESC LIMIT 1",
+            (job["id"],),
+        ).fetchone()
+        assert completed_before is not None
+        competing = GenerationService(other, FakeProvider([]))
+        competing.cancel(owner.id, job["id"])
+        state = db.execute("SELECT cancel_requested,status FROM generation_jobs WHERE id=?", (job["id"],)).fetchone()
+        assert state["cancel_requested"] == 1
+        assert state["status"] == "cancelled"
+        cancelled_event = db.execute(
+            "SELECT id FROM generation_events WHERE generation_job_id=? AND event_type='cancelled' ORDER BY id DESC LIMIT 1",
+            (job["id"],),
+        ).fetchone()
+        if cancelled_event is not None:
+            assert completed_before["id"] < cancelled_event["id"]
+        before_release = db.execute("SELECT COUNT(*) FROM generation_events WHERE generation_job_id=?", (job["id"],)).fetchone()[0]
+        release.set()
+        worker.join(3)
+        assert not worker.is_alive()
+        late_events = db.execute("SELECT event_type FROM generation_events WHERE generation_job_id=? ORDER BY id", (job["id"],)).fetchall()[before_release:]
+        assert "completed" not in [row[0] for row in late_events]
+    finally:
+        release.set()
+        worker.join(3)
+        other.close()
 
 
 def test_fractional_paid_cap_rejects_before_first_provider_call(tmp_path):
