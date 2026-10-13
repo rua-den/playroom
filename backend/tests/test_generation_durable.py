@@ -349,14 +349,14 @@ class _BlockingDirector(ProviderAdapter):
         return ProviderFailure("CANCELLED", "blocked fixture released")
 
 
-class _QualityHTTPDisconnectProvider(ProviderAdapter):
-    def __init__(self, *, gate_narrator=False):
-        self.gate_narrator = gate_narrator
+class _QualitySSEPhaseProvider(ProviderAdapter):
+    def __init__(self, phase):
+        self.phase = phase
         self.director_started = threading.Event()
-        self.director_done = threading.Event()
+        self.director_release = threading.Event()
         self.narrator_started = threading.Event()
-        self.allow_narrator = threading.Event()
-        self.release = threading.Event()
+        self.narrator_delta = threading.Event()
+        self.narrator_release = threading.Event()
         self.director_calls = 0
         self.narrator_calls = 0
 
@@ -366,6 +366,8 @@ class _QualityHTTPDisconnectProvider(ProviderAdapter):
     def generate_structured(self, request, schema):
         self.director_calls += 1
         self.director_started.set()
+        if self.phase in {"director", "after_director"}:
+            assert self.director_release.wait(5), "director barrier timed out"
         payload = json.loads(request["messages"][1]["content"])
         value = {
             "checkpoint_id": payload["checkpoint_id"],
@@ -376,22 +378,29 @@ class _QualityHTTPDisconnectProvider(ProviderAdapter):
             "scene_ids": payload["candidate_pool"]["scene_ids"],
             "conflict_flags": [],
         }
-        self.director_done.set()
         return ProviderResult(text=json.dumps(value), usage={"input_tokens": 5, "output_tokens": 5, "total_tokens": 10})
 
     def generate_text(self, request):
         self.narrator_calls += 1
         self.narrator_started.set()
-        if self.gate_narrator:
-            self.allow_narrator.wait(5)
-        self.release.wait(5)
+        yield "quality delta"
+        self.narrator_delta.set()
+        assert self.narrator_release.wait(5), "narration barrier timed out"
         yield ProviderResult(text="quality result", usage={"input_tokens": 5, "output_tokens": 5, "total_tokens": 10}, finish_reason="stop")
 
 
-def _http_disconnect_quality_stream(client, job_id):
-    with client.stream("GET", f"/api/generation/jobs/{job_id}/events/stream") as stream:
-        assert stream.status_code == 200
-        assert next(stream.iter_lines())
+def _read_sse_frame(connection, job_id, cookie):
+    connection.request("GET", f"/api/generation/jobs/{job_id}/events/stream", headers={"Host": "127.0.0.1", "Cookie": cookie})
+    response = connection.getresponse()
+    assert response.status == 200
+    frame = []
+    while True:
+        line = response.fp.readline()
+        assert line, "SSE stream closed before a complete frame"
+        frame.append(line)
+        if line == b"\n" or line == b"\r\n":
+            break
+    return response, b"".join(frame)
 
 
 def _wait_candidate(client, job_id):
@@ -404,70 +413,109 @@ def _wait_candidate(client, job_id):
     return current
 
 
-def test_local_http_quality_sse_disconnect_during_director_does_not_replay(tmp_path):
-    database = tmp_path / "quality-director-disconnect.sqlite3"
+@pytest.mark.parametrize("phase", ["director", "after_director", "narration"])
+def test_quality_sse_disconnect(phase, tmp_path):
+    database = tmp_path / f"quality-{phase}-disconnect.sqlite3"
     db = connect(database)
     migrate(db)
-    owner = create_owner(db, "quality-director@example.test", "durable password")
-    campaign = create_campaign(db, owner.id, "Quality director", {"name": "World"}, [], {"name": "Player"})
-    provider = _QualityHTTPDisconnectProvider(gate_narrator=True)
-    app = create_app(database_url=str(database), allowed_hosts={"testserver"}, secure_cookies=False, generation_provider=provider, credential_root=tmp_path / "secrets")
-    with TestClient(app, base_url="https://testserver") as client:
-        _http_login(client, owner)
+    owner = create_owner(db, f"quality-{phase}@example.test", "durable password")
+    campaign = create_campaign(db, owner.id, f"Quality {phase}", {"name": "World"}, [], {"name": "Player"})
+    provider = _QualitySSEPhaseProvider(phase)
+    app = create_app(database_url=str(database), allowed_hosts={"127.0.0.1"}, secure_cookies=False, generation_provider=provider, credential_root=tmp_path / "secrets")
+    server, server_thread, port = _start_local_http(app)
+    stream = None
+    try:
+        login = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+        status, headers, _ = _http_request(login, "POST", "/api/auth/login", body={"email": owner.email, "password": "durable password"})
+        assert status == 200
+        cookie = next(value.split(";", 1)[0] for key, value in headers if key.casefold() == "set-cookie")
+        login.close()
         head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
-        response = client.post(f"/api/campaigns/{campaign.id}/generate", json={"branch_id": campaign.initial_branch_id, "action": "Look", "idempotency_key": "quality-disconnect-director", "checkpoint_id": head.checkpoint_id, "mode": "quality"}, headers={"origin": "https://testserver"})
-        assert response.status_code == 201
-        job_id = response.json()["id"]
-        assert provider.director_started.wait(2)
-        _http_disconnect_quality_stream(client, job_id)
-        provider.allow_narrator.set()
-        provider.release.set()
-        assert _wait_candidate(client, job_id)["status"] == "candidate", client.get(f"/api/generation/jobs/{job_id}").text
-        assert (provider.director_calls, provider.narrator_calls) == (1, 1)
+        submit = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+        status, _, created = _http_request(submit, "POST", f"/api/campaigns/{campaign.id}/generate", cookie=cookie, body={"branch_id": campaign.initial_branch_id, "action": "Look", "idempotency_key": f"quality-disconnect-{phase}", "checkpoint_id": head.checkpoint_id, "mode": "quality"})
+        submit.close()
+        assert status == 201
+        job_id = created["id"]
+        runtime_service = app.state.generation_runtime.service
+        if phase == "after_director":
+            factory_entered = threading.Event()
+            original_factory = runtime_service._provider_for_or_failure
 
+            def held_factory(job, stage, profile):
+                if stage == "narration":
+                    factory_entered.set()
+                    assert provider.narrator_release.wait(5), "after-director barrier timed out"
+                return original_factory(job, stage, profile)
 
-def test_local_http_quality_sse_disconnect_after_director_completion_does_not_replay(tmp_path):
-    database = tmp_path / "quality-after-director-disconnect.sqlite3"
-    db = connect(database)
-    migrate(db)
-    owner = create_owner(db, "quality-after@example.test", "durable password")
-    campaign = create_campaign(db, owner.id, "Quality after", {"name": "World"}, [], {"name": "Player"})
-    provider = _QualityHTTPDisconnectProvider(gate_narrator=True)
-    app = create_app(database_url=str(database), allowed_hosts={"testserver"}, secure_cookies=False, generation_provider=provider, credential_root=tmp_path / "secrets")
-    with TestClient(app, base_url="https://testserver") as client:
-        _http_login(client, owner)
-        head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
-        response = client.post(f"/api/campaigns/{campaign.id}/generate", json={"branch_id": campaign.initial_branch_id, "action": "Look", "idempotency_key": "quality-disconnect-after-director", "checkpoint_id": head.checkpoint_id, "mode": "quality"}, headers={"origin": "https://testserver"})
-        assert response.status_code == 201
-        job_id = response.json()["id"]
-        assert provider.director_done.wait(2)
-        assert provider.narrator_started.wait(2)
-        _http_disconnect_quality_stream(client, job_id)
-        provider.allow_narrator.set()
-        provider.release.set()
-        assert _wait_candidate(client, job_id)["status"] == "candidate"
-        assert (provider.director_calls, provider.narrator_calls) == (1, 1)
-
-
-def test_local_http_quality_sse_disconnect_during_narration_does_not_replay(tmp_path):
-    database = tmp_path / "quality-narration-disconnect.sqlite3"
-    db = connect(database)
-    migrate(db)
-    owner = create_owner(db, "quality-narration@example.test", "durable password")
-    campaign = create_campaign(db, owner.id, "Quality narration", {"name": "World"}, [], {"name": "Player"})
-    provider = _QualityHTTPDisconnectProvider()
-    app = create_app(database_url=str(database), allowed_hosts={"testserver"}, secure_cookies=False, generation_provider=provider, credential_root=tmp_path / "secrets")
-    with TestClient(app, base_url="https://testserver") as client:
-        _http_login(client, owner)
-        head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
-        response = client.post(f"/api/campaigns/{campaign.id}/generate", json={"branch_id": campaign.initial_branch_id, "action": "Look", "idempotency_key": "quality-disconnect-narration", "checkpoint_id": head.checkpoint_id, "mode": "quality"}, headers={"origin": "https://testserver"})
-        assert response.status_code == 201
-        job_id = response.json()["id"]
-        assert provider.narrator_started.wait(2)
-        _http_disconnect_quality_stream(client, job_id)
-        provider.release.set()
-        assert _wait_candidate(client, job_id)["status"] == "candidate"
-        assert (provider.director_calls, provider.narrator_calls) == (1, 1)
+            runtime_service._provider_for_or_failure = held_factory
+        if phase == "director":
+            assert provider.director_started.wait(3)
+            director_status = db.execute("SELECT status FROM provider_attempts WHERE generation_job_id=? AND stage='context'", (job_id,)).fetchone()[0]
+            assert director_status == "dispatched"
+        elif phase == "after_director":
+            assert provider.director_started.wait(3)
+            director_status = db.execute("SELECT status FROM provider_attempts WHERE generation_job_id=? AND stage='context'", (job_id,)).fetchone()[0]
+            assert director_status == "dispatched"
+            provider.director_release.set()
+            assert factory_entered.wait(3)
+            context_status = db.execute("SELECT status FROM provider_attempts WHERE generation_job_id=? AND stage='context'", (job_id,)).fetchone()[0]
+            assert context_status == "completed"
+            narrator_status = db.execute("SELECT status FROM provider_attempts WHERE generation_job_id=? AND stage='narration'", (job_id,)).fetchone()[0]
+            assert narrator_status == "claimed"
+            assert provider.narrator_calls == 0
+        else:
+            assert provider.narrator_delta.wait(3)
+            context_status = db.execute("SELECT status FROM provider_attempts WHERE generation_job_id=? AND stage='context'", (job_id,)).fetchone()[0]
+            assert context_status == "completed"
+            narration_status = None
+            for _ in range(30):
+                narration_status = db.execute("SELECT status,output_text FROM provider_attempts WHERE generation_job_id=? AND stage='narration'", (job_id,)).fetchone()
+                if narration_status["output_text"] == "quality delta":
+                    break
+                time.sleep(0.01)
+            assert narration_status["status"] == "dispatched"
+            assert narration_status["output_text"] == "quality delta"
+        stream = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+        response, frame = _read_sse_frame(stream, job_id, cookie)
+        assert frame
+        response.close()
+        stream.close()
+        stream = None
+        if phase == "director":
+            provider.director_release.set()
+            provider.narrator_release.set()
+        elif phase == "after_director":
+            provider.narrator_release.set()
+        else:
+            provider.narrator_release.set()
+        current = None
+        for _ in range(100):
+            poll = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+            status, _, current = _http_request(poll, "GET", f"/api/generation/jobs/{job_id}", cookie=cookie)
+            poll.close()
+            if status == 200 and current["status"] == "candidate":
+                break
+            time.sleep(0.05)
+        assert current and current["status"] == "candidate"
+        by_key = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+        status, _, recovered = _http_request(by_key, "GET", f"/api/generation/jobs/by-key?branch_id={campaign.initial_branch_id}&idempotency_key=quality-disconnect-{phase}", cookie=cookie)
+        by_key.close()
+        assert status == 200 and recovered["id"] == job_id
+        events_connection = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+        status, _, events = _http_request(events_connection, "GET", f"/api/generation/jobs/{job_id}/events", cookie=cookie)
+        events_connection.close()
+        assert status == 200 and events["events"]
+        assert provider.director_calls == 1
+        assert provider.narrator_calls == 1
+        assert db.execute("SELECT COUNT(*) FROM context_runs WHERE generation_job_id=?", (job_id,)).fetchone()[0] == 1
+        assert db.execute("SELECT COUNT(*) FROM provider_attempts WHERE generation_job_id=? AND stage='context'", (job_id,)).fetchone()[0] == 1
+        assert db.execute("SELECT COUNT(*) FROM provider_attempts WHERE generation_job_id=? AND stage='narration'", (job_id,)).fetchone()[0] == 1
+    finally:
+        if stream is not None:
+            stream.close()
+        provider.director_release.set()
+        provider.narrator_release.set()
+        _stop_local_http(server, server_thread)
 
 
 def test_http_cancel_signals_the_runtime_attempt_and_retains_physical_work(tmp_path):
