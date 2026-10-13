@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from ..credentials import CredentialStore
 from ..domain import Owner, ValidationError
 from ..db import request_connection
-from ..model_profiles import get_model_profile, list_model_profiles, persist_model_profile, OpenRouterVerifier, profile_hash
+from ..model_profiles import get_model_profile, list_model_profiles, persist_model_profile, OpenRouterVerifier, OllamaCloudVerifier, OLLAMA_CLOUD_ENDPOINT, OLLAMA_CLOUD_MODEL, profile_hash
 from ..settings import get_owner_settings, save_owner_settings
 from .auth import require_owner
 
@@ -20,10 +20,11 @@ class CredentialRequest(BaseModel):
 
 
 class VerifyProfileRequest(BaseModel):
+    provider: str = Field(default="openrouter", min_length=1, max_length=64)
     credential_id: str = Field(min_length=1, max_length=128)
     model: str = Field(min_length=3, max_length=256)
-    endpoint: str = Field(min_length=1, max_length=512)
-    provider_tag: str = Field(min_length=1, max_length=256)
+    endpoint: str = Field(default="https://openrouter.ai/api/v1/chat/completions", min_length=1, max_length=512)
+    provider_tag: str | None = Field(default=None, max_length=256)
 
 
 class SettingsRequest(BaseModel):
@@ -66,9 +67,16 @@ def profiles(connection: sqlite3.Connection = Depends(request_connection), owner
 @router.post("/profiles/verify", status_code=201)
 def verify_profile(payload: VerifyProfileRequest, request: Request, connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
     try:
+        if payload.provider not in {"openrouter", "ollama"}:
+            raise ValidationError("Unknown provider")
         secret = _store(request).get(owner.id, payload.credential_id)
-        verifier = request.app.state.provider_verifier
-        snapshot = verifier.verify(secret, payload.model, payload.endpoint, provider_tag=payload.provider_tag)
+        if payload.provider == "ollama":
+            verifier = OllamaCloudVerifier()
+            endpoint, model = OLLAMA_CLOUD_ENDPOINT, OLLAMA_CLOUD_MODEL
+        else:
+            verifier = request.app.state.provider_verifier
+            endpoint, model = payload.endpoint, payload.model
+        snapshot = verifier.verify(secret, model, endpoint, provider_tag=payload.provider_tag)
         snapshot["secret_version"] = payload.credential_id
         return persist_model_profile(connection, owner.id, snapshot)
     except ValidationError:

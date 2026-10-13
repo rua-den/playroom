@@ -12,6 +12,7 @@ from playroom.db import connect, migrate
 from playroom.domain import NotFound
 from playroom.memory import set_retrieval_policy
 from playroom.projections import get_campaign_projection, list_owned_generation_jobs
+from playroom.timeline import create_committed_revision
 
 
 def _story(tmp_path):
@@ -59,6 +60,17 @@ def test_projection_exposes_checkpoint_retrieval_policy(tmp_path):
     set_retrieval_policy(db, campaign.id, branch, "disabled", expected_state_version=1)
     projection = get_campaign_projection(db, owner.id, campaign.id, branch)
     assert projection["checkpoint"]["retrieval_policy"] == "disabled"
+    db.close()
+
+
+def test_projection_exposes_additive_roleplay_segments_and_legacy_rows_are_unattributed(tmp_path):
+    db, owner, campaign = _story(tmp_path)
+    branch = campaign.initial_branch_id
+    expected = db.execute("SELECT state_version FROM branches WHERE id=?", (branch,)).fetchone()[0]
+    create_committed_revision(db, campaign.id, branch, "Xin chào **vẫy tay**", "Chào bạn", expected_state_version=expected, output_segments=[{"kind": "dialogue", "text": "Chào bạn", "character_id": "npc-1", "profile_version_id": "profile-npc-v1"}])
+    projection = get_campaign_projection(db, owner.id, campaign.id, branch)
+    assert projection["transcript"][0]["input_segments"][1]["kind"] == "action"
+    assert projection["transcript"][0]["output_segments"][0]["character_id"] == "npc-1"
     db.close()
 
 

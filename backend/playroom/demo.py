@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import ipaddress
-import json
 import secrets
 from dataclasses import dataclass
 from pathlib import Path
@@ -42,23 +41,7 @@ class DemoFakeProvider(FakeProvider):
         self.calls.append({key: value for key, value in request.items() if key != "cancel_event"})
         stage = str(request.get("stage", "narration"))
         self.stage_counts[stage] = self.stage_counts.get(stage, 0) + 1
-        action = request.get("action")
-        for message in reversed(request.get("messages") or []):
-            if action or message.get("role") != "user":
-                continue
-            content = message.get("content")
-            if isinstance(content, dict):
-                action = content.get("action")
-            elif isinstance(content, str):
-                try:
-                    payload = json.loads(content)
-                except json.JSONDecodeError:
-                    payload = None
-                if isinstance(payload, dict):
-                    action = payload.get("action")
-        action = str(action or "Hành động của bạn").strip()
-        action = f"{action.rstrip('.!?')}."
-        text = f"{action} Ánh sáng dịu lan qua căn phòng, và câu chuyện tiếp tục mở ra."
+        text = "Ánh sáng dịu lan qua căn phòng, và câu chuyện tiếp tục mở ra."
         yield text
         yield ProviderResult(text=text, usage={"input_tokens": 24, "output_tokens": len(text.split()), "total_tokens": 24 + len(text.split())}, finish_reason="stop")
 

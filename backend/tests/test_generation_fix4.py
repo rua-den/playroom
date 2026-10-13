@@ -14,13 +14,14 @@ from playroom.context import build_candidate_pool
 from playroom.credentials import CredentialStore
 from playroom.db import connect, migrate
 from playroom.domain import ValidationError
-from playroom.generation import DEFAULT_PROFILE, GenerationService, _ProviderError
+from playroom.generation import DEFAULT_PROFILE, SELECTION_SCHEMA, GenerationService, _ProviderError
 from playroom.memory import append_memory_version
 from playroom.model_profiles import persist_model_profile
 from playroom.provider import FakeProvider, OpenRouterAdapter, ProviderAdapter, ProviderFailure, ProviderResult
 from playroom.wire_cost import canonical_json, declared_count, wire_hash
 from playroom.settings import get_owner_settings, save_owner_settings
 from playroom.timeline import get_branch_head
+from jsonschema import Draft202012Validator
 
 
 def _story(tmp_path):
@@ -29,6 +30,182 @@ def _story(tmp_path):
     owner = create_owner(db, "fix4@example.test", "fix4 password")
     campaign = create_campaign(db, owner.id, "Fix4", {"name": "World"}, [], {"name": "Player"})
     return db, owner, campaign
+
+
+def test_director_selection_schema_requires_selected_characters():
+    plan = {
+        "checkpoint_id": "checkpoint",
+        "action_hash": "action",
+        "selected_memory_ids": [],
+        "reasons": {},
+        "reason_sources": {},
+        "scene_ids": [],
+        "conflict_flags": [],
+        "selected_characters": [],
+    }
+    plan.pop("selected_characters")
+    with pytest.raises(Exception):
+        Draft202012Validator(SELECTION_SCHEMA).validate(plan)
+
+
+def test_narrator_schema_requires_attributed_dialogue_and_selected_cast_guidance(tmp_path):
+    from playroom.generation import NARRATOR_SCHEMA
+
+    invalid = {"segments": [{"kind": "dialogue", "text": "Hello"}]}
+    with pytest.raises(Exception):
+        Draft202012Validator(NARRATOR_SCHEMA).validate(invalid)
+
+    db, owner, campaign = _story(tmp_path)
+    service = GenerationService(db, FakeProvider([]))
+    preview = {"action": "Look", "blocks": [], "selected_characters": [{"character_id": "npc-1", "profile_version_id": "profile-1"}]}
+    _, request, _ = service._narrator_request({}, DEFAULT_PROFILE, preview, {"budgets": {"narrator": {"input_limit": 12000, "requested_output": 100, "wrapper_buffer": 0}}})
+    system = request["messages"][0]["content"]
+    assert "selected_characters" in system
+    assert "stable IDs" in system
+
+
+def test_malformed_unattributed_narrator_output_fails_before_candidate(tmp_path):
+    db, owner, campaign = _story(tmp_path)
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    profile = {**DEFAULT_PROFILE, "is_test_profile": False}
+
+    class MalformedNarrator(FakeProvider):
+        def generate_text(self, request):
+            yield ProviderResult(text="This is plain output", usage={"input_tokens": 1, "output_tokens": 2, "total_tokens": 3})
+
+    service = GenerationService(db, MalformedNarrator([]), profile={"roles": {"context": profile, "narrator": profile}})
+    job = service.generate(owner.id, campaign.id, campaign.initial_branch_id, "Look", idempotency_key="malformed-narrator", expected_checkpoint_id=head.checkpoint_id, mode="economy")
+    assert job["status"] == "failed"
+    assert job["status"] != "candidate"
+    assert job["cost_ledger"]["stages"]["narration"]["usage"]["total_tokens"] == 3
+
+
+def test_missing_director_cast_selection_fails_before_narrator(tmp_path):
+    db, owner, campaign = _story(tmp_path)
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    profile = {**DEFAULT_PROFILE, "is_test_profile": False}
+
+    class MissingCast(FakeProvider):
+        def __init__(self):
+            super().__init__([])
+            self.narrator_calls = 0
+
+        def generate_structured(self, request, schema):
+            return ProviderResult(text=json.dumps({
+                "checkpoint_id": request["checkpoint_id"], "action_hash": request["action_hash"],
+                "selected_memory_ids": [], "reasons": {}, "reason_sources": {},
+                "scene_ids": request["candidate_pool"]["scene_ids"], "conflict_flags": [],
+            }))
+
+        def generate_text(self, request):
+            self.narrator_calls += 1
+            yield ProviderResult(text=json.dumps({"segments": [{"kind": "narration", "text": "never"}]}))
+
+    provider = MissingCast()
+    service = GenerationService(db, provider, profile={"roles": {"context": profile, "narrator": profile}})
+    job = service.generate(owner.id, campaign.id, campaign.initial_branch_id, "Look", idempotency_key="missing-cast", expected_checkpoint_id=head.checkpoint_id, mode="quality")
+    assert job["status"] == "failed"
+    assert job["failure"]["code"] in {"PROVIDER_ERROR", "SCHEMA_INVALID"}
+    assert provider.narrator_calls == 0
+
+
+def test_structured_narrator_is_normalized_before_public_draft(tmp_path):
+    db, owner, campaign = _story(tmp_path)
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    profile = {**DEFAULT_PROFILE, "is_test_profile": False}
+    payload = json.dumps({"segments": [{"kind": "narration", "text": "The door opens."}]})
+
+    class StructuredNarrator(FakeProvider):
+        def generate_text(self, request):
+            yield payload[:18]
+            yield payload[18:]
+            yield ProviderResult(text=payload, usage={"input_tokens": 2, "output_tokens": 3, "total_tokens": 5})
+
+    service = GenerationService(db, StructuredNarrator([]), profile={"roles": {"context": profile, "narrator": profile}})
+    job = service.generate(owner.id, campaign.id, campaign.initial_branch_id, "Look", idempotency_key="structured-display", expected_checkpoint_id=head.checkpoint_id)
+    assert job["status"] == "candidate"
+    assert job["draft"] == "The door opens."
+    assert job["output_segments"] == [{"kind": "narration", "text": "The door opens."}]
+    assert all("segments" not in event["content"] for event in service.events(owner.id, job["id"]))
+
+
+def test_production_narrator_without_native_structured_capability_uses_prompt_json(tmp_path):
+    db, owner, campaign = _story(tmp_path)
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    profile = {**DEFAULT_PROFILE, "is_test_profile": False, "structured_output": False, "native_structured_output": False}
+    payload = json.dumps({"segments": [{"kind": "narration", "text": "JSON fallback works."}]})
+
+    class JsonFallback(FakeProvider):
+        def generate_text(self, request):
+            assert "schema" not in request
+            yield ProviderResult(text=payload, usage={"input_tokens": 1, "output_tokens": 2, "total_tokens": 3})
+
+    service = GenerationService(db, JsonFallback([]), profile={"roles": {"context": profile, "narrator": profile}})
+    job = service.generate(owner.id, campaign.id, campaign.initial_branch_id, "Look", idempotency_key="json-fallback", expected_checkpoint_id=head.checkpoint_id)
+    assert job["status"] == "candidate"
+    assert job["draft"] == "JSON fallback works."
+
+
+def test_structured_stream_keeps_raw_attempt_private_and_emits_safe_progress(tmp_path):
+    db, owner, campaign = _story(tmp_path)
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    profile = {**DEFAULT_PROFILE, "is_test_profile": False}
+    payload = json.dumps({"segments": [{"kind": "narration", "text": "Private stream."}]})
+
+    class Chunked(FakeProvider):
+        def generate_text(self, request):
+            yield payload[:10]
+            yield payload[10:]
+            yield ProviderResult(text=payload, usage={"input_tokens": 1, "output_tokens": 2, "total_tokens": 3})
+
+    service = GenerationService(db, Chunked([]), profile={"roles": {"context": profile, "narrator": profile}})
+    job = service.generate(owner.id, campaign.id, campaign.initial_branch_id, "Look", idempotency_key="private-stream", expected_checkpoint_id=head.checkpoint_id)
+    assert job["status"] == "candidate"
+    assert job["draft"] == "Private stream."
+    attempt = db.execute("SELECT output_text FROM provider_attempts WHERE generation_job_id=? AND stage='narration'", (job["id"],)).fetchone()
+    assert attempt["output_text"] == payload
+    assert payload not in json.dumps(job["attempt_details"], ensure_ascii=False)
+    events = service.events(owner.id, job["id"])
+    assert any(event["event_type"] == "delta" and event["content"] == "Đang xử lý…" for event in events)
+    assert all("segments" not in event["content"] for event in events)
+
+
+def test_narrator_schema_is_sent_only_with_verified_native_capability(tmp_path):
+    db, owner, campaign = _story(tmp_path)
+    service = GenerationService(db, FakeProvider([]))
+    preview = {"action": "Look", "blocks": [], "selected_characters": []}
+    base = {"budgets": {"narrator": {"input_limit": 12000, "requested_output": 100, "wrapper_buffer": 0}}}
+    unsupported = {**DEFAULT_PROFILE, "is_test_profile": False, "structured_output": True, "native_structured_output": False}
+    _, request, _ = service._narrator_request({}, unsupported, preview, base)
+    assert "schema" not in request
+    supported = {**unsupported, "native_structured_output": True, "structured_schema_parameter": "response_format", "supported_parameters": ["response_format"]}
+    _, request, _ = service._narrator_request({}, supported, preview, base)
+    assert request["schema"]["required"] == ["segments"]
+
+
+def test_narrator_validates_against_filtered_preview_cast_not_stale_job_preview(tmp_path):
+    db, owner, campaign = _story(tmp_path)
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    profile = {**DEFAULT_PROFILE, "is_test_profile": False}
+    payload = json.dumps({"segments": [{"kind": "dialogue", "text": "I am B", "character_id": "npc-b", "profile_version_id": "profile-b"}]})
+
+    class WrongSpeaker(FakeProvider):
+        def generate_text(self, request):
+            yield ProviderResult(text=payload, usage={"input_tokens": 1, "output_tokens": 2, "total_tokens": 3})
+
+    service = GenerationService(db, WrongSpeaker([]), profile={"roles": {"context": profile, "narrator": profile}})
+    queued = service.generate(owner.id, campaign.id, campaign.initial_branch_id, "Look", idempotency_key="filtered-cast", expected_checkpoint_id=head.checkpoint_id, execute=False)
+    db.execute("UPDATE generation_jobs SET status='running' WHERE id=?", (queued["id"],))
+    stale = json.loads(queued["preview_snapshot_json"])
+    stale["selected_characters"] = [{"character_id": "npc-b", "profile_version_id": "profile-b"}]
+    db.execute("UPDATE generation_jobs SET preview_snapshot_json=? WHERE id=?", (json.dumps(stale), queued["id"]))
+    filtered = dict(stale)
+    filtered["selected_characters"] = [{"character_id": "npc-a", "profile_version_id": "profile-a"}]
+    row = db.execute("SELECT * FROM generation_jobs WHERE id=?", (queued["id"],)).fetchone()
+    with pytest.raises(_ProviderError) as error:
+        service._narrate(row, profile, filtered)
+    assert error.value.failure.code == "SCHEMA_INVALID"
+    assert service.get_job(owner.id, queued["id"])["status"] != "candidate"
 
 
 def test_role_budgets_are_immutable_settings_and_validate_against_profile(tmp_path):
@@ -209,15 +386,30 @@ def test_director_omission_reasons_are_counted_in_final_wire_trim(tmp_path):
     assert request["prepared_wire"]["messages"][1]["content"].find("omission_reasons") >= 0
 
 
+def test_director_wire_and_narrator_wire_carry_the_selected_cast_subset(tmp_path):
+    db, owner, campaign = _story(tmp_path)
+    service = GenerationService(db, FakeProvider([]), profile={"roles": {"context": DEFAULT_PROFILE, "narrator": DEFAULT_PROFILE}})
+    cast = [{"character_id": "npc-1", "profile_version_id": "profile-npc-v4", "present": True}]
+    pool = {"checkpoint_id": "checkpoint", "action_hash": "action-hash", "mandatory": [], "scene_ids": [], "omission_reasons": [], "recent_context": [], "optional": [], "selected_characters": cast}
+    request, _, _, _ = service._director_request({"action": "Continue"}, pool, DEFAULT_PROFILE, {"budgets": {"context": {"input_limit": 12000, "requested_output": 100, "wrapper_buffer": 0}}})
+    director_payload = json.loads(request["messages"][1]["content"])
+    assert director_payload["candidate_pool"]["selected_characters"] == cast
+    preview = {"action": "Continue", "blocks": [], "omission_reasons": [], "selected_characters": cast}
+    _, narrator_request, _ = service._narrator_request({}, DEFAULT_PROFILE, preview, {"budgets": {"narrator": {"input_limit": 12000, "requested_output": 100, "wrapper_buffer": 0}}})
+    narrator_payload = json.loads(narrator_request["messages"][1]["content"])
+    assert narrator_payload["selected_characters"] == cast
+
+
 def test_quality_uses_actual_persisted_wire_and_cost_ledger(tmp_path):
     db, owner, campaign = _story(tmp_path)
     head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
-    plan = {"checkpoint_id": head.checkpoint_id, "action_hash": "", "selected_memory_ids": [], "reasons": {}, "reason_sources": {}, "scene_ids": [], "conflict_flags": []}
+    plan = {"checkpoint_id": head.checkpoint_id, "action_hash": "", "selected_memory_ids": [], "reasons": {}, "reason_sources": {}, "scene_ids": [], "conflict_flags": [], "selected_characters": []}
     profile = {
         **DEFAULT_PROFILE,
         "id": "paid-test",
         "credential_tier": "paid",
         "is_test_profile": False,
+        "legacy_plain_output": True,
         "pricing": {"prompt": "0.000001", "completion": "0.000002"},
         "input_limit": 12000,
         "context_limit": 16512,
@@ -271,7 +463,7 @@ def test_quality_uses_actual_persisted_wire_and_cost_ledger(tmp_path):
 def test_same_profile_id_keeps_role_version_identity(mode, context_version, narrator_version, expected_stages, tmp_path):
     db, owner, campaign = _story(tmp_path)
     head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
-    base = {**DEFAULT_PROFILE, "id": "shared-role", "is_test_profile": False}
+    base = {**DEFAULT_PROFILE, "id": "shared-role", "is_test_profile": False, "legacy_plain_output": True}
     persisted = {
         version: persist_model_profile(db, owner.id, {**base, "model": f"author/shared-v{version}"})
         for version in (1, 2)
@@ -295,7 +487,7 @@ def test_same_profile_id_keeps_role_version_identity(mode, context_version, narr
     class RoleProvider(FakeProvider):
         def generate_structured(self, request, schema):
             pool = build_candidate_pool(db, campaign.id, campaign.initial_branch_id, "Look", checkpoint_id=head.checkpoint_id, owner_id=owner.id)
-            plan = {"checkpoint_id": pool["checkpoint_id"], "action_hash": request["action_hash"], "selected_memory_ids": [], "reasons": {}, "reason_sources": {}, "scene_ids": pool["scene_ids"], "conflict_flags": []}
+            plan = {"checkpoint_id": pool["checkpoint_id"], "action_hash": request["action_hash"], "selected_memory_ids": [], "reasons": {}, "reason_sources": {}, "scene_ids": pool["scene_ids"], "conflict_flags": [], "selected_characters": []}
             return ProviderResult(text=json.dumps(plan), usage={"input_tokens": 1, "output_tokens": 1, "total_tokens": 2})
 
         def generate_text(self, request):
@@ -335,7 +527,7 @@ def test_openrouter_adapter_wire_matches_persisted_quality_attempts(tmp_path):
         "id": "wire-profile", "provider": "openrouter", "endpoint": "https://wire.test/chat",
         "model": "author/wire", "provider_tag": "exact", "supported_parameters": ["max_tokens", "response_format"],
         "native_structured_output": True, "structured_output": True, "structured_schema_parameter": "response_format",
-        "output_parameter": "max_tokens", "is_test_profile": False,
+            "output_parameter": "max_tokens", "is_test_profile": False, "legacy_plain_output": True,
     }
     captured = []
 
@@ -347,7 +539,7 @@ def test_openrouter_adapter_wire_matches_persisted_quality_attempts(tmp_path):
             body_value = {
                 "checkpoint_id": wire["checkpoint_id"], "action_hash": wire["action_hash"],
                 "selected_memory_ids": [], "reasons": {}, "reason_sources": {},
-                "scene_ids": wire["candidate_pool"]["scene_ids"], "conflict_flags": [],
+                "scene_ids": wire["candidate_pool"]["scene_ids"], "conflict_flags": [], "selected_characters": [],
             }
             content = json.dumps(body_value, separators=(",", ":"))
         else:
@@ -382,7 +574,7 @@ def test_queued_job_keeps_profile_and_wire_snapshot_after_settings_change(tmp_pa
         **DEFAULT_PROFILE, "id": "queued-role", "provider": "openrouter",
         "endpoint": "https://queued.test/chat", "model": "author/queued-v1",
         "provider_tag": "exact", "supported_parameters": ["max_tokens"], "output_parameter": "max_tokens",
-        "is_test_profile": False,
+            "is_test_profile": False, "legacy_plain_output": True,
     })
     profile_v2 = persist_model_profile(db, owner.id, {**profile_v1, "model": "author/queued-v2"})
     settings_v1 = save_owner_settings(db, owner.id, {
@@ -444,7 +636,7 @@ def test_revoked_pinned_credential_opens_zero_http_streams(tmp_path):
     profile = {
         **DEFAULT_PROFILE, "id": "revoked-wire", "provider": "openrouter", "endpoint": "https://wire.test/chat",
         "model": "author/wire", "provider_tag": "exact", "supported_parameters": ["max_tokens"],
-        "output_parameter": "max_tokens", "is_test_profile": False, "secret_version": credential.id,
+        "output_parameter": "max_tokens", "is_test_profile": False, "legacy_plain_output": True, "secret_version": credential.id,
     }
     store.revoke(owner.id, credential.id)
     streams = []
@@ -513,7 +705,7 @@ def test_post_director_pack_failure_terminalizes_attempt_and_usage(tmp_path, mon
     db, owner, campaign = _story(tmp_path)
     head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
     pool = build_candidate_pool(db, campaign.id, campaign.initial_branch_id, "Look", checkpoint_id=head.checkpoint_id, owner_id=owner.id)
-    plan = {"checkpoint_id": pool["checkpoint_id"], "action_hash": pool["action_hash"], "selected_memory_ids": [], "reasons": {}, "reason_sources": {}, "scene_ids": pool["scene_ids"], "conflict_flags": []}
+    plan = {"checkpoint_id": pool["checkpoint_id"], "action_hash": pool["action_hash"], "selected_memory_ids": [], "reasons": {}, "reason_sources": {}, "scene_ids": pool["scene_ids"], "conflict_flags": [], "selected_characters": []}
     director_text = json.dumps({**plan, "action_hash": pool["action_hash"]})
 
     class DirectorOnly(FakeProvider):
@@ -548,7 +740,7 @@ def test_old_director_result_cannot_write_after_transition(tmp_path, monkeypatch
         "checkpoint_id": head.checkpoint_id,
         "action_hash": pool["action_hash"],
         "selected_memory_ids": [], "reasons": {}, "reason_sources": {},
-        "scene_ids": pool["scene_ids"], "conflict_flags": [],
+        "scene_ids": pool["scene_ids"], "conflict_flags": [], "selected_characters": [],
     }
     provider = FakeProvider([json.dumps(selection), "must not narrate"])
     service = GenerationService(db, provider)
@@ -627,7 +819,7 @@ def test_old_director_result_cannot_write_after_status_transition(tmp_path, monk
         "checkpoint_id": head.checkpoint_id,
         "action_hash": pool["action_hash"],
         "selected_memory_ids": [], "reasons": {}, "reason_sources": {},
-        "scene_ids": pool["scene_ids"], "conflict_flags": [],
+        "scene_ids": pool["scene_ids"], "conflict_flags": [], "selected_characters": [],
     }
     provider = FakeProvider([json.dumps(selection), "must not narrate"])
     service = GenerationService(db, provider)
@@ -798,7 +990,7 @@ def test_narration_completion_event_cannot_follow_cancel_after_commit(tmp_path, 
 def test_fractional_paid_cap_rejects_before_first_provider_call(tmp_path):
     db, owner, campaign = _story(tmp_path)
     head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
-    profile = {**DEFAULT_PROFILE, "credential_tier": "paid", "is_test_profile": False, "pricing": {"prompt": "0.000001", "completion": "0.000001"}}
+    profile = {**DEFAULT_PROFILE, "credential_tier": "paid", "is_test_profile": False, "legacy_plain_output": True, "pricing": {"prompt": "0.000001", "completion": "0.000001"}}
 
     class Counting(FakeProvider):
         def __init__(self):
@@ -821,8 +1013,8 @@ def test_director_cost_updates_remaining_allowance_before_narrator(tmp_path, dir
     db, owner, campaign = _story(tmp_path)
     head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
     pool = build_candidate_pool(db, campaign.id, campaign.initial_branch_id, "Look", checkpoint_id=head.checkpoint_id, owner_id=owner.id)
-    plan = {"checkpoint_id": pool["checkpoint_id"], "action_hash": pool["action_hash"], "selected_memory_ids": [], "reasons": {}, "reason_sources": {}, "scene_ids": pool["scene_ids"], "conflict_flags": []}
-    context_profile = {**DEFAULT_PROFILE, "id": "priced-context", "credential_tier": "paid", "is_test_profile": False, "pricing": {"prompt": "0.00000001", "completion": "0.00000001"}}
+    plan = {"checkpoint_id": pool["checkpoint_id"], "action_hash": pool["action_hash"], "selected_memory_ids": [], "reasons": {}, "reason_sources": {}, "scene_ids": pool["scene_ids"], "conflict_flags": [], "selected_characters": []}
+    context_profile = {**DEFAULT_PROFILE, "id": "priced-context", "credential_tier": "paid", "is_test_profile": False, "legacy_plain_output": True, "pricing": {"prompt": "0.00000001", "completion": "0.00000001"}}
     narrator_profile = {**context_profile, "id": "priced-narrator", "pricing": {"prompt": "0.0000001", "completion": "0.0000001"}}
 
     class Provider(FakeProvider):
@@ -866,12 +1058,14 @@ def test_cost_ledger_keeps_provider_billing_separate_from_unknown_usage(tmp_path
         "reason_sources": {},
         "scene_ids": pool["scene_ids"],
         "conflict_flags": [],
+        "selected_characters": [],
     }
     context_profile = {
         **DEFAULT_PROFILE,
         "id": "priced-context",
         "credential_tier": "paid",
         "is_test_profile": False,
+        "legacy_plain_output": True,
         "pricing": {"prompt": "0.000001", "completion": "0.000002"},
         "input_limit": 12000,
         "context_limit": 16512,

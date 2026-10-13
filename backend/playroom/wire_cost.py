@@ -78,17 +78,18 @@ def provider_wire(request: dict, profile: dict, *, schema: dict | None = None) -
         "max_completion_tokens" if "max_completion_tokens" in set(profile.get("supported_parameters", ())) else "max_tokens"
     )
     requested_output = int(request.get("reserved_completion_tokens", request.get("reserved_output_tokens", 0)))
-    provider = {"allow_fallbacks": False, "require_parameters": True}
-    if profile.get("provider_tag"):
-        provider["only"] = [profile["provider_tag"]]
     result = {
         "model": profile.get("model") or request.get("model"),
         "messages": request.get("messages", []),
         "stream": True,
         "stream_options": {"include_usage": True},
         output_parameter: requested_output,
-        "provider": provider,
     }
+    if profile.get("provider") != "ollama":
+        provider = {"allow_fallbacks": False, "require_parameters": True}
+        if profile.get("provider_tag"):
+            provider["only"] = [profile["provider_tag"]]
+        result["provider"] = provider
     if schema is not None:
         result["response_format"] = {
             "type": "json_schema",

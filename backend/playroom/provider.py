@@ -11,6 +11,7 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError as SchemaValidationError
 
 from .wire_cost import provider_wire
+from .model_profiles import OLLAMA_CLOUD_ENDPOINT
 
 
 @dataclass(frozen=True)
@@ -128,7 +129,7 @@ class OpenRouterAdapter(ProviderAdapter):
     def __init__(self, api_key: str, endpoint: str, *, profile: dict | None = None, http_client: httpx.Client | None = None):
         if not api_key or not endpoint.startswith("https://"):
             raise ValueError("OpenRouter requires HTTPS and a key")
-        if not profile or not profile.get("id") or not profile.get("version") or not profile.get("profile_hash") or not profile.get("provider_tag"):
+        if not profile or not profile.get("id") or not profile.get("version") or not profile.get("profile_hash") or (profile.get("provider") != "ollama" and not profile.get("provider_tag")):
             raise ValueError("OpenRouter adapter requires an immutable verified profile")
         if profile and profile.get("endpoint") and profile["endpoint"] != endpoint:
             raise ValueError("OpenRouter endpoint does not match the verified profile")
@@ -178,7 +179,7 @@ class OpenRouterAdapter(ProviderAdapter):
 
     def generate_text(self, request: dict) -> Iterator[str | ProviderResult | ProviderFailure]:
         try:
-            payload = self._payload(request)
+            payload = self._payload(request, request.get("schema"))
         except ValueError as exc:
             yield ProviderFailure("CONFIG_INVALID", str(exc))
             return
@@ -318,8 +319,28 @@ class OpenRouterAdapter(ProviderAdapter):
             yield ProviderResult("".join(text_parts), usage if usage is not None else {"status": "unknown"}, "stop")
 
 
+class OllamaCloudAdapter(OpenRouterAdapter):
+    """Ollama Cloud's OpenAI-compatible narrator endpoint."""
+
+    def __init__(self, api_key: str, endpoint: str, *, profile: dict | None = None, http_client: httpx.Client | None = None):
+        if endpoint != OLLAMA_CLOUD_ENDPOINT:
+            raise ValueError("Ollama Cloud requires its pinned endpoint")
+        if not profile or profile.get("provider") != "ollama":
+            raise ValueError("Ollama Cloud adapter requires an Ollama profile")
+        wire_profile = {**profile, "endpoint": f"{OLLAMA_CLOUD_ENDPOINT}/chat/completions", "provider_tag": None}
+        super().__init__(api_key, wire_profile["endpoint"], profile=wire_profile, http_client=http_client)
+        self.profile["endpoint"] = OLLAMA_CLOUD_ENDPOINT
+
+    def capabilities_for(self, profile: dict) -> ProviderCapabilities:
+        return ProviderCapabilities(f"{OLLAMA_CLOUD_ENDPOINT}/chat/completions", profile["model"], int(profile["context_limit"]), int(profile["output_limit"]), structured_output=bool(profile.get("structured_output")), supported_parameters=tuple(profile.get("supported_parameters", ())), output_parameter=profile.get("output_parameter", "max_tokens"), provider_tag=None)
+
+
 def default_provider_factory(*, owner_id: str, stage: str, profile: dict, credential: str, http_client=None) -> ProviderAdapter:
     """Construct the pinned adapter for one immutable role dispatch."""
+    if profile.get("provider") == "ollama":
+        if stage != "narration":
+            raise ValueError("Ollama Cloud is registered for narrator dispatch only")
+        return OllamaCloudAdapter(credential, OLLAMA_CLOUD_ENDPOINT, profile=profile, http_client=http_client)
     if profile.get("provider") != "openrouter":
         raise ValueError("No production adapter is registered for this provider")
     if not credential:

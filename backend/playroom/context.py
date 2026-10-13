@@ -65,11 +65,29 @@ def _selected_turns(connection: sqlite3.Connection, campaign_id: str, checkpoint
     selected = checkpoint.snapshot.get("selected_revision_ids", [])
     if not selected:
         return []
-    rows = connection.execute("SELECT t.id AS turn_id, t.sequence, t.action_text, tr.id AS revision_id, tr.narrative_text FROM turn_revisions tr JOIN turns t ON t.id = tr.turn_id WHERE t.campaign_id = ? AND tr.id IN (" + ",".join("?" for _ in selected) + ")", (campaign_id, *selected)).fetchall()
+    rows = connection.execute("SELECT t.id AS turn_id, t.sequence, t.action_text, t.input_segments_json, tr.id AS revision_id, tr.narrative_text, tr.output_segments_json FROM turn_revisions tr JOIN turns t ON t.id = tr.turn_id WHERE t.campaign_id = ? AND tr.id IN (" + ",".join("?" for _ in selected) + ")", (campaign_id, *selected)).fetchall()
     by_revision = {row["revision_id"]: row for row in rows}
     if len(by_revision) != len(selected):
         raise ValidationError("Checkpoint transcript contains a missing or foreign revision")
-    return sorted((dict(by_revision[item]) for item in selected), key=lambda row: row["sequence"])
+    result = []
+    for item in selected:
+        row = dict(by_revision[item])
+        row["input_segments"] = json.loads(row["input_segments_json"]) if row.get("input_segments_json") else None
+        row["output_segments"] = json.loads(row["output_segments_json"]) if row.get("output_segments_json") else None
+        result.append(row)
+    return sorted(result, key=lambda row: row["sequence"])
+
+
+def _transcript_text(turn: dict) -> str:
+    if turn.get("input_segments"):
+        player = " ".join(f"{'Action' if segment.get('kind') == 'action' else 'Dialogue'}: {segment.get('text', '')}" for segment in turn["input_segments"])
+    else:
+        player = turn["action_text"]
+    if turn.get("output_segments"):
+        narration = "\n".join((f"{segment.get('character_id')}: {segment.get('text', '')}" if segment.get("kind") == "dialogue" else f"Narration: {segment.get('text', '')}") for segment in turn["output_segments"])
+    else:
+        narration = turn["narrative_text"]
+    return f"Player: {player}\n{narration}"
 
 
 def _rank(record: dict, terms: set[str], relevant_actor_ids: set[str]) -> tuple:
@@ -102,6 +120,10 @@ def build_candidate_pool(connection: sqlite3.Connection, campaign_id: str, branc
             matched_actor_ids.update(profile["key"].partition(":")[2] for profile in profile_blocks if profile["kind"] == "character" and name in [profile["data"].get("name", ""), *profile["data"].get("aliases", [])])
     relevant_profile_ids = scene_ids | matched_actor_ids
     selected_profiles = [profile for profile in profile_blocks if profile["kind"] in {"world", "persona", "style"} or (profile["kind"] == "character" and profile["key"].partition(":")[2] in relevant_profile_ids)]
+    selected_characters = [
+        {"character_id": profile["key"].partition(":")[2], "profile_version_id": profile["id"], "name": profile["data"].get("name", ""), "present": profile["key"].partition(":")[2] in scene_ids}
+        for profile in selected_profiles if profile["kind"] == "character"
+    ]
     records = [_memory_record(item, branch_id) for item in memory_service.list_effective_memory(connection, campaign_id, branch_id, checkpoint.id, owner_id=owner_id)]
     turn_rows = _selected_turns(connection, campaign_id, checkpoint)
     sequence_by_revision = {turn["revision_id"]: turn["sequence"] for turn in turn_rows}
@@ -112,8 +134,8 @@ def build_candidate_pool(connection: sqlite3.Connection, campaign_id: str, branc
     optional.sort(key=lambda item: _rank(item, terms, scene_ids | matched_actor_ids))
     dropped = [{"id": item["id"], "reason": "optional candidate pool limit"} for item in optional[limit:]]
     dropped.extend({"id": memory_id, "reason": "pending memory approval; not eligible for context"} for memory_id in checkpoint.snapshot.get("pending_memory_versions", {}))
-    recent_context = [{"turn_id": turn["turn_id"], "revision_id": turn["revision_id"], "sequence": turn["sequence"], "action": turn["action_text"], "narration": turn["narrative_text"], "source_ids": [turn["turn_id"], turn["revision_id"]]} for turn in turn_rows[-8:]]
-    return {"checkpoint_id": checkpoint.id, "branch_id": branch_id, "action_hash": _canonical_hash(action), "mandatory": mandatory, "optional": optional[:limit], "scene_ids": sorted(scene_values), "scene_cast_ids": sorted(scene_ids), "excluded": dropped, "pool_limit": limit, "omission_reasons": dropped, "recent_context": recent_context}
+    recent_context = [{"turn_id": turn["turn_id"], "revision_id": turn["revision_id"], "sequence": turn["sequence"], "action": turn["action_text"], "narration": turn["narrative_text"], "input_segments": turn.get("input_segments"), "output_segments": turn.get("output_segments"), "text": _transcript_text(turn), "source_ids": [turn["turn_id"], turn["revision_id"]]} for turn in turn_rows[-8:]]
+    return {"checkpoint_id": checkpoint.id, "branch_id": branch_id, "action_hash": _canonical_hash(action), "mandatory": mandatory, "optional": optional[:limit], "scene_ids": sorted(scene_values), "scene_cast_ids": sorted(scene_ids), "selected_characters": selected_characters, "excluded": dropped, "pool_limit": limit, "omission_reasons": dropped, "recent_context": recent_context}
 
 
 def validate_selection_plan(checkpoint_id: str, action_hash: str, pool: dict, plan: dict) -> dict:
@@ -133,6 +155,13 @@ def validate_selection_plan(checkpoint_id: str, action_hash: str, pool: dict, pl
             raise ValidationError("Selection plan cannot select pending or unapproved memory")
         if item.get("branch_id") != pool.get("branch_id"):
             raise ValidationError("Selection plan memory belongs to another branch")
+    selected_characters = plan.get("selected_characters", pool.get("selected_characters", []))
+    allowed_characters = {(item.get("character_id"), item.get("profile_version_id")): item for item in pool.get("selected_characters", [])}
+    if not isinstance(selected_characters, list) or len(selected_characters) > len(allowed_characters):
+        raise ValidationError("Selection plan character cast is malformed")
+    for item in selected_characters:
+        if not isinstance(item, dict) or (item.get("character_id"), item.get("profile_version_id")) not in allowed_characters:
+            raise ValidationError("Selection plan references an unpinned character profile")
     reasons = plan.get("reasons", {})
     if not isinstance(reasons, dict) or set(reasons) - set(ids) or any(not isinstance(reasons.get(memory_id), str) or not reasons[memory_id].strip() or len(reasons[memory_id]) > 180 for memory_id in ids):
         raise ValidationError("Each selected memory needs a short sourced explanation")
@@ -151,7 +180,7 @@ def validate_selection_plan(checkpoint_id: str, action_hash: str, pool: dict, pl
     conflict_flags = plan.get("conflict_flags", [])
     if not isinstance(conflict_flags, list) or any(not isinstance(flag, str) or not flag.strip() or len(flag) > 160 for flag in conflict_flags):
         raise ValidationError("Selection plan conflict flags are malformed")
-    return {"checkpoint_id": checkpoint_id, "action_hash": action_hash, "selected_memory_ids": ids, "reasons": reasons, "reason_sources": reason_sources, "scene_ids": scene_ids, "mandatory": pool.get("mandatory", []), "optional": [by_id[memory_id] for memory_id in ids], "new_facts": [], "conflict_flags": conflict_flags}
+    return {"checkpoint_id": checkpoint_id, "action_hash": action_hash, "selected_memory_ids": ids, "selected_characters": selected_characters, "reasons": reasons, "reason_sources": reason_sources, "scene_ids": scene_ids, "mandatory": pool.get("mandatory", []), "optional": [by_id[memory_id] for memory_id in ids], "new_facts": [], "conflict_flags": conflict_flags}
 
 
 def build_context_preview(connection: sqlite3.Connection, campaign_id: str, branch_id: str, action: str, model_config: dict, *, owner_id: str | None = None, settings_hash: str | None = None, context_counter=None, counter_id: str = "utf8-bytes-div-3") -> dict:
@@ -209,7 +238,7 @@ def build_context_preview(connection: sqlite3.Connection, campaign_id: str, bran
                 blocks.append({"id": memory["id"], "type": "memory", "text": memory["text"], "source_ids": [memory["version_id"], *memory["source_revision_ids"]], "mandatory": True, "why": "Approved summary replaces its contiguous committed interval and is required to preserve it.", "knowledge_scope": memory["knowledge_scope"], "known_by": memory["known_by"], "as_of_cursor": memory["effective_cursor"], "source_turn_sequences": memory["source_turn_sequences"]})
                 emitted.add(summary_id)
             continue
-        blocks.append({"id": turn["revision_id"], "type": "transcript", "text": f"Player: {turn['action_text']}\nNarration: {turn['narrative_text']}", "source_ids": [turn["turn_id"], turn["revision_id"]], "mandatory": True, "turn_sequence": turn["sequence"], "why": "Recent committed turn remains verbatim."})
+        blocks.append({"id": turn["revision_id"], "type": "transcript", "text": _transcript_text(turn), "source_ids": [turn["turn_id"], turn["revision_id"]], "mandatory": True, "turn_sequence": turn["sequence"], "why": "Recent committed turn remains verbatim."})
     included = {block["id"] for block in blocks}
     verbatim_revision_ids = {block["id"] for block in blocks if block["type"] == "transcript"}
     covered_revision_ids = set(covered) | verbatim_revision_ids
@@ -272,7 +301,8 @@ def build_context_preview(connection: sqlite3.Connection, campaign_id: str, bran
     current = get_branch_head(connection, campaign_id, branch_id, owner_id)
     scene_ended = any(bool(item.get("scene_ended") or item.get("is_scene_end")) for item in scene.get("scenes", {}).values())
     review_hint = budget.get("input_tokens", 0) >= budget.get("input_cap", budget.get("input_limit", 1)) * 0.75 or scene_ended
-    record = {"id": str(uuid4()), "status": "stale" if current.checkpoint_id != checkpoint.id else ("ready" if budget["fits"] else "blocked"), "failure": budget["failure"], "campaign_id": campaign_id, "branch_id": branch_id, "checkpoint_id": checkpoint.id, "state_version": checkpoint.state_version, "action": action, "action_hash": action_hash, "profile_id": model_config.get("profile_id"), "profile_version": model_config.get("profile_version"), "profile_hash": model_config.get("profile_hash"), "settings_revision": model_config.get("settings_revision"), "owner_settings_hash": model_config.get("owner_settings_hash"), "settings_hash": settings_hash, "payload_hash": payload_hash, "blocks": blocks, "replacement_map": selected_replacements, "summary_ids": sorted(selected_summary_ids), "scene": scene, "budget": budget, "omission_reasons": omitted, "review_memory_hint": review_hint, "provider_calls": 0, "mode": "deterministic_preflight", "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}
+    selected_characters = [{"character_id": profile["key"].partition(":")[2], "profile_version_id": profile["id"], "name": profile["data"].get("name", ""), "present": profile["key"].partition(":")[2] in scene_character_ids} for profile in selected_profiles if profile["kind"] == "character"]
+    record = {"id": str(uuid4()), "status": "stale" if current.checkpoint_id != checkpoint.id else ("ready" if budget["fits"] else "blocked"), "failure": budget["failure"], "campaign_id": campaign_id, "branch_id": branch_id, "checkpoint_id": checkpoint.id, "state_version": checkpoint.state_version, "action": action, "action_hash": action_hash, "profile_id": model_config.get("profile_id"), "profile_version": model_config.get("profile_version"), "profile_hash": model_config.get("profile_hash"), "settings_revision": model_config.get("settings_revision"), "owner_settings_hash": model_config.get("owner_settings_hash"), "settings_hash": settings_hash, "payload_hash": payload_hash, "blocks": blocks, "selected_characters": selected_characters, "replacement_map": selected_replacements, "summary_ids": sorted(selected_summary_ids), "scene": scene, "budget": budget, "omission_reasons": omitted, "review_memory_hint": review_hint, "provider_calls": 0, "mode": "deterministic_preflight", "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}
     saved_owner = owner_id or connection.execute("SELECT owner_id FROM campaigns WHERE id = ?", (campaign_id,)).fetchone()[0]
     connection.execute("INSERT INTO context_previews(id, campaign_id, branch_id, owner_id, checkpoint_id, state_version, action_hash, settings_hash, payload_hash, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (record["id"], campaign_id, branch_id, saved_owner, checkpoint.id, checkpoint.state_version, action_hash, settings_hash, payload_hash, json.dumps(record, ensure_ascii=False, sort_keys=True), record["created_at"]))
     return record

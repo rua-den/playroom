@@ -48,7 +48,7 @@ def migrate(connection: sqlite3.Connection) -> None:
         connection.execute("ALTER TABLE campaigns ADD COLUMN archived_at TEXT")
     generation_columns = {row[1] for row in connection.execute("PRAGMA table_info(generation_jobs)")}
     if generation_columns:
-        for name, definition in (("action", "TEXT NOT NULL DEFAULT ''"), ("mode", "TEXT NOT NULL DEFAULT 'economy'"), ("policy", "TEXT NOT NULL DEFAULT 'free_only'"), ("draft", "TEXT NOT NULL DEFAULT ''"), ("failure_json", "TEXT"), ("usage_json", "TEXT"), ("settings_revision", "INTEGER NOT NULL DEFAULT 0"), ("settings_snapshot_json", "TEXT NOT NULL DEFAULT '{}'"), ("profile_snapshot_json", "TEXT NOT NULL DEFAULT '{}'"), ("credential_version", "TEXT"), ("reserved_cost_json", "TEXT"), ("execution_epoch", "TEXT"), ("cancel_requested", "INTEGER NOT NULL DEFAULT 0"), ("final_context_json", "TEXT"), ("preview_id", "TEXT"), ("preview_snapshot_json", "TEXT")):
+        for name, definition in (("action", "TEXT NOT NULL DEFAULT ''"), ("mode", "TEXT NOT NULL DEFAULT 'economy'"), ("policy", "TEXT NOT NULL DEFAULT 'free_only'"), ("draft", "TEXT NOT NULL DEFAULT ''"), ("output_segments_json", "TEXT"), ("failure_json", "TEXT"), ("usage_json", "TEXT"), ("settings_revision", "INTEGER NOT NULL DEFAULT 0"), ("settings_snapshot_json", "TEXT NOT NULL DEFAULT '{}'"), ("profile_snapshot_json", "TEXT NOT NULL DEFAULT '{}'"), ("credential_version", "TEXT"), ("reserved_cost_json", "TEXT"), ("execution_epoch", "TEXT"), ("cancel_requested", "INTEGER NOT NULL DEFAULT 0"), ("final_context_json", "TEXT"), ("preview_id", "TEXT"), ("preview_snapshot_json", "TEXT")):
             if name not in generation_columns:
                 connection.execute(f"ALTER TABLE generation_jobs ADD COLUMN {name} {definition}")
     attempt_columns = {row[1] for row in connection.execute("PRAGMA table_info(provider_attempts)")}
@@ -61,6 +61,12 @@ def migrate(connection: sqlite3.Connection) -> None:
         for name, definition in (("generation_job_id", "TEXT"), ("request_json", "TEXT NOT NULL DEFAULT '{}'"), ("wire_json", "TEXT NOT NULL DEFAULT '{}'"), ("counter_id", "TEXT NOT NULL DEFAULT 'utf8-bytes-div-3'"), ("counter_mode", "TEXT NOT NULL DEFAULT 'estimated'")):
             if name not in context_run_columns:
                 connection.execute(f"ALTER TABLE context_runs ADD COLUMN {name} {definition}")
+    turns_columns = {row[1] for row in connection.execute("PRAGMA table_info(turns)")}
+    if turns_columns and "input_segments_json" not in turns_columns:
+        connection.execute("ALTER TABLE turns ADD COLUMN input_segments_json TEXT")
+    revisions_columns = {row[1] for row in connection.execute("PRAGMA table_info(turn_revisions)")}
+    if revisions_columns and "output_segments_json" not in revisions_columns:
+        connection.execute("ALTER TABLE turn_revisions ADD COLUMN output_segments_json TEXT")
     connection.execute("CREATE TABLE IF NOT EXISTS model_profile_versions (id TEXT NOT NULL, owner_id TEXT NOT NULL REFERENCES owners(id) ON DELETE CASCADE, version INTEGER NOT NULL, snapshot_json TEXT NOT NULL, profile_hash TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(owner_id, id, version))")
     connection.execute("CREATE TRIGGER IF NOT EXISTS prevent_model_profile_update BEFORE UPDATE ON model_profile_versions BEGIN SELECT RAISE(ABORT, 'model profiles are immutable'); END")
     connection.execute("CREATE TRIGGER IF NOT EXISTS prevent_model_profile_delete BEFORE DELETE ON model_profile_versions BEGIN SELECT RAISE(ABORT, 'model profiles are immutable'); END")

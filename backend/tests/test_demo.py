@@ -16,7 +16,7 @@ def test_demo_fake_provider_is_repeatable_for_multiple_plays():
     assert provider.stage_counts["narration"] == 2
 
 
-def test_demo_fake_provider_reads_action_from_narration_request_messages():
+def test_demo_fake_provider_uses_fixed_narration_for_action_messages():
     provider = DemoFakeProvider()
     request = {
         "stage": "narration",
@@ -28,10 +28,18 @@ def test_demo_fake_provider_reads_action_from_narration_request_messages():
 
     result = list(provider.generate_text(request))[-1]
 
-    assert "Mở cánh cửa bí mật" in result.text
+    assert result.text == "Ánh sáng dịu lan qua căn phòng, và câu chuyện tiếp tục mở ra."
 
 
-def test_demo_fake_provider_preserves_free_form_action_sentence_formatting():
+def test_demo_fake_provider_narration_does_not_echo_the_full_player_action():
+    provider = DemoFakeProvider()
+
+    result = list(provider.generate_text({"stage": "narration", "action": "Mở cánh cửa bí mật"}))[-1]
+
+    assert result.text == "Ánh sáng dịu lan qua căn phòng, và câu chuyện tiếp tục mở ra."
+
+
+def test_demo_fake_provider_uses_the_same_natural_narration_for_free_form_actions():
     provider = DemoFakeProvider()
     request = {
         "stage": "narration",
@@ -43,7 +51,7 @@ def test_demo_fake_provider_preserves_free_form_action_sentence_formatting():
 
     result = list(provider.generate_text(request))[-1]
 
-    assert result.text.startswith("Mina hums the melody. ")
+    assert result.text == "Ánh sáng dịu lan qua căn phòng, và câu chuyện tiếp tục mở ra."
     assert "Mina hums the melody.." not in result.text
     assert "Bạn " not in result.text
 
