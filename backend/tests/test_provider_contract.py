@@ -9,6 +9,7 @@ import pytest
 from playroom.credentials import CredentialStore
 from playroom.model_profiles import validate_dispatch, OpenRouterVerifier, estimate_cost_usd
 from playroom.provider import OpenRouterAdapter, ProviderFailure, ProviderResult, FakeProvider, default_provider_factory
+from playroom.wire_cost import canonical_json, declared_count, provider_wire, wire_hash
 from playroom.domain import ValidationError
 
 
@@ -42,6 +43,34 @@ def test_openrouter_stream_parses_comments_multiline_data_and_terminal_usage():
     events = list(adapter.generate_text({"messages": [], "reserved_completion_tokens": 10}))
     assert "".join(event for event in events if isinstance(event, str)) == "Xin chao"
     assert events[-1].usage["total_tokens"] == 11
+
+
+def test_adapter_emits_exact_structured_wire_and_allowances():
+    profile = _profile(model="author/model", provider_tag="exact", output_parameter="max_tokens")
+    schema = {"type": "object", "required": ["name"], "properties": {"name": {"type": "string"}}, "additionalProperties": False}
+    request = {
+        "stage": "context",
+        "messages": [{"role": "system", "content": "Return JSON"}, {"role": "user", "content": "{}"}],
+        "reserved_completion_tokens": 7,
+        "schema_name": "selection_plan",
+    }
+    captured = {}
+
+    def route(http_request):
+        captured.update(json.loads(http_request.content))
+        body = b'data: {"choices":[{"delta":{"content":"{\\"name\\":\\"ok\\"}"}}]}\n\ndata: {"choices":[{"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'
+        return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
+
+    adapter = OpenRouterAdapter("secret-key", profile["endpoint"], profile=profile, http_client=httpx.Client(transport=httpx.MockTransport(route)))
+    result = adapter.generate_structured(request, schema)
+    assert isinstance(result, ProviderResult)
+    expected = provider_wire(request, profile, schema=schema)
+    assert captured == expected
+    assert captured["provider"] == {"allow_fallbacks": False, "require_parameters": True, "only": ["exact"]}
+    assert captured["max_tokens"] == 7
+    assert captured["response_format"]["json_schema"]["schema"] == schema
+    assert wire_hash(captured) == wire_hash(expected)
+    assert declared_count(canonical_json(captured)) == declared_count(canonical_json(expected))
 
 
 def test_openrouter_provider_error_and_missing_terminal_are_distinct():

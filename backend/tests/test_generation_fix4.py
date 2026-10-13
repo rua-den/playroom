@@ -4,17 +4,21 @@ import json
 import threading
 from decimal import Decimal
 
+import httpx2 as httpx
 import pytest
 
 from playroom.attempt_runtime import PhysicalAttemptRegistry
 from playroom.auth import create_owner
 from playroom.campaigns import create_campaign
 from playroom.context import build_candidate_pool
+from playroom.credentials import CredentialStore
 from playroom.db import connect, migrate
 from playroom.domain import ValidationError
 from playroom.generation import DEFAULT_PROFILE, GenerationService, _ProviderError
 from playroom.memory import append_memory_version
+from playroom.model_profiles import persist_model_profile
 from playroom.provider import FakeProvider, OpenRouterAdapter, ProviderAdapter, ProviderFailure, ProviderResult
+from playroom.wire_cost import canonical_json, declared_count, wire_hash
 from playroom.settings import get_owner_settings, save_owner_settings
 from playroom.timeline import get_branch_head
 
@@ -258,6 +262,206 @@ def test_quality_uses_actual_persisted_wire_and_cost_ledger(tmp_path):
     assert emitted["wire_metadata"]["payload_hash"] == run["payload_hash"]
     assert emitted["wire_metadata"]["input_tokens"] == json.loads(run["token_budget_json"])["narrator"]["input_tokens"]
     assert request_snapshot["narrator"] == emitted["prepared_wire"]
+
+
+@pytest.mark.parametrize(
+    ("mode", "context_version", "narrator_version", "expected_stages"),
+    [("economy", 1, 2, ["narration"]), ("quality", 1, 2, ["context", "narration"]), ("quality", 2, 1, ["context", "narration"])],
+)
+def test_same_profile_id_keeps_role_version_identity(mode, context_version, narrator_version, expected_stages, tmp_path):
+    db, owner, campaign = _story(tmp_path)
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    base = {**DEFAULT_PROFILE, "id": "shared-role", "is_test_profile": False}
+    persisted = {
+        version: persist_model_profile(db, owner.id, {**base, "model": f"author/shared-v{version}"})
+        for version in (1, 2)
+    }
+    context = persisted[context_version]
+    narrator = persisted[narrator_version]
+    save_owner_settings(
+        db,
+        owner.id,
+        {
+            "roles": {
+                "context": {"id": context["id"], "version": context["version"], "profile_hash": context["profile_hash"]},
+                "narrator": {"id": narrator["id"], "version": narrator["version"], "profile_hash": narrator["profile_hash"]},
+            },
+            "mode": mode,
+            "policy": "free_only",
+        },
+    )
+    calls = []
+
+    class RoleProvider(FakeProvider):
+        def generate_structured(self, request, schema):
+            pool = build_candidate_pool(db, campaign.id, campaign.initial_branch_id, "Look", checkpoint_id=head.checkpoint_id, owner_id=owner.id)
+            plan = {"checkpoint_id": pool["checkpoint_id"], "action_hash": request["action_hash"], "selected_memory_ids": [], "reasons": {}, "reason_sources": {}, "scene_ids": pool["scene_ids"], "conflict_flags": []}
+            return ProviderResult(text=json.dumps(plan), usage={"input_tokens": 1, "output_tokens": 1, "total_tokens": 2})
+
+        def generate_text(self, request):
+            yield ProviderResult(text="role identity narrative", usage={"input_tokens": 1, "output_tokens": 1, "total_tokens": 2})
+
+    def factory(**kwargs):
+        calls.append((kwargs["stage"], kwargs["profile"]["id"], kwargs["profile"]["version"], kwargs["profile"]["profile_hash"]))
+        return RoleProvider([])
+
+    service = GenerationService(
+        db, FakeProvider([]),
+        provider_factory=factory, credential_resolver=lambda owner_id, version: "role-secret",
+    )
+    job = service.generate(owner.id, campaign.id, campaign.initial_branch_id, "Look", idempotency_key=f"role-{mode}-{context_version}-{narrator_version}", expected_checkpoint_id=head.checkpoint_id, mode=mode)
+    assert job["status"] == "candidate"
+    assert [stage for stage, *_ in calls] == expected_stages
+    expected_versions = {"context": context_version, "narration": narrator_version}
+    assert calls == [
+        (stage, "shared-role", expected_versions[stage], persisted[expected_versions[stage]]["profile_hash"])
+        for stage in expected_stages
+    ]
+    run = db.execute("SELECT token_budget_json FROM context_runs WHERE generation_job_id=?", (job["id"],)).fetchone()
+    snapshot = json.loads(run["token_budget_json"])["profile_snapshot"]
+    assert snapshot["context"]["id"] == "shared-role"
+    assert snapshot["context"]["version"] == context_version
+    assert snapshot["context"]["profile_hash"] == persisted[context_version]["profile_hash"]
+    assert snapshot["narrator"]["id"] == "shared-role"
+    assert snapshot["narrator"]["version"] == narrator_version
+    assert snapshot["narrator"]["profile_hash"] == persisted[narrator_version]["profile_hash"]
+
+
+def test_openrouter_adapter_wire_matches_persisted_quality_attempts(tmp_path):
+    db, owner, campaign = _story(tmp_path)
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    profile = {
+        **DEFAULT_PROFILE,
+        "id": "wire-profile", "provider": "openrouter", "endpoint": "https://wire.test/chat",
+        "model": "author/wire", "provider_tag": "exact", "supported_parameters": ["max_tokens", "response_format"],
+        "native_structured_output": True, "structured_output": True, "structured_schema_parameter": "response_format",
+        "output_parameter": "max_tokens", "is_test_profile": False,
+    }
+    captured = []
+
+    def route(request):
+        payload = json.loads(request.content)
+        captured.append(payload)
+        if "response_format" in payload:
+            wire = json.loads(payload["messages"][1]["content"])
+            body_value = {
+                "checkpoint_id": wire["checkpoint_id"], "action_hash": wire["action_hash"],
+                "selected_memory_ids": [], "reasons": {}, "reason_sources": {},
+                "scene_ids": wire["candidate_pool"]["scene_ids"], "conflict_flags": [],
+            }
+            content = json.dumps(body_value, separators=(",", ":"))
+        else:
+            content = "wire narrative"
+        body = b"data: " + json.dumps({"choices": [{"delta": {"content": content}}]}).encode() + b"\n\n"
+        body += b'data: {"choices":[{"finish_reason":"stop"}],"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}}\n\n'
+        body += b"data: [DONE]\n\n"
+        return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
+
+    adapter = OpenRouterAdapter("dummy-key", profile["endpoint"], profile=profile, http_client=httpx.Client(transport=httpx.MockTransport(route)))
+    service = GenerationService(db, adapter, profile={"roles": {"context": profile, "narrator": profile}})
+    job = service.generate(owner.id, campaign.id, campaign.initial_branch_id, "Look", idempotency_key="adapter-wire", expected_checkpoint_id=head.checkpoint_id, mode="quality")
+    assert job["status"] == "candidate"
+    assert len(captured) == 2
+    attempts = db.execute("SELECT stage,payload_hash,request_json FROM provider_attempts WHERE generation_job_id=? ORDER BY stage", (job["id"],)).fetchall()
+    run = db.execute("SELECT wire_json,token_budget_json,payload_hash FROM context_runs WHERE generation_job_id=?", (job["id"],)).fetchone()
+    wires = json.loads(run["wire_json"])
+    budgets = json.loads(run["token_budget_json"])
+    for attempt, payload in zip(attempts, captured):
+        stage = attempt["stage"]
+        wire_key = "director" if stage == "context" else "narrator"
+        assert payload == wires[wire_key]
+        assert attempt["payload_hash"] == wire_hash(payload)
+        assert declared_count(canonical_json(payload)) == budgets[wire_key]["input_tokens"]
+    assert wire_hash(captured[-1]) == run["payload_hash"]
+
+
+def test_queued_job_keeps_profile_and_wire_snapshot_after_settings_change(tmp_path):
+    db, owner, campaign = _story(tmp_path)
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    profile_v1 = persist_model_profile(db, owner.id, {
+        **DEFAULT_PROFILE, "id": "queued-role", "provider": "openrouter",
+        "endpoint": "https://queued.test/chat", "model": "author/queued-v1",
+        "provider_tag": "exact", "supported_parameters": ["max_tokens"], "output_parameter": "max_tokens",
+        "is_test_profile": False,
+    })
+    profile_v2 = persist_model_profile(db, owner.id, {**profile_v1, "model": "author/queued-v2"})
+    settings_v1 = save_owner_settings(db, owner.id, {
+        "roles": {"narrator": {"id": profile_v1["id"], "version": profile_v1["version"], "profile_hash": profile_v1["profile_hash"]}},
+        "mode": "economy", "policy": "free_only",
+        "budgets": {"narrator": {"input_limit": 1000, "requested_output": 50}},
+    })
+    seen = []
+    captured = []
+
+    def route(request):
+        payload = json.loads(request.content)
+        captured.append(payload)
+        body = b'data: {"choices":[{"delta":{"content":"queued narrative"}}]}\n\ndata: {"choices":[{"finish_reason":"stop"}],"usage":{"prompt_tokens":4,"completion_tokens":2,"total_tokens":6}}\n\ndata: [DONE]\n\n'
+        return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
+
+    adapter = OpenRouterAdapter(profile_v1["secret_version"], profile_v1["endpoint"], profile=profile_v1, http_client=httpx.Client(transport=httpx.MockTransport(route)))
+
+    def factory(**kwargs):
+        seen.append((kwargs["stage"], kwargs["profile"]["version"], kwargs["profile"]["profile_hash"]))
+        return adapter
+
+    service = GenerationService(db, adapter, profile=profile_v1, provider_factory=factory, credential_resolver=lambda owner_id, version: "queued-secret")
+    queued = service.generate(owner.id, campaign.id, campaign.initial_branch_id, "Look", idempotency_key="queued-settings", expected_checkpoint_id=head.checkpoint_id, execute=False)
+    queued_attempt = db.execute("SELECT profile_snapshot_json,request_json FROM provider_attempts WHERE generation_job_id=? AND stage='narration'", (queued["id"],)).fetchone()
+    settings_v2 = save_owner_settings(db, owner.id, {
+        "roles": {"narrator": {"id": profile_v2["id"], "version": profile_v2["version"], "profile_hash": profile_v2["profile_hash"]}},
+        "mode": "economy", "policy": "free_only",
+        "budgets": {"narrator": {"input_limit": 2000, "requested_output": 100}},
+    })
+    assert settings_v2["settings_revision"] > settings_v1["settings_revision"]
+    finished = service.run(queued["id"])
+    assert finished["status"] == "candidate"
+    assert profile_v1["profile_hash"] != profile_v2["profile_hash"]
+    assert seen == [("narration", 1, profile_v1["profile_hash"])]
+    assert len(captured) == 1
+    assert captured[0]["model"] == "author/queued-v1"
+    assert captured[0]["max_tokens"] == 50
+    final_attempt = db.execute("SELECT profile_snapshot_json FROM provider_attempts WHERE generation_job_id=? AND stage='narration'", (queued["id"],)).fetchone()
+    job_snapshot = db.execute("SELECT settings_snapshot_json FROM generation_jobs WHERE id=?", (queued["id"],)).fetchone()
+    assert json.loads(job_snapshot["settings_snapshot_json"])["settings_revision"] == settings_v1["settings_revision"]
+    run = db.execute("SELECT wire_json,token_budget_json,payload_hash FROM context_runs WHERE generation_job_id=?", (queued["id"],)).fetchone()
+    wire = json.loads(run["wire_json"])["narrator"]
+    budget = json.loads(run["token_budget_json"])["narrator"]
+    assert captured[0] == wire
+    assert captured[0]["messages"] == wire["messages"]
+    assert captured[0]["max_tokens"] == budget["output_reserve"]
+    assert budget["output_reserve"] == 50
+    assert wire_hash(captured[0]) == run["payload_hash"]
+    assert json.loads(queued_attempt["profile_snapshot_json"])["version"] == 1
+    assert json.loads(final_attempt["profile_snapshot_json"])["version"] == 1
+
+
+def test_revoked_pinned_credential_opens_zero_http_streams(tmp_path):
+    db, owner, campaign = _story(tmp_path)
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    store = CredentialStore(tmp_path / "secrets")
+    credential = store.put(owner.id, "dummy-provider-secret")
+    profile = {
+        **DEFAULT_PROFILE, "id": "revoked-wire", "provider": "openrouter", "endpoint": "https://wire.test/chat",
+        "model": "author/wire", "provider_tag": "exact", "supported_parameters": ["max_tokens"],
+        "output_parameter": "max_tokens", "is_test_profile": False, "secret_version": credential.id,
+    }
+    store.revoke(owner.id, credential.id)
+    streams = []
+
+    def route(request):
+        streams.append(request)
+        return httpx.Response(200, content=b"data: [DONE]\n\n", headers={"content-type": "text/event-stream"})
+
+    adapter = OpenRouterAdapter("dummy-key", profile["endpoint"], profile=profile, http_client=httpx.Client(transport=httpx.MockTransport(route)))
+    service = GenerationService(
+        db, adapter, profile=profile, provider_factory=lambda **kwargs: adapter,
+        credential_resolver=store.get,
+    )
+    job = service.generate(owner.id, campaign.id, campaign.initial_branch_id, "Look", idempotency_key="revoked-wire", expected_checkpoint_id=head.checkpoint_id)
+    assert job["status"] == "failed"
+    assert job["failure"]["code"] == "CREDENTIAL_UNAVAILABLE"
+    assert streams == []
 
 
 def test_required_narrator_wire_overflow_preflights_before_director(tmp_path):
