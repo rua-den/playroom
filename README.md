@@ -8,7 +8,7 @@ Trọng tâm là quản lý context qua nhiều chương: lưu hồ sơ, cảnh,
 
 Backend có storage/auth/checkpoint/memory, context deterministic, OpenRouter adapter và pipeline quality/economy. U1–U7 đã qua kiểm chứng local synthetic, gồm browser smoke và layout 360/390/430px cùng desktop. Snapshot bàn giao 13/10/2026 có **135 test backend qua** là số liệu lịch sử, không phải bằng chứng nghiệm thu Task3. Chưa gọi model thật hay deploy VPS; chất lượng model thật và thử cài trên điện thoại vẫn mở.
 
-**Tiếp tục từ [handoff hiện tại](docs/handoff/2026-10-13-state.md) và [plan chia nhỏ cho Luna](docs/superpowers/plans/2026-10-13-playroom-resume-plan.md).** Nhánh chứa code là `feat/playroom-mvp`, [draft PR #1](https://github.com/rua-den/playroom/pull/1); chưa merge main. Yêu cầu mới nhất là chạy/test local trước, SSH/domain/Caddy sau.
+**Source hiện tại (14/10/2026):** MVP và phần chat/Ollama đã merge vào `main` (code HEAD được review: `8833051`); [PR #1](https://github.com/rua-den/playroom/pull/1) đã merge. Đọc [review và stabilization gate 14/10](docs/reviews/2026-10-14-main-stabilization-review.md) trước khi triển khai tiếp. [Handoff 13/10](docs/handoff/2026-10-13-state.md) và [plan Luna trước đó](docs/superpowers/plans/2026-10-13-playroom-resume-plan.md) là bằng chứng/kế hoạch lịch sử, không phải trạng thái nhánh hiện tại. Vẫn ưu tiên test local; SSH/domain/Caddy để sau.
 
 Kiểm tra backend tại root repo:
 
