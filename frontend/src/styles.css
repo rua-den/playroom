@@ -87,3 +87,8 @@ input:focus { border-color: #d79771; box-shadow: 0 0 0 3px #d7977133; }
 .editor-tabs { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0.75rem 0; }
 .memory-card { border: 1px solid var(--line); border-radius: 14px; padding: 0.75rem; display: grid; gap: 0.35rem; }
 .memory-card h3, .memory-card p { margin: 0; }
+.settings-panel input,
+.settings-panel select,
+.settings-panel textarea {
+  min-height: 44px;
+}

@@ -1,4 +1,4 @@
-import type { ApiErrorBody, CampaignCreatePayload, CampaignDetail, CampaignProjection, CampaignSummary, GenerationJobSummary, LoginPayload, Owner, MemoryVersion, MemoryCreatePayload, MemoryUpdatePayload, ProfileUpdateResult, SceneResponse } from "./types";
+import type { ApiErrorBody, CampaignCreatePayload, CampaignDetail, CampaignProjection, CampaignSummary, GenerationJobSummary, LoginPayload, Owner, MemoryVersion, MemoryCreatePayload, MemoryUpdatePayload, ProfileUpdateResult, SceneResponse, CredentialSummary, ModelProfileSummary, ProviderSettings, SettingsUpdatePayload } from "./types";
 
 export class ApiError extends Error {
   readonly status: number;
@@ -70,6 +70,12 @@ export const api = {
   getScene: (campaignId: string, branchId: string) => request<SceneResponse>(`/api/campaigns/${encodeURIComponent(campaignId)}/scene?branch_id=${encodeURIComponent(branchId)}`),
   updateScene: (campaignId: string, payload: { branch_id: string; expected_state_version: number; scene_state: import("./types").SceneState }) => request<ProfileUpdateResult>(`/api/campaigns/${encodeURIComponent(campaignId)}/scene`, { method: "PUT", body: JSON.stringify(payload) }),
   updateRetrievalPolicy: (campaignId: string, payload: { branch_id: string; expected_state_version: number; policy: "auto" | "important_only" | "disabled" }) => request<ProfileUpdateResult & { policy: string }>(`/api/campaigns/${encodeURIComponent(campaignId)}/retrieval-policy`, { method: "PUT", body: JSON.stringify(payload) }),
+  listCredentials: () => request<CredentialSummary[]>("/api/provider/credentials"),
+  addCredential: (secret: string) => request<CredentialSummary>("/api/provider/credentials", { method: "POST", body: JSON.stringify({ secret }) }),
+  listProviderProfiles: () => request<ModelProfileSummary[]>("/api/provider/profiles"),
+  getProviderSettings: () => request<ProviderSettings>("/api/provider/settings"),
+  updateProviderSettings: (payload: SettingsUpdatePayload) => request<ProviderSettings>("/api/provider/settings", { method: "PUT", body: JSON.stringify(payload) }),
+  verifyProviderProfile: (payload: { credential_id: string; model: string; endpoint: string; provider_tag: string }) => request<ModelProfileSummary>("/api/provider/profiles/verify", { method: "POST", body: JSON.stringify(payload) }),
   login: async (payload: LoginPayload) => {
     activeLogout?.abort();
     activeLogout = null;

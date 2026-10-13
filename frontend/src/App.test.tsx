@@ -160,4 +160,48 @@ describe("authentication shell", () => {
     expect(privateCache.has("new-session")).toBe(true);
     expect(screen.queryByText("chưa xác nhận được đăng xuất")).not.toBeInTheDocument();
   });
+
+  it("manages settings dialog focus, escape, and background isolation", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "owner-1", email: "owner@example.test" }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ mode: "economy", policy: "free_only", roles: {}, budgets: {} }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText("Chào mừng trở lại");
+    const trigger = screen.getByRole("button", { name: "Cài đặt" });
+    await user.click(trigger);
+    const dialog = await screen.findByRole("dialog", { name: "Cài đặt" });
+    expect(screen.getByRole("main").querySelector(".empty-campaign")).toHaveAttribute("aria-hidden", "true");
+    expect(dialog.querySelector("button")).toHaveFocus();
+    const focusable = Array.from(dialog.querySelectorAll<HTMLElement>("button, input, select, textarea, [href], [tabindex]:not([tabindex='-1'])"));
+    focusable.at(-1)?.focus();
+    await user.keyboard("{Tab}");
+    expect(dialog.querySelector("button")).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Cài đặt" })).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
+
+  it("hides the active campaign form when settings opens", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "owner-1", email: "owner@example.test" }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ mode: "economy", policy: "free_only", roles: {}, budgets: {} }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "Tạo chiến dịch đầu tiên" }));
+    await user.type(screen.getByLabelText("Tên chiến dịch"), "Bản nháp không mất");
+    await user.click(screen.getByRole("button", { name: "Cài đặt" }));
+    expect(screen.getByRole("dialog", { name: "Cài đặt" })).toBeInTheDocument();
+    expect(screen.getByText("Tạo chiến dịch").closest("section")).toHaveAttribute("aria-hidden", "true");
+    await user.click(screen.getByRole("button", { name: "Đóng cài đặt" }));
+    expect(screen.getByLabelText("Tên chiến dịch")).toHaveValue("Bản nháp không mất");
+  });
 });
