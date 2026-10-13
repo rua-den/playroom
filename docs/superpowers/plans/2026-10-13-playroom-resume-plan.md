@@ -52,6 +52,8 @@ A task gate means implementation + valid test setup + diff review. Running the b
 - [x] Retain the existing post-director packing failure test: valid current result retains usage/output, no dispatched rows or branch guard leak, narrator0 calls.
 - [x] Remove the unconditional _record_usage before the completion transaction and guard both packing-error paths. Perform validation and writes inside one BEGIN IMMEDIATE boundary with epoch/status/cancel CAS; do not hold it across inference.
 - [x] Check narrator success/event boundary touched by the same invariant; change it only if a focused test proves a late-write defect.
+- [x] B6 follow-up: status-only transition after a valid director result rejects packing-error usage/result writes; the test is RED when the job-status predicate is disabled.
+- [x] B6 follow-up: narration delta output/draft/event writes share a short transaction with active epoch/status/cancel CAS; separate-connection cancel and recovery races are RED before the fix.
 - [x] Run:
 
 ```powershell
@@ -253,13 +255,15 @@ finally:
 **Consumes:** B1–B5 and full diff 949068a..accepted HEAD.
 **Produces:** accepted backend boundary for UI.
 
-- [ ] Sol reviews the full Task3 range with product/runtime specs, exact proofs and source; both compliance and code-quality verdicts required.
-- [ ] Independently run full backend suite, compile, runtime-only startup/shutdown and exact committed-range whitespace check.
-- [ ] Confirm default startup has no implicit synthetic provider or usable fabricated real profile; tests/demo explicit.
-- [ ] Audit saved secrets/validation errors/ContextRun/profile settings and all old writer result/event paths. No provider IO inside DB transaction.
-- [ ] Fix reviewed findings in bounded tasks; retain all unresolved acceptance items explicitly.
-- [ ] Update handoff counts/status only after proof. Do not infer storytelling quality from synthetic tests.
-- [ ] Gate B6 before U1. No live provider trial is necessary to create the local synthetic UI.
+- [x] Sol reviews the full Task3 range with product/runtime specs, exact proofs and source; both compliance and code-quality verdicts required.
+- [x] Independently run full backend suite, compile, runtime-only startup/shutdown and exact committed-range whitespace check.
+- [x] Confirm default startup has no implicit synthetic provider or usable fabricated real profile; tests/demo explicit.
+- [x] Audit saved secrets/validation errors/ContextRun/profile settings and all old writer result/event paths. No provider IO inside DB transaction.
+- [x] Fix reviewed findings in bounded tasks; retain all unresolved acceptance items explicitly. No unresolved B6-scope findings; later task debt remains in the handoff.
+- [x] Update handoff counts/status only after proof. Do not infer storytelling quality from synthetic tests.
+- [x] Gate B6 before U1. No live provider trial is necessary to create the local synthetic UI.
+
+**B6 accepted 2026-10-13:** code/test commit `94e894ef6ca6daedff9be1a5349c9df38082cce9`. Integrated compliance and code-quality review of `949068a..HEAD` found two writer gaps: `_require_active` did not require job status `running`, and narration `_append_output` wrote attempt output, job draft and delta event after a check but outside a transaction. Added status-only post-director packing-error regression (RED when the status predicate is disabled, then GREEN) and cancel/recovery post-gate narration-delta regressions (2 RED, then 2 GREEN). The fix repeats the active check inside `BEGIN IMMEDIATE`, CAS-updates attempt and job by epoch/status/cancel, and writes the delta event in that transaction; no provider I/O is in the transaction. Sol independently ran the full backend suite — 208 passed; `test_generation_fix4.py` — 28 passed; `test_generation_durable.py -k "restart or cancel or epoch"` — 9 passed, 33 deselected; compileall — exit 0; isolated runtime-only default app startup/shutdown — success with no injected provider; `git diff --check 949068a..HEAD` — clean. No live credentials/inference, frontend or deploy. This accepts the backend boundary for UI; it does not establish story quality or finish the product. U1 is next after review.
 
 ## Local UI — split into independently reviewable tasks
 
