@@ -895,6 +895,7 @@ def test_http_claim_race_cancel_before_invocation_never_dispatches(tmp_path, mon
         assert db.execute("SELECT COUNT(*) FROM provider_attempts WHERE generation_job_id=?", (job_id,)).fetchone()[0] == attempts_before
     finally:
         release.set()
+        provider.director_release.set()
         _stop_local_http(server, server_thread)
 
 
