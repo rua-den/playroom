@@ -151,15 +151,15 @@ def test_old_director_result_cannot_write_after_transition(
 **Consumes:** _start_local_http(app), _stop_local_http(server, thread), _http_request(connection,...), http.client; current SSE/status/by-key routes.
 **Produces:** independent socket disconnect in each actual quality phase, exact one director/one narrator, no replay.
 
-- [ ] Replace the three newly preserved TestClient stream tests. Do not use TestClient for an active SSE disconnect.
-- [ ] Parameterize director/after_director/narration. Provider barriers must hold the exact phase; each test reads persisted attempt status before disconnect.
-- [ ] Director: provider has entered structured generation but has not returned.
-- [ ] After director: DB context attempt is completed, narrator calls still0; hold worker before physical narrator invocation.
-- [ ] Narration: context completed; narrator has emitted a delta and is held before terminal result.
-- [ ] Open the authenticated SSE stream through a separate http.client.HTTPConnection, read a complete SSE frame, then close response/socket before releasing the provider barrier.
-- [ ] Reconnect through status/by-key/events; assert same job ID, exact stage counts, complete candidate, one ContextRun. Do not POST generation again.
-- [ ] Every barrier has bounded failure timeout; use finally to release it and stop the server. Do not let a 5-second auto-release masquerade as the intended phase.
-- [ ] Run only `-k "quality_sse_disconnect"`; record phase DB evidence and counts.
+- [x] Replace the three newly preserved TestClient stream tests. Do not use TestClient for an active SSE disconnect.
+- [x] Parameterize director/after_director/narration. Provider barriers must hold the exact phase; each test reads persisted attempt status before disconnect.
+- [x] Director: provider has entered structured generation but has not returned.
+- [x] After director: DB context attempt is completed, narrator calls still0; hold worker before physical narrator invocation.
+- [x] Narration: context completed; narrator has emitted a delta and is held before terminal result.
+- [x] Open the authenticated SSE stream through a separate http.client.HTTPConnection, read a complete SSE frame, then close response/socket before releasing the provider barrier.
+- [x] Reconnect through status/by-key/events; assert same job ID, exact stage counts, complete candidate, one ContextRun. Do not POST generation again.
+- [x] Every barrier has bounded failure timeout; use finally to release it and stop the server. Do not let a 5-second auto-release masquerade as the intended phase.
+- [x] Run only `-k "quality_sse_disconnect"`; record phase DB evidence and counts.
 
 ```python
 server, thread, port = _start_local_http(app)
@@ -184,6 +184,8 @@ finally:
 ```
 
 **Gate:** closing the socket happens while the chosen phase is held; test succeeds before barrier timeout. Source review must see that ordering.
+
+**B2 accepted 2026-10-13:** test commit `8996379` replaces all three TestClient disconnect cases with authenticated loopback sockets. DB phase evidence: director `dispatched` while provider is held; after-director context `completed`, narration `claimed`, provider calls0; narration context `completed`, narration `dispatched` with persisted delta. Each case reads a complete SSE frame, closes the socket before releasing its barrier, then reconnects with GET status/by-key/events and verifies the same candidate/job, one call per stage and one ContextRun. Focused command: `pytest backend/tests/test_generation_durable.py -k "quality_sse_disconnect" -q` — 3 passed, 38 deselected. B3 remains unstarted.
 
 ### B3: Real HTTP cancel wins the claim race
 
