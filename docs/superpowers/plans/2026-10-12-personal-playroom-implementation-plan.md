@@ -34,7 +34,11 @@
 
 ## Execution status
 
-Implementation authorized on 12/10/2026. The user explicitly selected gpt-6-luna with medium reasoning, superseding the earlier gpt-5.6-luna instruction. Dispatch succeeded. The latest user-provided AGENTS.md restores gpt-5.6-luna medium for subsequent implementation; dispatch was verified. Work starts on feat/playroom-mvp in an isolated checkout; per-task progress is recorded in the plan-scoped SDD ledger. No real-provider trial or VPS deployment has occurred.
+Snapshot mới nhất: [handoff 13/10/2026](../../handoff/2026-10-13-state.md), [plan tiếp tục theo gate nhỏ](2026-10-13-playroom-resume-plan.md). Task1–2 đã qua review; Task3A qua review scoped, Task3B/C và gate tích hợp còn mở. Frontend/Tasks4–8 chưa triển khai. 135 test backend qua tại snapshot code a35a2a6; chưa browser test, inference thật hay VPS rollout.
+
+Model routing hiện hành: gpt-5.6-sol điều phối/review, gpt-5.6-luna medium viết code. Coding agent đã dừng vì usage limit; người dùng yêu cầu đẩy snapshot và handoff để tiếp tục ở thread mới. Không dùng report “DONE” cũ hoặc checkpoint bên dưới để suy ra app đã xong.
+
+Người dùng hoãn SSH/VPS/domain; thứ tự hiện tại là backend gate → local synthetic UI → tính năng chơi dài/local packaging. Các bước Caddy/DNS/HTTPS/real-phone/real-model nằm ở gate triển khai sau khi được người dùng cho phép; không bắt buộc có key hay deploy để nghiệm thu demo local.
 
 ## Delivery checkpoints
 
@@ -60,7 +64,7 @@ Task 8 essential staging steps (live inventory, isolated app root/service, priva
 | `backend/playroom/memory.py`, `api/memory.py` | Memory versions, approval, conflict presentation |
 | `backend/playroom/context.py`, `token_budget.py`, `api/context.py` | Selection, budget and immutable previews |
 | `backend/playroom/context_director.py` | Candidate-pool semantic selection and validated SelectionPlan, no canon mutation |
-| `backend/playroom/providers/base.py`, `fake.py`, `http_chat.py` | Provider contract, deterministic fake, configured HTTP adapter |
+|  `backend/playroom/provider.py`, `attempt_runtime.py`, `wire_cost.py` | Provider contract, deterministic fake, configured HTTP adapter |
 | `backend/playroom/generation.py`, `api/generation.py` | Idempotent generation, stream persistence, commit and cancel |
 | `backend/playroom/consolidation.py` | Durable proposal/summarization jobs |
 | `backend/playroom/transfers.py`, `api/transfers.py` | Backup, export/import and transcript preview |
@@ -71,10 +75,10 @@ Task 8 essential staging steps (live inventory, isolated app root/service, priva
 | `frontend/src/features/auth/` | Owner login, session expiry and logout |
 | `frontend/public/manifest.webmanifest`, `icons/` | Mobile home-screen identity and standalone display |
 | `frontend/src/api/` | Typed client contracts from the API schema |
-| `frontend/package.json`, `backend/pyproject.toml`, runtime/dependency lockfiles | Reproducible dev/build/test dependencies |
+| `frontend/package.json`, root `pyproject.toml`/`uv.lock`, frontend lockfile | Reproducible dev/build/test dependencies |
 | `backend/tests/`, `frontend/src/**/__tests__/` | Data/context regressions and user interaction tests |
-| `fixtures/context-campaign.json`, `fixtures/context-expectations.json` | 120-turn replay fixture and expected context source IDs |
-| `fixtures/style-cases.json`, `backend/tests/test_runtime_modes.py`, `test_model_switch.py`, `test_provider_failures.py` | Synthetic style/scene/knowledge cases, mode counts, quota/cost/failure regressions |
+| `backend/tests/fixtures/context-120-pairs.json` | 120-turn replay fixture and expected context source IDs |
+| `backend/tests/fixtures/style-cases.json`, `test_generation_durable.py`, `test_model_switch.py`, `test_provider_contract.py` | Synthetic style/scene/knowledge cases, mode counts, quota/cost/failure regressions |
 | `scripts/start.ps1`, `README.md`, `.gitignore` | One-command local startup and operating instructions |
 | `deploy/playroom.service`, `deploy/playroom.caddyfile`, `deploy/release.sh`, `deploy/README.md` | Compatible service/release, existing Caddy site, separate shared data and restore |
 | `.github/workflows/ci.yml`, `.github/workflows/deploy-production.yml` | Build/quality gates and deliberately enabled release deployment |
@@ -109,18 +113,18 @@ Keep each module focused; API handlers call domain services rather than implemen
 Also produce `create_state_checkpoint` and `load_state_checkpoint`; imported transcript initially has a single reviewed playable checkpoint, while app exports can carry exact historical checkpoints.
 
 - [x] Establish the repository checkout, copy reviewed docs and record required model routing in AGENTS.md.
-- [ ] Verify clean/current repository state, applicable instructions, coding-model dispatch and runtime paths before scaffolding.
-- [ ] Add owner/session schema, an administrative owner-creation command, Argon2id password hashing and server-managed sessions. Production cookies require HttpOnly, Secure and SameSite; no public owner registration route.
-- [ ] Write auth regressions: absent/revoked sessions cannot read story/context/export or start a stream; wrong passwords create no session; repeated failures hit a rate limit; cross-origin mutation is rejected. A stream already open closes within one 15-second session-check interval after revoke; the generation job remains private and may complete. Apply the guard to every feature router and test its endpoint inventory.
-- [ ] Define schema for campaigns, character/profile versions, branches, turns, turn revisions, selected revisions, memory versions, scene versions, summaries, state checkpoints, context runs and jobs. Add FK constraints, uniqueness for owner/branch/operation/idempotency key, and migration version. Every effective state mutation must check expected state version and create a new checkpoint atomically.
-- [ ] Add StyleProfile versions, focus/parallel scene records, knowledge_scope/known_by, event pins/tombstones and retrieval policy to checkpoints. Keep model profile/settings_revision in configuration scope, not story-state scope. A delete/hide changes future visibility but does not erase past snapshot sources.
-- [ ] Write regressions: two campaigns with the same character name cannot see each other's memory; pending memory is absent from approved results; a profile edit affects new requests but leaves an earlier profile version unchanged.
-- [ ] Add single-valued-slot conflict and ambiguous-alias tests. Two different values for the same effective slot require review/supersession; two NPC IDs sharing a normalized alias must never be merged automatically. Free-text semantic detection is advisory, not a guaranteed validator.
-- [ ] Add scene/knowledge regressions: mention != presence, viewpoint switch does not move an actor, narrator_only fact is not labelled public knowledge, and a later known_by update does not alter earlier snapshots. Test pin/edit/delete and auto/important_only/disabled retrieval without turning off mandatory canon/scene.
-- [ ] Run the focused tests and confirm failure due to missing behavior; implement minimal persistence and domain validation.
-- [ ] Implement profile/canon/scene editing and memory approval/rejection with revision history. AI origin cannot directly create approved records.
-- [ ] Run focused tests against an on-disk temporary DB, close/reopen it, and verify campaign/profile/memory state persists.
-- [ ] Orchestrator reviews schema/query scoping and runs `rtk proxy python -m pytest backend/tests/test_campaign_storage.py backend/tests/test_memory_versions.py backend/tests/test_auth.py -q`, verifies no default password or raw session token appears in DB/log output, then commits the reviewed deliverable in the new repository.
+- [x] Verify clean/current repository state, applicable instructions, coding-model dispatch and runtime paths before scaffolding.
+- [x] Add owner/session schema, an administrative owner-creation command, Argon2id password hashing and server-managed sessions. Production cookies require HttpOnly, Secure and SameSite; no public owner registration route.
+- [x] Write auth regressions: absent/revoked sessions cannot read story/context/export or start a stream; wrong passwords create no session; repeated failures hit a rate limit; cross-origin mutation is rejected. A stream already open closes within one 15-second session-check interval after revoke; the generation job remains private and may complete. Apply the guard to every feature router and test its endpoint inventory.
+- [x] Define schema for campaigns, character/profile versions, branches, turns, turn revisions, selected revisions, memory versions, scene versions, summaries, state checkpoints, context runs and jobs. Add FK constraints, uniqueness for owner/branch/operation/idempotency key, and migration version. Every effective state mutation must check expected state version and create a new checkpoint atomically.
+- [x] Add StyleProfile versions, focus/parallel scene records, knowledge_scope/known_by, event pins/tombstones and retrieval policy to checkpoints. Keep model profile/settings_revision in configuration scope, not story-state scope. A delete/hide changes future visibility but does not erase past snapshot sources.
+- [x] Write regressions: two campaigns with the same character name cannot see each other's memory; pending memory is absent from approved results; a profile edit affects new requests but leaves an earlier profile version unchanged.
+- [x] Add single-valued-slot conflict and ambiguous-alias tests. Two different values for the same effective slot require review/supersession; two NPC IDs sharing a normalized alias must never be merged automatically. Free-text semantic detection is advisory, not a guaranteed validator.
+- [x] Add scene/knowledge regressions: mention != presence, viewpoint switch does not move an actor, narrator_only fact is not labelled public knowledge, and a later known_by update does not alter earlier snapshots. Test pin/edit/delete and auto/important_only/disabled retrieval without turning off mandatory canon/scene.
+- [x] Run the focused tests and confirm failure due to missing behavior; implement minimal persistence and domain validation.
+- [x] Implement profile/canon/scene editing and memory approval/rejection with revision history. AI origin cannot directly create approved records.
+- [x] Run focused tests against an on-disk temporary DB, close/reopen it, and verify campaign/profile/memory state persists.
+- [x] Orchestrator reviews schema/query scoping and runs `rtk proxy python -m pytest backend/tests/test_campaign_storage.py backend/tests/test_memory_versions.py backend/tests/test_auth.py -q`, verifies no default password or raw session token appears in DB/log output, then commits the reviewed deliverable in the new repository.
 
 **Acceptance:** An authenticated owner can store/reopen world, cast, persona, scene and canon; unauthenticated requests cannot read private state.
 
@@ -134,19 +138,19 @@ Also produce `create_state_checkpoint` and `load_state_checkpoint`; imported tra
 
 Also produce `build_candidate_pool(checkpoint_id, action)` and `validate_selection_plan(checkpoint_id, action_hash, pool, plan)`, for Task 3's director. Pool defaults to 64 optional records; selected optional IDs at most 20. Mandatory is separate and cannot be deselected.
 
-- [ ] Define a 120-turn fixture with Henn and distinct NPCs, approved interval summaries, aliases, location changes, a milk-promise event far back, and a character mentioned without entering the scene. Mark facts as synthetic test data. Coverage checks must show older turns replaced by valid summaries while the latest committed turn remains verbatim.
-- [ ] Add expected source IDs: scene cast, pinned Henn agency rule, old unresolved promise and relevant lore. Add excluded IDs for another campaign, pending facts and irrelevant side lore.
-- [ ] Ensure the pool includes unresolved old events and related actor/scene records beyond the most recent 64; add an indirect-reference/pronoun case. Deduplicate full recent-source overlap by record/version/span without dropping a pinned obligation just because a compressed summary covers its source.
-- [ ] Write SelectionPlan tests rejecting out-of-pool, wrong-branch, pending, duplicate or invented IDs and nonexistent scenes; a plan that omits mandatory cannot remove those blocks. Keep selected explanations short and sourced; generated “new facts” cannot enter context as truth.
-- [ ] Write failing tests for relevance, alias match, deterministic ordering, provenance and exclusion. Add one exact-counter fake and one estimated-counter fake to verify labeling.
-- [ ] Implement mandatory/optional blocks, normalized keyword/alias matching and stable ranking; show omission reasons and source links.
-- [ ] Implement the budget formula from the spec; record every block cost. Required overflow returns a structured failure before network use. Unsupported model limits cannot fall back to guessed values.
-- [ ] Ensure recent unsummarized committed turns remain required; only approved, nonstale summaries can replace covered turns. Request memory review when mandatory recent turns no longer fit.
-- [ ] Annotate dynamic memory/scene as-of cursors and distinguish them from canon invariants. Test a pinned old promise plus a newer committed change: both source/history remain visible with correct temporal precedence, not a frozen old value. A wrong height in narration cannot silently overwrite a user-approved invariant.
-- [ ] Implement the 75%-budget/scene-end review hint; test with one very long chapter that five-turn scheduling would miss. Do not discard an unsummarized turn to make the test pass. Add manual user-authored approved summary creation so the first playable checkpoint does not depend on Task 5 extraction.
-- [ ] Save immutable preview and payload/config hashes; add stale-state detection for changed profile, memory or branch head.
-- [ ] Label preview as deterministic/preflight, retain knowledge-by-character and StyleProfile blocks, and verify it consumes zero provider calls. Quality's actual selection is stored later as final ContextRun; a settings hash change rebuilds preview without rewriting earlier story state.
-- [ ] Orchestrator runs focused context tests and checks that preview source IDs can be traced back to real DB rows; commit reviewed deliverable.
+- [x] Define a 120-turn fixture with Henn and distinct NPCs, approved interval summaries, aliases, location changes, a milk-promise event far back, and a character mentioned without entering the scene. Mark facts as synthetic test data. Coverage checks must show older turns replaced by valid summaries while the latest committed turn remains verbatim.
+- [x] Add expected source IDs: scene cast, pinned Henn agency rule, old unresolved promise and relevant lore. Add excluded IDs for another campaign, pending facts and irrelevant side lore.
+- [x] Ensure the pool includes unresolved old events and related actor/scene records beyond the most recent 64; add an indirect-reference/pronoun case. Deduplicate full recent-source overlap by record/version/span without dropping a pinned obligation just because a compressed summary covers its source.
+- [x] Write SelectionPlan tests rejecting out-of-pool, wrong-branch, pending, duplicate or invented IDs and nonexistent scenes; a plan that omits mandatory cannot remove those blocks. Keep selected explanations short and sourced; generated “new facts” cannot enter context as truth.
+- [x] Write failing tests for relevance, alias match, deterministic ordering, provenance and exclusion. Add one exact-counter fake and one estimated-counter fake to verify labeling.
+- [x] Implement mandatory/optional blocks, normalized keyword/alias matching and stable ranking; show omission reasons and source links.
+- [x] Implement the budget formula from the spec; record every block cost. Required overflow returns a structured failure before network use. Unsupported model limits cannot fall back to guessed values.
+- [x] Ensure recent unsummarized committed turns remain required; only approved, nonstale summaries can replace covered turns. Request memory review when mandatory recent turns no longer fit.
+- [x] Annotate dynamic memory/scene as-of cursors and distinguish them from canon invariants. Test a pinned old promise plus a newer committed change: both source/history remain visible with correct temporal precedence, not a frozen old value. A wrong height in narration cannot silently overwrite a user-approved invariant.
+- [x] Implement the 75%-budget/scene-end review hint; test with one very long chapter that five-turn scheduling would miss. Do not discard an unsummarized turn to make the test pass. Add manual user-authored approved summary creation so the first playable checkpoint does not depend on Task 5 extraction.
+- [x] Save immutable preview and payload/config hashes; add stale-state detection for changed profile, memory or branch head.
+- [x] Label preview as deterministic/preflight, retain knowledge-by-character and StyleProfile blocks, and verify it consumes zero provider calls. Quality's actual selection is stored later as final ContextRun; a settings hash change rebuilds preview without rewriting earlier story state.
+- [x] Orchestrator runs focused context tests and checks that preview source IDs can be traced back to real DB rows; commit reviewed deliverable.
 
 **Acceptance:** Without AI, an engineer can inspect exactly which data the next turn would use, why, and whether the budget fits.
 

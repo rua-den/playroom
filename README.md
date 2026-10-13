@@ -6,7 +6,19 @@ Trọng tâm là quản lý context qua nhiều chương: lưu hồ sơ, cảnh,
 
 ## Trạng thái
 
-Đang triển khai theo plan đã review. Backend đã có owner authentication, campaign/profile CRUD, checkpoint bất biến, ký ức có phiên bản và context preview deterministic không gọi AI. Review context đã chốt summary coverage, hồ sơ NPC/knowledge, alias, recency và budget. Toàn bộ 54 test backend đã qua trước bản sửa thứ tự; 29 test context đã qua sau bản sửa, gồm kiểm tra tám process/hash seed. Vòng AI và giao diện đang được xây tiếp; chưa kiểm chứng model thật. Người dùng chọn chạy/test local trước; cấu hình VPS/domain để sau.
+Backend có storage/auth/checkpoint/memory, context deterministic, OpenRouter adapter và pipeline quality/economy. Task1–2 đã qua review; Task3 vẫn cần review tích hợp và các proof còn thiếu. Snapshot bàn giao 13/10/2026 có **135 test backend qua**; chưa có frontend, demo launcher hoặc bản app chơi được. Chưa gọi model thật hay deploy VPS.
+
+**Tiếp tục từ [handoff hiện tại](docs/handoff/2026-10-13-state.md) và [plan chia nhỏ cho Luna](docs/superpowers/plans/2026-10-13-playroom-resume-plan.md).** Nhánh chứa code là `feat/playroom-mvp`, [draft PR #1](https://github.com/rua-den/playroom/pull/1); chưa merge main. Yêu cầu mới nhất là chạy/test local trước, SSH/domain/Caddy sau.
+
+Kiểm tra backend tại root repo:
+
+```powershell
+rtk proxy uv sync --locked --extra test
+rtk proxy uv run --locked --extra test pytest backend/tests -q
+rtk proxy uv run --locked python -m compileall -q backend/playroom
+```
+
+Không dùng số test xanh làm bằng chứng đầy đủ cho Task3: handoff chỉ rõ các test disconnect/cancel cần sửa setup, guard inventory và lỗi ghi usage cần kiểm chứng.
 
 ## Đọc theo thứ tự
 
