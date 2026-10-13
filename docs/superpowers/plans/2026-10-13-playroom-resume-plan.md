@@ -47,12 +47,12 @@ A task gate means implementation + valid test setup + diff review. Running the b
 **Consumes:** GenerationService._execute, _record_usage, _require_active, _finish_attempt; transaction(connection); persisted job/attempt epoch and cancel status.
 **Produces:** no director ledger/output/event/context write survives an old epoch or cancelled claim; valid director usage/output remains visible if later packing fails.
 
-- [ ] Add separate-connection regressions for recovery epoch change and cancel AFTER the valid director result has passed _require_active, at entry to post-result _pack_selected or _narrator_request. A barrier before provider return only retests the earlier gate and misses this defect.
-- [ ] Capture reserved_cost_json, context_runs, generation_events, final_context_json and attempt output/usage before releasing the old writer. Assert no new stale result/ledger/context/success event afterward. Current-epoch cancellation cleanup may emit terminal control events; it must not write provider result bytes, success or billing evidence.
-- [ ] Retain the existing post-director packing failure test: valid current result retains usage/output, no dispatched rows or branch guard leak, narrator0 calls.
-- [ ] Remove the unconditional _record_usage before the completion transaction and guard both packing-error paths. Perform validation and writes inside one BEGIN IMMEDIATE boundary with epoch/status/cancel CAS; do not hold it across inference.
-- [ ] Check narrator success/event boundary touched by the same invariant; change it only if a focused test proves a late-write defect.
-- [ ] Run:
+- [x] Add separate-connection regressions for recovery epoch change and cancel AFTER the valid director result has passed _require_active, at entry to post-result _pack_selected or _narrator_request. A barrier before provider return only retests the earlier gate and misses this defect.
+- [x] Capture reserved_cost_json, context_runs, generation_events, final_context_json and attempt output/usage before releasing the old writer. Assert no new stale result/ledger/context/success event afterward. Current-epoch cancellation cleanup may emit terminal control events; it must not write provider result bytes, success or billing evidence.
+- [x] Retain the existing post-director packing failure test: valid current result retains usage/output, no dispatched rows or branch guard leak, narrator0 calls.
+- [x] Remove the unconditional _record_usage before the completion transaction and guard both packing-error paths. Perform validation and writes inside one BEGIN IMMEDIATE boundary with epoch/status/cancel CAS; do not hold it across inference.
+- [x] Check narrator success/event boundary touched by the same invariant; change it only if a focused test proves a late-write defect.
+- [x] Run:
 
 ```powershell
 rtk proxy uv run --locked --extra test pytest backend/tests/test_generation_fix4.py -q
@@ -142,6 +142,8 @@ def test_old_director_result_cannot_write_after_transition(
 ```
 
 **Gate:** both competing cases pass with genuine ordering; valid-current failure still retains evidence; no public API change. Stop after B1 for its review.
+
+**B1 accepted 2026-10-13:** commit `e929bc363ff714e7ab6af5d3e6ec115516409882`. RED: director race regression `4 failed, 14 deselected`; narrator completion race `1 failed, 18 deselected`. GREEN: `test_generation_fix4.py` `19 passed`; durable `-k "restart or cancel or epoch"` `8 passed, 33 deselected`. Sol independently reran both covering commands and checked the committed range. B2 remains unstarted.
 
 ### B2: Replace the misleading quality SSE phase tests
 
