@@ -275,11 +275,13 @@ The full requirements of original Task4 remain binding. Use actual current APIs;
 **Consumes:** current /api/auth/login/me/logout shapes read from api/auth.py.
 **Produces:** same-origin typed client, owner login/logout/401 handling, cleared private cache, buildable Vietnamese shell.
 
-- [ ] Lock dependencies after checking compatible Node/Vite versions; Node on this host24.18 supports current chosen baseline.
-- [ ] client uses credentials same-origin, JSON errors mapped with status/code; it never embeds key/model caps.
-- [ ] Login requires no AI call. Logout clears story/jobs/drafts/private pending-key caches; session expiry shows re-login.
-- [ ] RED interaction tests for login failure and logout clearing; then typecheck/tests/build.
-- [ ] UI modular; no all-in-one App.tsx. No fake enabled play button yet.
+- [x] Lock dependencies after checking compatible Node/Vite versions; Node on this host24.18 supports current chosen baseline.
+- [x] Client uses credentials same-origin, JSON errors mapped with status/code; it never embeds key/model caps.
+- [x] Login requires no AI call. Logout clears story/jobs/drafts/private pending-key caches; session expiry shows re-login.
+- [x] RED interaction tests for login failure, logout clearing, session expiry and auth-generation races; then typecheck/tests/build.
+- [x] UI modular; no all-in-one App.tsx. No fake enabled play button.
+
+**U1 accepted:** real behavioral RED/GREEN included logout/auth-generation races; frontend interaction suite 7 passed, typecheck and Vite production build passed, independent review found no actionable findings. Sol inspected the login screen at 390px. This is the login shell only; protected campaign reads, full shell browser smoke and playable demo remain U2–U7.
 
 ### U2: Owned head/transcript/recovery reads
 
@@ -385,4 +387,4 @@ For each future batch, extract its exact original task requirements into a small
 
 Update [state](../../handoff/2026-10-13-state.md) after each accepted task with SHA, reviewed range, actual test output, explicit open findings and next task. Old “DONE” reports are not proof. Read original specifications for semantics; this continuation plan changes sequencing, not product requirements.
 
-Current next task is **B1 only**. No frontend work, consolidation, infrastructure or mass refactor until the backend gate. After B1, send the diff for Sol review and stop that coding batch.
+Current state: **B1–B6 accepted**. The user has now authorized continuing through the local playable product and integrated review. Execute U1–U7 in order, reviewing each accepted slice before consuming it in the next. Do not call a real model or deploy; the local explicit synthetic demo is the product gate in this worktree. Keep hosting, real-provider quality trials, and long-play acceptance open until separately authorized and actually tested.
