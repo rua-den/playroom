@@ -7,6 +7,39 @@ import type { CampaignProjection } from "../api/types";
 const projection = { campaign: { id: "campaign-1", title: "Test", created_at: "", updated_at: "", archived_at: null }, branch: { id: "branch-1", name: "main", state_version: 3, checkpoint_id: "checkpoint-1" }, checkpoint: { id: "checkpoint-1", state_version: 3, parent_checkpoint_id: null, selected_revision_ids: [], retrieval_policy: "auto" }, profiles: {}, scene: null, transcript: [], jobs: [] } as CampaignProjection;
 
 describe("GenerationComposer", () => {
+  it("offers editable narrative starters without submitting", async () => {
+    const user = userEvent.setup();
+    render(<GenerationComposer ownerId="owner-1" projection={projection} profileId="profile-1" onCommitted={vi.fn()} />);
+    const actionField = screen.getByLabelText("Hành động tiếp theo");
+    await user.click(screen.getByRole("button", { name: "Suy nghĩ" }));
+    expect(actionField).toHaveValue("Suy nghĩ: ");
+    expect(screen.getByRole("button", { name: "Kể tiếp" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Kể tiếp" })).not.toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Lời thoại" }));
+    expect(actionField).toHaveValue("Suy nghĩ: \nLời thoại: \"\"");
+  });
+
+  it("returns focus to the composer and places dialogue caret inside quotes", async () => {
+    const user = userEvent.setup();
+    render(<GenerationComposer ownerId="owner-1" projection={projection} profileId="profile-1" onCommitted={vi.fn()} />);
+    const actionField = screen.getByLabelText("Hành động tiếp theo");
+    await user.click(screen.getByRole("button", { name: "Lời thoại" }));
+    await waitFor(() => {
+      expect(document.activeElement).toBe(actionField);
+      expect(actionField).toHaveValue('Lời thoại: ""');
+      expect((actionField as HTMLTextAreaElement).selectionStart).toBe('Lời thoại: "'.length);
+    });
+  });
+
+  it("preserves whitespace-only existing text when adding a starter", async () => {
+    const user = userEvent.setup();
+    render(<GenerationComposer ownerId="owner-1" projection={projection} profileId="profile-1" onCommitted={vi.fn()} />);
+    const actionField = screen.getByLabelText("Hành động tiếp theo");
+    await user.type(actionField, "   ");
+    await user.click(screen.getByRole("button", { name: "Hành động" }));
+    expect(actionField).toHaveValue("   \nHành động: ");
+  });
+
   it("deduplicates UTF-16 deltas and reports a gap for authoritative content recovery", () => {
     expect(mergeGenerationEvents("A", 1, [{ id: 1, stage: "narration", event_type: "delta", offset: 3, content: "😀" }, { id: 2, stage: "narration", event_type: "delta", offset: 3, content: "😀" }])).toEqual({ text: "A😀", offset: 3, gap: false });
     expect(mergeGenerationEvents("A", 1, [{ id: 1, stage: "narration", event_type: "delta", offset: 4, content: "B" }]).gap).toBe(true);

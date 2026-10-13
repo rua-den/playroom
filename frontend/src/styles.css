@@ -114,3 +114,49 @@ input:focus { border-color: #d79771; box-shadow: 0 0 0 3px #d7977133; }
 .settings-panel textarea {
   min-height: 44px;
 }
+.theme-selector { display: grid; gap: 8px; margin: 0 0 18px; }
+.theme-selector select { width: 100%; border: 1px solid #5b5145; border-radius: 12px; padding: 0 12px; color: #fff; background: #151311; }
+.composer-starters { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; }
+.composer-starters .quiet-button { min-height: 44px; }
+:root[data-theme="light"] { color: #2b241e; background: #f7f1e8; }
+:root[data-theme="light"] body { background: radial-gradient(circle at 75% 10%, #fff 0, #f1e7d8 42rem); }
+:root[data-theme="light"] .story-column, :root[data-theme="light"] .details-column { color: #332a23; }
+:root[data-theme="light"] .generation-composer form > textarea, :root[data-theme="light"] .generation-composer [aria-label="Bản nháp kể chuyện"], :root[data-theme="light"] .theme-selector select { color: #2b241e; background: #fffaf3; border-color: #b7a795; }
+:root[data-theme="light"] .quiet-button { color: #3d3026; border-color: #b7a795; }
+:root[data-theme="light"] .markdown-content { color: #3d3026; }
+:root[data-theme="light"] .details-meta, :root[data-theme="light"] .profile-block p { color: #6d5c4d; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) { color: #2b241e; background: #f7f1e8; }
+  :root:not([data-theme]) body { background: radial-gradient(circle at 75% 10%, #fff 0, #f1e7d8 42rem); }
+  :root:not([data-theme]) .generation-composer form > textarea, :root:not([data-theme]) .generation-composer [aria-label="Bản nháp kể chuyện"] { color: #2b241e; background: #fffaf3; border-color: #b7a795; }
+  :root:not([data-theme]) .quiet-button { color: #3d3026; border-color: #b7a795; }
+  :root:not([data-theme]) .markdown-content { color: #3d3026; }
+  :root:not([data-theme]) h1, :root:not([data-theme]) h2, :root:not([data-theme]) h3, :root:not([data-theme]) h4, :root:not([data-theme]) .markdown-content h2, :root:not([data-theme]) .markdown-content h3, :root:not([data-theme]) .markdown-content h4, :root:not([data-theme]) .markdown-content strong { color: #2b241e; }
+  :root:not([data-theme]) label { color: #493a2e; }
+  :root:not([data-theme]) input, :root:not([data-theme]) .campaign-form textarea, :root:not([data-theme]) .editor-stack textarea { color: #2b241e; background: #fffaf3; border-color: #b7a795; }
+  :root:not([data-theme]) .campaign-item:hover, :root:not([data-theme]) .campaign-item.selected { color: #2b241e; border-color: #c6aa90; background: #eadbc9; }
+  :root:not([data-theme]) .mobile-drawer, :root:not([data-theme]) .mobile-sheet, :root:not([data-theme]) .create-card, :root:not([data-theme]) .story-empty, :root:not([data-theme]) .empty-campaign { color: #332a23; background: #fffaf3; border-color: #c6b6a5; }
+  :root:not([data-theme]) .form-error { color: #8d2f27; background: #f9e0dc; border-color: #c8786d; }
+}
+:root[data-theme="light"] .details-meta, :root[data-theme="light"] .profile-block p, :root[data-theme="light"] .story-empty p, :root[data-theme="light"] .empty-campaign p, :root[data-theme="light"] .account-email, :root[data-theme="light"] .loading-screen, :root[data-theme="light"] .eyebrow { color: #6d5c4d; }
+:root[data-theme="light"] .campaign-item, :root[data-theme="light"] .turn-action, :root[data-theme="light"] .campaign-form legend { color: #8a573d; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) .details-meta, :root:not([data-theme]) .profile-block p, :root:not([data-theme]) .story-empty p, :root:not([data-theme]) .empty-campaign p, :root:not([data-theme]) .account-email, :root:not([data-theme]) .loading-screen, :root:not([data-theme]) .eyebrow { color: #6d5c4d; }
+  :root:not([data-theme]) .campaign-item, :root:not([data-theme]) .turn-action, :root:not([data-theme]) .campaign-form legend { color: #8a573d; }
+}
+:root[data-theme="light"] h1, :root[data-theme="light"] h2, :root[data-theme="light"] h3, :root[data-theme="light"] h4, :root[data-theme="light"] .markdown-content h2, :root[data-theme="light"] .markdown-content h3, :root[data-theme="light"] .markdown-content h4, :root[data-theme="light"] .markdown-content strong { color: #2b241e; }
+:root[data-theme="light"] label { color: #493a2e; }
+:root[data-theme="light"] input, :root[data-theme="light"] .campaign-form textarea, :root[data-theme="light"] .editor-stack textarea { color: #2b241e; background: #fffaf3; border-color: #b7a795; }
+:root[data-theme="light"] .campaign-item:hover, :root[data-theme="light"] .campaign-item.selected { color: #2b241e; border-color: #c6aa90; background: #eadbc9; }
+:root[data-theme="light"] .mobile-drawer, :root[data-theme="light"] .mobile-sheet, :root[data-theme="light"] .create-card, :root[data-theme="light"] .story-empty, :root[data-theme="light"] .empty-campaign { color: #332a23; background: #fffaf3; border-color: #c6b6a5; }
+:root[data-theme="light"] .form-error { color: #8d2f27; background: #f9e0dc; border-color: #c8786d; }
+:root[data-theme="light"] .auth-card { color: #332a23; background: #fffaf3; border-color: #c6b6a5; box-shadow: 0 24px 80px #8f7b6655; }
+:root[data-theme="light"] .auth-card h1, :root[data-theme="light"] .auth-card h2, :root[data-theme="light"] .auth-card label { color: #2b241e; }
+:root[data-theme="light"] .auth-card input { color: #2b241e; background: #fff; border-color: #b7a795; }
+:root[data-theme="light"] .auth-intro, :root[data-theme="light"] .auth-card .security-note { color: #6d5c4d; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) .auth-card { color: #332a23; background: #fffaf3; border-color: #c6b6a5; box-shadow: 0 24px 80px #8f7b6655; }
+  :root:not([data-theme]) .auth-card h1, :root:not([data-theme]) .auth-card h2, :root:not([data-theme]) .auth-card label { color: #2b241e; }
+  :root:not([data-theme]) .auth-card input { color: #2b241e; background: #fff; border-color: #b7a795; }
+  :root:not([data-theme]) .auth-intro, :root:not([data-theme]) .auth-card .security-note { color: #6d5c4d; }
+}
