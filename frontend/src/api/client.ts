@@ -76,6 +76,16 @@ export const api = {
   getProviderSettings: () => request<ProviderSettings>("/api/provider/settings"),
   updateProviderSettings: (payload: SettingsUpdatePayload) => request<ProviderSettings>("/api/provider/settings", { method: "PUT", body: JSON.stringify(payload) }),
   verifyProviderProfile: (payload: { credential_id: string; model: string; endpoint: string; provider_tag: string }) => request<ModelProfileSummary>("/api/provider/profiles/verify", { method: "POST", body: JSON.stringify(payload) }),
+  createContextPreview: (campaignId: string, payload: { branch_id: string; action: string; profile_id: string }) => request<import("./types").ContextPreview>(`/api/campaigns/${encodeURIComponent(campaignId)}/context/previews`, { method: "POST", body: JSON.stringify(payload) }),
+  getContextPreview: (previewId: string) => request<import("./types").ContextPreview>(`/api/context/previews/${encodeURIComponent(previewId)}`),
+  generate: (campaignId: string, payload: { branch_id: string; action: string; idempotency_key: string; checkpoint_id: string; preview_id?: string; mode?: string; policy?: string; cap?: string | null }) => request<import("./types").GenerationJob>(`/api/campaigns/${encodeURIComponent(campaignId)}/generate`, { method: "POST", body: JSON.stringify(payload) }),
+  getGenerationJob: (jobId: string) => request<import("./types").GenerationJob>(`/api/generation/jobs/${encodeURIComponent(jobId)}`),
+  getGenerationByKey: (branchId: string, idempotencyKey: string) => request<import("./types").GenerationJob>(`/api/generation/jobs/by-key?branch_id=${encodeURIComponent(branchId)}&idempotency_key=${encodeURIComponent(idempotencyKey)}`),
+  getGenerationEvents: (jobId: string, after = 0) => request<{ events: import("./types").GenerationEvent[] }>(`/api/generation/jobs/${encodeURIComponent(jobId)}/events?after=${after}`),
+  getGenerationContent: (jobId: string) => request<import("./types").GenerationJob>(`/api/generation/jobs/${encodeURIComponent(jobId)}/content`),
+  cancelGeneration: (jobId: string) => request<import("./types").GenerationJob>(`/api/generation/jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST" }),
+  editGenerationDraft: (jobId: string, draft: string) => request<import("./types").GenerationJob>(`/api/generation/jobs/${encodeURIComponent(jobId)}/draft`, { method: "PUT", body: JSON.stringify({ draft }) }),
+  commitGeneration: (jobId: string) => request<import("./types").ProfileUpdateResult>(`/api/generation/jobs/${encodeURIComponent(jobId)}/commit`, { method: "POST" }),
   login: async (payload: LoginPayload) => {
     activeLogout?.abort();
     activeLogout = null;

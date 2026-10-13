@@ -3,6 +3,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
 import { api, privateCache } from "./api/client";
+import { generationIdentityKey } from "./components/GenerationComposer";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -32,6 +33,7 @@ describe("authentication shell", () => {
     privateCache.set("stories", [{ id: "story-1" }]);
     privateCache.set("jobs:story-1", { id: "job-1" });
     privateCache.set("pending-key:story-1", "secretless-idempotency");
+    localStorage.setItem(generationIdentityKey("owner-1", "campaign-1", "branch-1"), JSON.stringify({ idempotencyKey: "generation-key" }));
     const user = userEvent.setup();
     render(<App />);
     expect(await screen.findByText("Chào mừng trở lại"))
@@ -39,6 +41,7 @@ describe("authentication shell", () => {
     await user.click(screen.getByRole("button", { name: "Đăng xuất" }));
     expect(await screen.findByRole("heading", { name: "Đăng nhập Playroom" })).toBeInTheDocument();
     expect(privateCache.size).toBe(0);
+    expect(localStorage.getItem(generationIdentityKey("owner-1", "campaign-1", "branch-1"))).toBeNull();
     expect(fetchMock).toHaveBeenLastCalledWith("/api/auth/logout", expect.objectContaining({ method: "POST", credentials: "same-origin" }));
   });
 
@@ -49,12 +52,14 @@ describe("authentication shell", () => {
       .mockRejectedValueOnce(new TypeError("Failed to fetch"));
     vi.stubGlobal("fetch", fetchMock);
     privateCache.set("stories", [{ id: "story-1" }]);
+    localStorage.setItem(generationIdentityKey("owner-1", "campaign-1", "branch-1"), JSON.stringify({ idempotencyKey: "generation-key" }));
     const user = userEvent.setup();
     render(<App />);
     await screen.findByText("Chào mừng trở lại");
     await user.click(screen.getByRole("button", { name: "Đăng xuất" }));
     expect(await screen.findByRole("heading", { name: "Đăng nhập Playroom" })).toBeInTheDocument();
     expect(privateCache.size).toBe(0);
+    expect(localStorage.getItem(generationIdentityKey("owner-1", "campaign-1", "branch-1"))).toBeNull();
     expect(screen.getByRole("alert")).toHaveTextContent("chưa xác nhận được đăng xuất trên máy chủ");
   });
 
@@ -66,12 +71,14 @@ describe("authentication shell", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ owner: { id: "owner-1", email: "owner@example.test" } }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     privateCache.set("stories", [{ id: "story-1" }]);
+    localStorage.setItem(generationIdentityKey("owner-1", "campaign-1", "branch-1"), JSON.stringify({ idempotencyKey: "generation-key" }));
     const user = userEvent.setup();
     render(<App />);
     await screen.findByText("Chào mừng trở lại");
     await expect(api.me()).rejects.toMatchObject({ status: 401 });
     expect(await screen.findByRole("heading", { name: "Đăng nhập Playroom" })).toBeInTheDocument();
     expect(privateCache.size).toBe(0);
+    expect(localStorage.getItem(generationIdentityKey("owner-1", "campaign-1", "branch-1"))).toBeNull();
     expect(screen.getByRole("alert")).toHaveTextContent("Phiên đăng nhập đã hết hạn");
     await user.type(screen.getByLabelText("Email"), "owner@example.test");
     await user.type(screen.getByLabelText("Mật khẩu"), "correct-password");

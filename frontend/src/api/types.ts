@@ -102,3 +102,15 @@ export interface ModelProfileSummary { id: string; version: number; model: strin
 export interface ProviderRoleBinding { id: string; version: number; profile_hash?: string; }
 export interface ProviderSettings { settings_revision: number; settings_hash?: string; mode: "economy" | "quality"; policy: "free_only" | "capped_paid"; confirmed_usd_cap: string | null; roles: { context?: ProviderRoleBinding; narrator?: ProviderRoleBinding; consolidation?: ProviderRoleBinding }; budgets: Record<string, { input_limit: number; requested_output: number; wrapper_buffer: number }>; budgets_configured?: boolean; }
 export interface SettingsUpdatePayload { context_profile_id?: string; narrator_profile_id?: string; consolidation_profile_id?: string; mode?: "economy" | "quality"; policy?: "free_only" | "capped_paid"; confirmed_usd_cap?: string | null; budgets?: Record<string, { input_limit: number; requested_output: number; wrapper_buffer: number }>; }
+
+export interface ContextPreview { id: string; campaign_id: string; branch_id: string; checkpoint_id: string; action: string; status: "ready" | "blocked" | "stale"; profile_id: string; payload?: Record<string, unknown>; estimated_tokens?: number; omitted?: string[]; }
+export interface GenerationEvent { id: number; stage: string | null; event_type: string; offset: number; content: string; payload?: Record<string, unknown>; created_at?: string; }
+export interface GenerationLedgerStage {
+  provider_reported_cost_usd?: string | null; provider_reported_status?: "provider_reported" | "unknown";
+  calculated_cost_usd?: string | null; calculated_status?: "calculated" | "unknown";
+  estimated_cost_usd?: string | null; estimated_status?: "estimated" | "unknown";
+  actual_cost_usd?: string | null; actual_status?: "provider_reported" | "calculated" | "estimated" | "unknown";
+  cost_provenance?: string; usage?: Record<string, unknown> | null;
+}
+export interface GenerationCostLedger { policy?: string; cap?: string | null; stages?: Record<string, GenerationLedgerStage>; actual_status?: string; actual_total_usd?: string | null; provider_reported_total_usd?: string | null; calculated_total_usd?: string | null; }
+export interface GenerationJob { id: string; campaign_id: string; branch_id: string; checkpoint_id: string; status: GenerationJobSummary["status"]; action?: string | null; draft: string; offset: number; offset_unit: "utf16_code_units"; failure?: { code?: string; message?: string } | null; candidate?: boolean; usage?: Record<string, unknown>; events?: GenerationEvent[]; attempt_counts_by_stage?: Record<string, Record<string, number>>; cost_ledger?: GenerationCostLedger; }

@@ -5,6 +5,13 @@ import { AppShell } from "./components/AppShell";
 import { AuthView } from "./features/auth/AuthView";
 import "./styles.css";
 
+function clearGenerationIdentities() {
+  for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+    const key = localStorage.key(index);
+    if (key?.startsWith("playroom:generation:")) localStorage.removeItem(key);
+  }
+}
+
 export default function App() {
   const [owner, setOwner] = useState<Owner | null>(null);
   const [booting, setBooting] = useState(true);
@@ -22,12 +29,14 @@ export default function App() {
 
   useEffect(() => subscribeAuthExpired(() => {
     privateCache.clear();
+    clearGenerationIdentities();
     setOwner(null);
     setNotice("Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.");
   }), []);
 
   async function logout() {
     privateCache.clear();
+    clearGenerationIdentities();
     setOwner(null);
     setNotice(null);
     void api.logout().then((result) => {
