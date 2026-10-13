@@ -237,15 +237,15 @@ finally:
 **Consumes:** OpenRouterAdapter, default_provider_factory with mocked client, provider_wire/canonical_json/wire_hash/declared_count, saved role versions, ContextRun.
 **Produces:** JSON captured at client.stream equals persisted/countable provider payload for both stages; profile role identity does not collapse distinct versions.
 
-- [ ] Mock client.stream to capture its json argument and emit correct incremental SSE. Use dummy credential only.
-- [ ] Capture director response_format schema and narrator messages/model/provider.only/output allowance. Compare full JSON, not nonempty messages.
-- [ ] Recompute wire_hash(captured) and declared_count(canonical_json(captured)); compare attempt payload_hash and ContextRun role metadata.
-- [ ] Test same profile id with context v1/narrator v2 in economy and quality, then switch the opposite role. Preview/generate must use the pinned matching role/version/hash.
-- [ ] Retain fractional aggregate/known-director remaining/unknown-director reservation proofs already added. Review them rather than rewriting them.
-- [ ] Test settings update after queue leaves captured queued payload/profile unchanged; revoked pinned credential invokes0 HTTP streams.
-- [ ] Run named test files; no live metadata verification or inference.
+- [x] Mock client.stream to capture its json argument and emit valid incremental SSE. Use dummy credential only.
+- [x] Capture director response_format schema and narrator messages/model/provider.only/output allowance. Compare full JSON, not nonempty messages.
+- [x] Recompute wire_hash(captured) and declared_count(canonical_json(captured)); compare attempt payload_hash and ContextRun role metadata.
+- [x] Test same persisted profile id with context v1/narrator v2 in economy and quality, then switch the opposite role. Generation uses the pinned matching role/version/hash.
+- [x] Retain and review the fractional aggregate/known-director remaining/unknown-director reservation proofs without rewriting them.
+- [x] Test persisted settings update after queue leaves the captured payload/profile on the queued revision; a revoked pinned CredentialStore version opens zero HTTP streams.
+- [x] Run named test files; no live metadata verification or inference.
 
-**Gate:** emitted adapter JSON equality and distinct role/version recovery are real, independent proofs.
+**B5 accepted 2026-10-13:** test commit `78909fb8671077ac350789ec589fbe9f586a4069`. Mocked OpenRouter SSE captures both quality stage JSON payloads; exact emitted JSON equals the persisted ContextRun wire, recomputed hash equals provider attempt/context payload hash, and canonical declared count equals the persisted budget. Captured director schema, narrator wire, model, provider-only and output allowance are asserted. Same-ID v1/v2 roles are persisted and bound through owner settings for economy, quality, and swapped quality; provider factory and ContextRun snapshots retain each role's ID/version/hash. A queued job retains v1 profile/settings revision and output allowance after a real persisted v2/budget update; a revoked CredentialStore version opens zero mocked HTTP streams. Existing fractional cap and known/unknown director remaining-allowance tests were reviewed and left intact. Sol independently ran `rtk uv run --locked --extra test pytest backend/tests/test_provider_contract.py backend/tests/test_generation_fix4.py backend/tests/test_context_selection.py backend/tests/test_model_switch.py -q` — 68 passed; `rtk git diff --check` clean. No production changes. B6 integrated Task3 review is next; this does not accept Task3.
 
 ### B6: Integrated Task3 review and local backend gate
 
