@@ -3,6 +3,8 @@ export interface Owner {
   email: string;
 }
 
+export interface DemoInfo { mode: "synthetic" | "production"; label: string; provider?: string; }
+
 export interface LoginPayload {
   email: string;
   password: string;

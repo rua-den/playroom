@@ -51,6 +51,7 @@ async function request<T>(path: string, init: RequestInit = {}, notifyAuthExpire
 }
 
 export const api = {
+  getDemoInfo: () => request<import("./types").DemoInfo>("/api/demo/info", {}, false),
   me: (options: { notifyAuthExpired?: boolean } = {}) => request<Owner>("/api/auth/me", {}, options.notifyAuthExpired ?? true),
   listCampaigns: () => request<CampaignSummary[]>("/api/campaigns"),
   getCampaign: (campaignId: string) => request<CampaignDetail>(`/api/campaigns/${encodeURIComponent(campaignId)}`),

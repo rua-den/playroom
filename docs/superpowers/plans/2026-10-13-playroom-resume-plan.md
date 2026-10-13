@@ -349,16 +349,18 @@ The job-scoped provider billing vs calculated/estimated/unknown ledger and separ
 **Consumes:** preview, generate, by-key/job/status/content/events/cancel/draft/commit APIs.
 **Produces:** exactly one inference job per action identity, retained drafts and recoverable candidate.
 
-- [ ] Persist branch/action/checkpoint/preview/idempotency identity BEFORE POST. Ambiguous response recovers GET by-key; never new-key auto retry.
-- [ ] Automatic preview→send; optional context inspector shows source/omission/budget labels.
-- [ ] Display job-scoped provider billing/calculated/estimated/unknown ledger without treating unknown as zero, and show phase/operation counts separately; configuration pricing must never be presented as actual cost.
-- [ ] Quota/unsupported-schema failures retain the player draft and offer an explicit economy retry only; never fall back to paid/provider/mode automatically.
-- [ ] Distinguish director phase from narrator completion. UTF-16 offsets: deduplicate deltas and fetch authoritative content if a gap occurs.
-- [ ] Reload/foreground/network restore reads existing job; reconnect does not cancel/replay provider.
-- [ ] Complete/current candidate only may commit. Next action first commits displayed complete candidate, refreshes head, then previews the next action.
-- [ ] Incomplete/refused/truncated/stale candidates cannot auto-commit. Failure retains action/draft; incomplete draft editing follows the existing /draft contract; complete/committed candidates are immutable through that endpoint.
-- [ ] Manual reading scroll/focus stays stable, composer does not cover last text;44px controls and IME safe.
-- [ ] Tests count generation POST/provider attempts across lost response, reload, logout/re-login and stream completion; mock EOF is not completion.
+- [x] Persist branch/action/checkpoint/preview/idempotency identity BEFORE POST. Ambiguous response recovers GET by-key; never new-key auto retry.
+- [x] Automatic preview→send; optional context inspector shows source/omission/budget labels.
+- [x] Display job-scoped provider billing/calculated/estimated/unknown ledger without treating unknown as zero, and show phase/operation counts separately; configuration pricing must never be presented as actual cost.
+- [x] Quota/unsupported-schema failures retain the player draft and offer an explicit economy retry only; never fall back to paid/provider/mode automatically.
+- [x] Distinguish director phase from narrator completion. UTF-16 offsets: deduplicate deltas and fetch authoritative content if a gap occurs.
+- [x] Reload/foreground/network restore reads existing job; reconnect does not cancel/replay provider.
+- [x] Complete/current candidate only may commit. Next action first commits displayed complete candidate, refreshes head, then previews the next action.
+- [x] Incomplete/refused/truncated/stale candidates cannot auto-commit. Failure retains action/draft; incomplete draft editing follows the existing /draft contract; complete/committed candidates are immutable through that endpoint.
+- [x] Manual reading scroll/focus stays stable, composer does not cover last text;44px controls and IME safe.
+- [x] Tests count generation POST/provider attempts across lost response, reload, logout/re-login and stream completion; mock EOF is not completion.
+
+**U6 accepted 2026-10-13:** code commit `4502571160ae6f8866f7886005b15574c96b8b2e`. Added the send/reconnect/cancel/draft/commit client flow, persistent idempotency identity, owned-job recovery after client cache clearing, UTF-16 delta merging with content recovery, status-gated candidate commit, usage ledger and explicit economy retry. RED/GREEN interaction regressions cover ambiguous POST recovery, temporary recovery failure, stale projection, logout/auth-expiry identity clearing, UTF-16 gaps, IME submit, active-job send blocking, draft preservation across polling, authoritative immutable candidate text, and next send after direct commit. Sol independently ran the frontend suite — 54 passed — `npm run typecheck`, `npm run build`, and `git diff --check 4eb4e86..HEAD`; source review confirmed polling does not programmatically move focus/scroll, the composer remains in document flow, and `.touch-target` is at least 44px. Full authenticated browser fake-play and viewport screenshots remain U7 acceptance; no real provider/model call or deployment was used. This does not claim Task3 complete.
 
 ### U7: Explicit local demo, PWA and browser acceptance
 
@@ -366,14 +368,16 @@ The job-scoped provider billing vs calculated/estimated/unknown ledger and separ
 **Consumes:** accepted backend/U1–U6.
 **Produces:** reproducible authenticated synthetic play loop on loopback with preserved demo data.
 
-- [ ] Dedicated ignored DB/secrets directory; user-supplied or generated first-install owner password, no fixed shared password.
-- [ ] Existing demo data survives restart. Bind127.0.0.1 by default; explicit demo can use HTTP secure_cookies=False.
-- [ ] Normal production factory/secure cookies stay intact; fake mode is clearly labeled in CLI/UI.
-- [ ] Serve built SPA/API same origin. Missing production configuration gives setup error, never synthetic narrative.
-- [ ] PWA manifest/icons/standalone metadata; no private API caching or offline inference promise.
-- [ ] Actual browser create campaign→preview→fake stream→commit→reload; counts and persisted transcript checked.
-- [ ] Screenshot/layout evidence360/390/430 and desktop; real-phone install/keyboard trial recorded separately if unavailable.
-- [ ] Sol runs frontend tests/typecheck/build, relevant backend suite and independent browser smoke. Keep usable local server/URL for the user.
+- [x] Dedicated ignored DB/secrets directory; user-supplied or generated first-install owner password, no fixed shared password.
+- [x] Existing demo data survives restart. Bind only loopback hosts; explicit demo can use HTTP secure_cookies=False.
+- [x] Normal production factory/secure cookies stay intact; fake mode is clearly labeled in CLI/UI.
+- [x] Serve built SPA/API same origin. Missing frontend build gives setup error, never synthetic narrative.
+- [x] PWA manifest/icons/standalone metadata; no private API caching or offline inference promise.
+- [x] Actual browser create campaign→preview→fake stream→commit→reload; counts and persisted transcript checked.
+- [x] Screenshot/layout evidence at 360/390/430 and desktop; physical-phone install/keyboard trial is recorded as a separate open item.
+- [x] Sol independently runs frontend tests/typecheck/build, relevant backend suite and browser smoke. Keep usable local server/URL for the user.
+
+**U7 accepted 2026-10-13:** `playroom-demo` is opt-in, enforces loopback binding, uses a dedicated ignored SQLite/secrets directory, prints a random first-install password once, and preserves state across restart. Production provider/cookie defaults are covered by `test_production_factory_remains_real_provider_default`. The demo serves built SPA, manifest and icon same-origin; PWA icons declare 192/512 sizes. Browser smoke at `http://127.0.0.1:8010/` signed in, created a campaign, previewed, streamed a fake result, recovered a candidate after reload, committed three synthetic turns and confirmed the final action/transcript after reload. DB read-only check: 3 committed jobs, 3 completed narration attempts, 3 turns/revisions. A RED/GREEN regression fixed action extraction and formatting in the fake provider. Responsive review captured 360, 390, 430 and 1280px screenshots and fixed mobile header/composer overflow. Sol independently ran 103 relevant backend tests, 54 frontend tests, `npm run typecheck`, `npm run build`, `python -m compileall -q backend/playroom`, and `git diff --check`. No real model/provider call or deployment. Physical phone install/keyboard trial and real-model narrative quality remain open; this does not claim Task3 complete.
 
 ## Long-play features after playable local gate
 

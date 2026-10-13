@@ -68,6 +68,16 @@ input:focus { border-color: #d79771; box-shadow: 0 0 0 3px #d7977133; }
 .character-row { display: flex; align-items: flex-end; gap: 10px; }
 .character-fields { flex: 1; display: grid; gap: 8px; }
 .campaign-form .primary-button { margin-top: 16px; }
+.generation-composer { max-width: 760px; margin-top: 2rem; }
+.generation-composer form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: end; }
+.generation-composer form > label { grid-column: 1 / -1; }
+.generation-composer form > textarea,
+.generation-composer [aria-label="Bản nháp kể chuyện"] {
+  width: 100%; min-width: 0; min-height: 88px; resize: vertical; border: 1px solid #5b5145; border-radius: 12px; padding: 12px 14px; color: #fff; background: #151311; font: inherit;
+}
+.generation-composer form > .primary-button { grid-column: 2; margin-top: 0; white-space: nowrap; }
+.generation-composer [aria-label="Trạng thái lượt kể"] > div { display: flex; flex-wrap: wrap; gap: 10px; }
+.generation-composer [aria-label="Trạng thái lượt kể"] > div > button { flex: 1 1 140px; margin-top: 0; }
 @media (max-width: 800px) { .workspace-grid { display: block; margin-top: 24px; } .campaign-nav, .details-column { display: none; } .mobile-actions { display: flex; gap: 10px; margin-top: 24px; } .story-column { margin-top: 32px; } }
 .topbar { max-width: 1240px; margin: auto; display: flex; justify-content: space-between; align-items: center; gap: 16px; }
 .wordmark { display: flex; align-items: center; gap: 10px; font-family: Georgia, serif; font-size: 21px; }
@@ -79,7 +89,19 @@ input:focus { border-color: #d79771; box-shadow: 0 0 0 3px #d7977133; }
 .empty-state { margin-top: 64px; max-width: 560px; padding: 28px; border-left: 2px solid #c98257; background: #25211d99; }
 .empty-state h2 { font: 27px Georgia, serif; }
 .empty-icon { color: #d79771; font-size: 42px; }
-@media (max-width: 560px) { .auth-card { padding: 30px 24px; } .account-email { display: none; } .app-shell { padding-inline: 18px; } }
+@media (max-width: 560px) {
+  .auth-card { padding: 30px 24px; }
+  .account-email { display: none; }
+  .app-shell { padding-inline: 18px; }
+  .topbar { align-items: flex-start; flex-wrap: wrap; gap: 12px; }
+  .wordmark { flex: 1 1 100%; min-width: 0; flex-wrap: wrap; }
+  .demo-badge { max-width: 100%; overflow-wrap: anywhere; }
+  .account-menu { width: 100%; flex-wrap: wrap; gap: 8px; }
+  .account-menu .quiet-button { flex: 1 1 132px; }
+  .generation-composer form { grid-template-columns: minmax(0, 1fr); }
+  .generation-composer form > .primary-button { grid-column: 1; width: 100%; }
+  .generation-composer [aria-label="Trạng thái lượt kể"] > div > button { flex-basis: 100%; width: 100%; }
+}
 /* U4 editors */
 .editor-stack { display: grid; gap: 0.75rem; margin-top: 1rem; }
 .editor-stack fieldset { display: grid; gap: 0.5rem; border: 1px solid var(--line); border-radius: 14px; padding: 0.75rem; }

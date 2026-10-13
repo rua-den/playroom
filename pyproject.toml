@@ -18,6 +18,7 @@ dependencies = [
 
 [project.scripts]
 playroom-owner = "playroom.auth:main"
+playroom-demo = "playroom.demo:main"
 
 [project.optional-dependencies]
 test = ["pytest>=8.4.1,<9"]
