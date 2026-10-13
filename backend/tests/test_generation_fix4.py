@@ -394,9 +394,13 @@ def test_old_director_result_cannot_write_after_transition(tmp_path, monkeypatch
         assert not worker.is_alive()
         assert db.execute("SELECT reserved_cost_json FROM generation_jobs WHERE id=?", (job["id"],)).fetchone()[0] == before["reserved"]
         assert db.execute("SELECT final_context_json FROM generation_jobs WHERE id=?", (job["id"],)).fetchone()[0] == before["context"]
-        events_after = db.execute("SELECT event_type FROM generation_events WHERE generation_job_id=? ORDER BY id", (job["id"],)).fetchall()
+        events_after = db.execute("SELECT event_type,payload_json FROM generation_events WHERE generation_job_id=? ORDER BY id", (job["id"],)).fetchall()
         late_events = [row[0] for row in events_after[before["events"]:]]
         assert not ({"context_completed", "completed", "candidate", "success"} & set(late_events))
+        assert not any(
+            row[0] == "phase_changed" and json.loads(row[1]).get("phase") == "context_completed"
+            for row in events_after[before["events"]:]
+        )
         if transition == "recover":
             assert late_events == []
         assert db.execute("SELECT COUNT(*) FROM context_runs WHERE generation_job_id=?", (job["id"],)).fetchone()[0] == before["runs"]
