@@ -80,3 +80,10 @@ input:focus { border-color: #d79771; box-shadow: 0 0 0 3px #d7977133; }
 .empty-state h2 { font: 27px Georgia, serif; }
 .empty-icon { color: #d79771; font-size: 42px; }
 @media (max-width: 560px) { .auth-card { padding: 30px 24px; } .account-email { display: none; } .app-shell { padding-inline: 18px; } }
+/* U4 editors */
+.editor-stack { display: grid; gap: 0.75rem; margin-top: 1rem; }
+.editor-stack fieldset { display: grid; gap: 0.5rem; border: 1px solid var(--line); border-radius: 14px; padding: 0.75rem; }
+.editor-stack textarea { min-height: 5rem; resize: vertical; }
+.editor-tabs { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0.75rem 0; }
+.memory-card { border: 1px solid var(--line); border-radius: 14px; padding: 0.75rem; display: grid; gap: 0.35rem; }
+.memory-card h3, .memory-card p { margin: 0; }

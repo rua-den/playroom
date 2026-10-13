@@ -54,6 +54,11 @@ class MemoryUpdate(BaseModel):
     entity_ids: list[str] | None = Field(default=None, max_length=64)
     knowledge_scope: str | None = None
     known_by: list[str] | None = Field(default=None, max_length=64)
+    subject_id: str | None = None
+    predicate: str | None = None
+    value: str | None = None
+    object_id: str | None = None
+    supersedes_id: str | None = None
 
 
 @router.get("/memory")
@@ -78,7 +83,8 @@ def history(campaign_id: str, memory_id: str, branch_id: str, connection: sqlite
 def edit_memory(campaign_id: str, memory_id: str, payload: MemoryUpdate, connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
     campaign_service.get_campaign(connection, campaign_id, owner.id)
     fields = payload.model_fields_set
-    return asdict(service.update_memory(connection, campaign_id, payload.branch_id, memory_id, expected_state_version=payload.expected_state_version, text=payload.text if "text" in fields else None, pinned=payload.pinned if "pinned" in fields else None, entity_ids=payload.entity_ids if "entity_ids" in fields else None, knowledge_scope=payload.knowledge_scope if "knowledge_scope" in fields else None, known_by=payload.known_by if "known_by" in fields else None))
+    update = {name: getattr(payload, name) for name in ("text", "pinned", "entity_ids", "knowledge_scope", "known_by", "subject_id", "predicate", "value", "object_id", "supersedes_id") if name in fields}
+    return asdict(service.update_memory(connection, campaign_id, payload.branch_id, memory_id, expected_state_version=payload.expected_state_version, **update))
 
 
 @router.post("/memory", status_code=201)

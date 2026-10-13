@@ -9,6 +9,7 @@ from playroom.domain import StateConflict
 from playroom.auth import create_owner
 from playroom.memory import append_memory_version, get_effective_scene, list_effective_memory, list_memory_history, list_memory_library, list_memory_proposals, reject_memory, approve_memory, set_retrieval_policy, update_memory, update_scene
 from playroom.timeline import get_branch_head, create_committed_revision
+from playroom.api.memory import MemoryUpdate
 
 
 @pytest.fixture
@@ -47,7 +48,7 @@ def test_single_valued_slot_conflict_requires_explicit_supersession(db, owner):
     campaign, branch = _campaign(db, owner, "Conflicts")
     head = get_branch_head(db, campaign.id, branch)
     first = append_memory_version(db, campaign.id, branch, "fact", "Linh cao 170cm", origin="user", expected_state_version=head.state_version, source_revision_ids=[], subject_id=campaign.character_ids[0], predicate="height", value="170cm")
-    with pytest.raises(StateConflict, match="supersedes"):
+    with pytest.raises(StateConflict, match="self|supersedes"):
         append_memory_version(db, campaign.id, branch, "fact", "Linh cao 180cm", origin="user", expected_state_version=first.state_version, source_revision_ids=[], subject_id=campaign.character_ids[0], predicate="height", value="180cm")
     second = append_memory_version(db, campaign.id, branch, "fact", "Linh cao 180cm", origin="user", expected_state_version=first.state_version, source_revision_ids=[], subject_id=campaign.character_ids[0], predicate="height", value="180cm", supersedes_id=first.memory_id)
     assert second.state_version == first.state_version + 1
@@ -208,3 +209,31 @@ def test_conflicting_pending_proposal_keeps_supersession_on_approve_and_reject(d
     assert [item.memory_id for item in list_memory_library(db, campaign.id, branch, accepted.checkpoint_id)] == [proposal2.memory_id]
     edited = update_memory(db, campaign.id, branch, proposal2.memory_id, expected_state_version=accepted.state_version, text="180cm confirmed", pinned=True, knowledge_scope="public", known_by=[])
     assert list_memory_library(db, campaign.id, branch, edited.checkpoint_id)[0].text == "180cm confirmed"
+
+
+def test_update_memory_persists_structured_slot_and_supersession_fields(db, owner):
+    campaign, branch = _campaign(db, owner, "Structured edit")
+    actor = campaign.character_ids[0]
+    head = get_branch_head(db, campaign.id, branch)
+    first = append_memory_version(db, campaign.id, branch, "canon", "The lantern is blue", origin="user", expected_state_version=head.state_version, source_revision_ids=[], entity_ids=[actor], subject_id=actor, predicate="color", value="blue")
+    with pytest.raises(StateConflict, match="self|supersedes"):
+        update_memory(db, campaign.id, branch, first.memory_id, expected_state_version=first.state_version, supersedes_id=first.memory_id)
+    second = append_memory_version(db, campaign.id, branch, "canon", "The lantern is red", origin="user", expected_state_version=first.state_version, source_revision_ids=[], entity_ids=[actor], subject_id=actor, predicate="color", value="red", object_id=actor, supersedes_id=first.memory_id)
+    edited = update_memory(db, campaign.id, branch, second.memory_id, expected_state_version=second.state_version, text="The lantern is crimson", entity_ids=[actor], knowledge_scope="known_by", known_by=[actor], subject_id=actor, predicate="color", value="crimson", object_id=actor, supersedes_id=first.memory_id)
+    payload = MemoryUpdate.model_validate({"branch_id": branch, "expected_state_version": second.state_version, "text": "The lantern is crimson", "subject_id": actor, "predicate": "color", "value": "crimson", "object_id": actor, "supersedes_id": first.memory_id})
+    assert payload.subject_id == actor and payload.supersedes_id == first.memory_id
+    assert edited.text == "The lantern is crimson"
+    assert edited.knowledge_scope == "known_by"
+    assert edited.known_by == (actor,)
+    assert edited.entity_ids == (actor,)
+    assert edited.subject_id == actor and edited.predicate == "color" and edited.value == "crimson" and edited.object_id == actor
+    assert edited.supersedes_memory_id == first.memory_id
+
+
+def test_update_memory_explicitly_clears_structured_fields(db, owner):
+    campaign, branch = _campaign(db, owner, "Clear structured")
+    actor = campaign.character_ids[0]
+    head = get_branch_head(db, campaign.id, branch)
+    first = append_memory_version(db, campaign.id, branch, "canon", "Lantern", origin="user", expected_state_version=head.state_version, source_revision_ids=[], subject_id=actor, predicate="owns", value="lantern", object_id=actor)
+    cleared = update_memory(db, campaign.id, branch, first.memory_id, expected_state_version=first.state_version, subject_id=None, predicate=None, value=None, object_id=None, supersedes_id=None)
+    assert cleared.subject_id is None and cleared.predicate is None and cleared.value is None and cleared.object_id is None and cleared.supersedes_memory_id is None

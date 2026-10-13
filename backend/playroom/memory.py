@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 import sqlite3
 from uuid import uuid4
 
@@ -9,6 +10,7 @@ from .domain import MemoryVersion, NotFound, StateConflict, ValidationError, req
 from .timeline import _advance_checkpoint, _branch_row, load_state_checkpoint, utc_now, validate_source_revisions
 
 RETRIEVAL_POLICIES = {"auto", "important_only", "disabled"}
+_UNSET = object()
 
 
 def _json_list(values, field: str, *, uuid_values: bool = False) -> list[str]:
@@ -55,6 +57,7 @@ def _append_memory_in_transaction(
     object_id: str | None = None,
     supersedes_id: str | None = None,
     allow_ai_approval: bool = False,
+    clear_fields: set[str] | None = None,
 ) -> MemoryVersion:
     if origin not in {"user", "import", "ai"}:
         raise ValidationError("Memory origin must be user, import or ai")
@@ -72,6 +75,8 @@ def _append_memory_in_transaction(
         object_id = require_uuid(object_id, "object_id")
     if supersedes_id:
         supersedes_id = require_uuid(supersedes_id, "supersedes_id")
+    if supersedes_id == memory_id:
+        raise StateConflict("A memory cannot supersede itself")
     branch = _branch_row(connection, campaign_id, branch_id)
     if branch["state_version"] != expected_state_version:
         raise StateConflict("Campaign state changed; reload before saving")
@@ -106,13 +111,13 @@ def _append_memory_in_transaction(
             known_by = json.loads(prior_row["known_by_json"])
         if entity_ids is None:
             entity_ids = json.loads(prior_row["entity_ids_json"])
-        if subject_id is None:
+        if subject_id is None and "subject_id" not in (clear_fields or set()):
             subject_id = prior_row["subject_id"]
-        if predicate is None:
+        if predicate is None and "predicate" not in (clear_fields or set()):
             predicate = prior_row["predicate"]
-        if value is None:
+        if value is None and "value" not in (clear_fields or set()):
             value = prior_row["value"]
-        if object_id is None:
+        if object_id is None and "object_id" not in (clear_fields or set()):
             object_id = prior_row["object_id"]
     if knowledge_scope is None:
         knowledge_scope = "public"
@@ -271,7 +276,7 @@ def delete_memory(connection: sqlite3.Connection, campaign_id: str, branch_id: s
         return _append_memory_in_transaction(connection, campaign_id, branch_id, row["kind"], row["text"], origin="user", expected_state_version=expected_state_version, source_revision_ids=json.loads(row["source_revision_ids_json"]), memory_id=row["memory_id"], entity_ids=json.loads(row["entity_ids_json"]), status="deleted", pinned=bool(row["pinned"]), mandatory=bool(row["mandatory"]), knowledge_scope=row["knowledge_scope"], known_by=json.loads(row["known_by_json"]), subject_id=row["subject_id"], predicate=row["predicate"], value=row["value"], object_id=row["object_id"])
 
 
-def update_memory(connection: sqlite3.Connection, campaign_id: str, branch_id: str, memory_id: str, *, expected_state_version: int, text: str | None = None, pinned: bool | None = None, entity_ids: list[str] | None = None, knowledge_scope: str | None = None, known_by: list[str] | None = None) -> MemoryVersion:
+def update_memory(connection: sqlite3.Connection, campaign_id: str, branch_id: str, memory_id: str, *, expected_state_version: int, text: str | None = None, pinned: bool | None = None, entity_ids: list[str] | None = None, knowledge_scope: str | None = None, known_by: list[str] | None = None, subject_id: str | None | Any = _UNSET, predicate: str | None | Any = _UNSET, value: str | None | Any = _UNSET, object_id: str | None | Any = _UNSET, supersedes_id: str | None | Any = _UNSET) -> MemoryVersion:
     with transaction(connection):
         assert_branch_mutable(connection, branch_id)
         head = load_state_checkpoint(connection, campaign_id, branch_id, None)
@@ -279,7 +284,8 @@ def update_memory(connection: sqlite3.Connection, campaign_id: str, branch_id: s
         if version_id is None:
             raise NotFound("Approved memory not found")
         row = connection.execute("SELECT * FROM memory_versions WHERE id = ?", (version_id,)).fetchone()
-        return _append_memory_in_transaction(connection, campaign_id, branch_id, row["kind"], text if text is not None else row["text"], origin="user", expected_state_version=expected_state_version, source_revision_ids=json.loads(row["source_revision_ids_json"]), memory_id=memory_id, entity_ids=entity_ids if entity_ids is not None else json.loads(row["entity_ids_json"]), status="approved", pinned=pinned if pinned is not None else bool(row["pinned"]), mandatory=bool(row["mandatory"]), knowledge_scope=knowledge_scope if knowledge_scope is not None else row["knowledge_scope"], known_by=known_by if known_by is not None else json.loads(row["known_by_json"]), subject_id=row["subject_id"], predicate=row["predicate"], value=row["value"], object_id=row["object_id"], supersedes_id=row["supersedes_memory_id"])
+        clear_fields = {name for name, value in (("subject_id", subject_id), ("predicate", predicate), ("value", value), ("object_id", object_id), ("supersedes_id", supersedes_id)) if value is None}
+        return _append_memory_in_transaction(connection, campaign_id, branch_id, row["kind"], text if text is not None else row["text"], origin="user", expected_state_version=expected_state_version, source_revision_ids=json.loads(row["source_revision_ids_json"]), memory_id=memory_id, entity_ids=entity_ids if entity_ids is not None else json.loads(row["entity_ids_json"]), status="approved", pinned=pinned if pinned is not None else bool(row["pinned"]), mandatory=bool(row["mandatory"]), knowledge_scope=knowledge_scope if knowledge_scope is not None else row["knowledge_scope"], known_by=known_by if known_by is not None else json.loads(row["known_by_json"]), subject_id=row["subject_id"] if subject_id is _UNSET else subject_id, predicate=row["predicate"] if predicate is _UNSET else predicate, value=row["value"] if value is _UNSET else value, object_id=row["object_id"] if object_id is _UNSET else object_id, supersedes_id=row["supersedes_memory_id"] if supersedes_id is _UNSET else supersedes_id, clear_fields=clear_fields)
 
 
 def set_retrieval_policy(connection: sqlite3.Connection, campaign_id: str, branch_id: str, policy: str, *, expected_state_version: int):

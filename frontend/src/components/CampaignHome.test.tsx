@@ -130,8 +130,11 @@ describe("CampaignHome", () => {
     expect(drawerButton).toHaveFocus();
     await user.click(screen.getByRole("button", { name: "AI đang nhớ gì" }));
     expect(screen.getByRole("dialog", { name: "Hồ sơ và ký ức" })).toBeInTheDocument();
+    expect(within(screen.getByRole("dialog", { name: "Hồ sơ và ký ức" })).getByRole("region", { name: "Chỉnh sửa hồ sơ" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Đóng hồ sơ và ký ức" })).toHaveFocus();
     await user.keyboard("{Tab}");
+    expect(screen.getByRole("button", { name: "Hồ sơ" })).toHaveFocus();
+    await user.keyboard("{Shift>}{Tab}{/Shift}");
     expect(screen.getByRole("button", { name: "Đóng hồ sơ và ký ức" })).toHaveFocus();
     await user.click(screen.getByRole("button", { name: "Đóng hồ sơ và ký ức" }));
     expect(screen.queryByRole("dialog", { name: "Hồ sơ và ký ức" })).not.toBeInTheDocument();

@@ -10,6 +10,7 @@ from playroom.auth import create_owner
 from playroom.campaigns import create_campaign
 from playroom.db import connect, migrate
 from playroom.domain import NotFound
+from playroom.memory import set_retrieval_policy
 from playroom.projections import get_campaign_projection, list_owned_generation_jobs
 
 
@@ -49,6 +50,15 @@ def test_projection_preserves_checkpoint_selected_revision_order_with_inherited_
     assert [item["narrative_text"] for item in projection["transcript"]] == ["Narrative B", "Narrative A"]
     assert projection["profiles"]["world"]["data"] == {"name": "World"}
     assert projection["profiles"]["persona"]["data"] == {"name": "Persona"}
+    db.close()
+
+
+def test_projection_exposes_checkpoint_retrieval_policy(tmp_path):
+    db, owner, campaign = _story(tmp_path)
+    branch = campaign.initial_branch_id
+    set_retrieval_policy(db, campaign.id, branch, "disabled", expected_state_version=1)
+    projection = get_campaign_projection(db, owner.id, campaign.id, branch)
+    assert projection["checkpoint"]["retrieval_policy"] == "disabled"
     db.close()
 
 

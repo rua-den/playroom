@@ -1,4 +1,4 @@
-import type { ApiErrorBody, CampaignCreatePayload, CampaignDetail, CampaignProjection, CampaignSummary, GenerationJobSummary, LoginPayload, Owner } from "./types";
+import type { ApiErrorBody, CampaignCreatePayload, CampaignDetail, CampaignProjection, CampaignSummary, GenerationJobSummary, LoginPayload, Owner, MemoryVersion, MemoryCreatePayload, MemoryUpdatePayload, ProfileUpdateResult, SceneResponse } from "./types";
 
 export class ApiError extends Error {
   readonly status: number;
@@ -57,6 +57,19 @@ export const api = {
   createCampaign: (payload: CampaignCreatePayload) => request<{ id: string; title: string; branch_id: string; character_ids: string[] }>("/api/campaigns", { method: "POST", body: JSON.stringify(payload) }),
   getCampaignProjection: (campaignId: string, branchId: string) => request<CampaignProjection>(`/api/campaigns/${encodeURIComponent(campaignId)}/projection?branch_id=${encodeURIComponent(branchId)}`),
   getGenerationJobs: (campaignId: string, branchId: string, limit = 20) => request<{ jobs: GenerationJobSummary[] }>(`/api/campaigns/${encodeURIComponent(campaignId)}/generation-jobs?branch_id=${encodeURIComponent(branchId)}&limit=${limit}`),
+  updateProfile: (campaignId: string, profileKey: string, payload: { branch_id: string; expected_state_version: number; data: Record<string, unknown> }) => request<ProfileUpdateResult>(`/api/campaigns/${encodeURIComponent(campaignId)}/profiles/${encodeURIComponent(profileKey)}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  addCharacter: (campaignId: string, payload: { branch_id: string; expected_state_version: number; character: Record<string, unknown> }) => request<ProfileUpdateResult & { character_id: string }>(`/api/campaigns/${encodeURIComponent(campaignId)}/characters`, { method: "POST", body: JSON.stringify(payload) }),
+  removeProfile: (campaignId: string, profileKey: string, branchId: string, stateVersion: number) => request<ProfileUpdateResult>(`/api/campaigns/${encodeURIComponent(campaignId)}/profiles/${encodeURIComponent(profileKey)}?branch_id=${encodeURIComponent(branchId)}&expected_state_version=${stateVersion}`, { method: "DELETE" }),
+  listMemory: (campaignId: string, branchId: string) => request<MemoryVersion[]>(`/api/campaigns/${encodeURIComponent(campaignId)}/memory?branch_id=${encodeURIComponent(branchId)}`),
+  listProposals: (campaignId: string, branchId: string) => request<MemoryVersion[]>(`/api/campaigns/${encodeURIComponent(campaignId)}/memory/proposals?branch_id=${encodeURIComponent(branchId)}`),
+  listMemoryHistory: (campaignId: string, memoryId: string, branchId: string) => request<MemoryVersion[]>(`/api/campaigns/${encodeURIComponent(campaignId)}/memory/${encodeURIComponent(memoryId)}/history?branch_id=${encodeURIComponent(branchId)}`),
+  createMemory: (campaignId: string, payload: MemoryCreatePayload) => request<MemoryVersion>(`/api/campaigns/${encodeURIComponent(campaignId)}/memory`, { method: "POST", body: JSON.stringify(payload) }),
+  updateMemory: (campaignId: string, memoryId: string, payload: MemoryUpdatePayload) => request<MemoryVersion>(`/api/campaigns/${encodeURIComponent(campaignId)}/memory/${encodeURIComponent(memoryId)}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  reviewMemory: (campaignId: string, memoryId: string, action: "approve" | "reject", branchId: string, stateVersion: number) => request<MemoryVersion>(`/api/campaigns/${encodeURIComponent(campaignId)}/memory/${encodeURIComponent(memoryId)}/${action}?branch_id=${encodeURIComponent(branchId)}&expected_state_version=${stateVersion}`, { method: "POST" }),
+  deleteMemory: (campaignId: string, memoryId: string, branchId: string, stateVersion: number) => request<MemoryVersion>(`/api/campaigns/${encodeURIComponent(campaignId)}/memory/${encodeURIComponent(memoryId)}?branch_id=${encodeURIComponent(branchId)}&expected_state_version=${stateVersion}`, { method: "DELETE" }),
+  getScene: (campaignId: string, branchId: string) => request<SceneResponse>(`/api/campaigns/${encodeURIComponent(campaignId)}/scene?branch_id=${encodeURIComponent(branchId)}`),
+  updateScene: (campaignId: string, payload: { branch_id: string; expected_state_version: number; scene_state: import("./types").SceneState }) => request<ProfileUpdateResult>(`/api/campaigns/${encodeURIComponent(campaignId)}/scene`, { method: "PUT", body: JSON.stringify(payload) }),
+  updateRetrievalPolicy: (campaignId: string, payload: { branch_id: string; expected_state_version: number; policy: "auto" | "important_only" | "disabled" }) => request<ProfileUpdateResult & { policy: string }>(`/api/campaigns/${encodeURIComponent(campaignId)}/retrieval-policy`, { method: "PUT", body: JSON.stringify(payload) }),
   login: async (payload: LoginPayload) => {
     activeLogout?.abort();
     activeLogout = null;

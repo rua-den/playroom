@@ -118,7 +118,7 @@ def get_campaign_projection(connection: sqlite3.Connection, owner_id: str, campa
     return {
         "campaign": dict(campaign),
         "branch": {"id": branch["id"], "name": branch["name"], "state_version": branch["state_version"], "checkpoint_id": branch["head_checkpoint_id"]},
-        "checkpoint": {"id": checkpoint.id, "state_version": checkpoint.state_version, "parent_checkpoint_id": checkpoint.parent_checkpoint_id, "selected_revision_ids": list(snapshot.get("selected_revision_ids", []))},
+        "checkpoint": {"id": checkpoint.id, "state_version": checkpoint.state_version, "parent_checkpoint_id": checkpoint.parent_checkpoint_id, "selected_revision_ids": list(snapshot.get("selected_revision_ids", [])), "retrieval_policy": snapshot.get("retrieval_policy", "auto")},
         "profiles": _profile_projection(connection, campaign_id, snapshot),
         "scene": scene,
         "transcript": _transcript_projection(connection, campaign_id, snapshot.get("selected_revision_ids", [])),
