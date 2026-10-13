@@ -317,15 +317,16 @@ The full requirements of original Task4 remain binding. Use actual current APIs;
 **Consumes:** current expected_state_version; current profiles/memory/scene.
 **Produces:** usable manual memory control with provenance, review and conflict preservation.
 
-- [ ] Defaults: vi, medium length, low headings/emojis, third_person; player agency forbids invented speech/thought/choices.
-- [ ] Preserve unknown profile dictionary keys when updating existing profile state.
-- [ ] Character aliases are arrays; knowledge_scope public/known_by/narrator_only, known_by actor UUIDs; association is not presence.
-- [ ] GET scene returns map; PUT sends list + focus_scene_id/present_ids with valid IDs.
-- [ ] Canon/event/lore/summary add/edit/pin/hide/history; pending proposals separate from approved facts; approve/reject explicit.
-- [ ] Retrieval auto/important_only/disabled. Summary exact source interval required; no JSON-only normal editor.
-- [ ] Successful mutation refreshes state;409 keeps the draft and refreshes authoritative version.
-- [ ] Test pending label, preserved extra fields, scene edit invalidation and conflict draft retention.
+- [x] Defaults: vi, medium length, low headings/emojis, third_person; player agency forbids invented speech/thought/choices.
+- [x] Preserve unknown profile dictionary keys when updating existing profile state.
+- [x] Character aliases are arrays; knowledge_scope public/known_by/narrator_only, known_by actor UUIDs; association is not presence.
+- [x] GET scene returns map; PUT sends list + focus_scene_id/present_ids with valid IDs.
+- [x] Canon/event/lore/summary add/edit/pin/hide/history; pending proposals separate from approved facts; approve/reject explicit.
+- [x] Retrieval auto/important_only/disabled. Summary exact source interval required; no JSON-only normal editor.
+- [x] Successful mutation refreshes state;409 keeps the draft and refreshes authoritative version.
+- [x] Test pending label, preserved extra fields, scene edit invalidation and conflict draft retention.
 
+**U4 accepted 2026-10-13:** accepted at `fa18cbb7e90ee21ccd24ed1c029f14681944a0b5`. Behavioral RED/GREEN covered controlled memory edits, 409 draft retention and authoritative retry versions, scene conflict drafts, exact non-contiguous provenance, explicit structured-field null clearing, and rejection of self-supersession while preserving valid two-memory supersession. Sol independently verified backend campaign-storage/memory-version/projection coverage — 31 tests — frontend — 28 tests — plus typecheck, Vite build, and `git diff --check`; final independent review found no actionable findings. U5 is the next review checkpoint. The browser campaign→preview→fake stream→commit→reload smoke, real provider/model quality, hosting, and deployment remain open; this does not claim Task3 complete.
 ### U5: Masked OpenRouter/settings controls
 
 **Files:** features/settings, typed provider API, interaction tests.
