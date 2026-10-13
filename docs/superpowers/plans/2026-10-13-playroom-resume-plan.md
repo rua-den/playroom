@@ -143,7 +143,7 @@ def test_old_director_result_cannot_write_after_transition(
 
 **Gate:** both competing cases pass with genuine ordering; valid-current failure still retains evidence; no public API change. Stop after B1 for its review.
 
-**B1 accepted 2026-10-13:** commit `e929bc363ff714e7ab6af5d3e6ec115516409882`. RED: director race regression `4 failed, 14 deselected`; narrator completion race `1 failed, 18 deselected`. GREEN: `test_generation_fix4.py` `19 passed`; durable `-k "restart or cancel or epoch"` `8 passed, 33 deselected`. Sol independently reran both covering commands and checked the committed range. B2 remains unstarted.
+**B1 accepted 2026-10-13:** implementation commit `e929bc363ff714e7ab6af5d3e6ec115516409882`; review assertion fix `d5d358e`. RED: director race regression `4 failed, 14 deselected`; narrator completion race `1 failed, 18 deselected`. GREEN after review fix: director race `4 passed, 15 deselected`; `test_generation_fix4.py` `19 passed`; durable `-k "restart or cancel or epoch"` `8 passed, 33 deselected`. The P2 assertion now checks event type and payload phase. Sol independently reran the covering commands and checked the committed range. B2 remains unstarted.
 
 ### B2: Replace the misleading quality SSE phase tests
 
