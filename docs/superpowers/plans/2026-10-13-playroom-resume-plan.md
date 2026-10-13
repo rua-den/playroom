@@ -289,11 +289,13 @@ The full requirements of original Task4 remain binding. Use actual current APIs;
 **Consumes:** load_state_checkpoint and selected_revision_ids in stored order.
 **Produces:** authenticated current branch head/profiles/ordered chosen transcript, bounded owned active/recent-job lookup.
 
-- [ ] No raw DB/latest-version read. Validate campaign/branch ownership on every projection.
-- [ ] Preserve inherited selected order; duplicate local sequence must not reorder it.
-- [ ] Re-login can discover active/candidate job even after explicit logout cleared its client key.
-- [ ] Non-owner/foreign IDs404 or auth failure; no secret/profile credential content.
-- [ ] Review exact output types before consuming them in U3/U6.
+- [x] No raw DB/latest-version read. Validate campaign/branch ownership on every projection.
+- [x] Preserve inherited selected order; duplicate local sequence must not reorder it.
+- [x] Re-login can discover active/candidate job even after explicit logout cleared its client key; keep this recoverable index ahead of bounded recent terminal rows.
+- [x] Non-owner/foreign IDs404 or auth failure; job projection is allowlisted and filters generation operations.
+- [x] Review exact output types before consuming them in U3/U6.
+
+**U2 accepted:** focused projection suite 8 passed; full backend suite 216 passed; compileall, frontend tests (7), typecheck, build, and independent review passed. Behavioral RED exposed transcript/head mismatch and recovery-job eviction before fixes. Projection binds branch metadata to the observed checkpoint, preserves checkpoint-selected order across 500-ID query chunks, and returns at most 20 owner-scoped generation jobs with recoverable statuses prioritized.
 
 ### U3: Reader layout and campaign creation
 

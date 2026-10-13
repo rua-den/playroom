@@ -10,6 +10,7 @@ from ..campaigns import get_effective_profile, update_profile
 from ..domain import Owner
 from ..db import request_connection
 from ..timeline import get_branch_head
+from ..projections import get_campaign_projection, list_owned_generation_jobs
 from .auth import require_owner
 
 router = APIRouter(prefix="/api/campaigns", tags=["campaigns"])
@@ -60,6 +61,16 @@ def create(payload: CampaignCreate, connection: sqlite3.Connection = Depends(req
 @router.get("/{campaign_id}")
 def get(campaign_id: str, connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
     return service.get_campaign(connection, campaign_id, owner.id)
+
+
+@router.get("/{campaign_id}/projection")
+def projection(campaign_id: str, branch_id: str, connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
+    return get_campaign_projection(connection, owner.id, campaign_id, branch_id)
+
+
+@router.get("/{campaign_id}/generation-jobs")
+def generation_jobs(campaign_id: str, branch_id: str, limit: int = 20, connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
+    return {"jobs": list_owned_generation_jobs(connection, owner.id, campaign_id, branch_id, limit=limit)}
 
 
 @router.patch("/{campaign_id}")
