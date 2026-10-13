@@ -333,12 +333,15 @@ The full requirements of original Task4 remain binding. Use actual current APIs;
 **Consumes:** provider credentials/profiles/verify/settings current API; immutable id/version/profile_hash bindings.
 **Produces:** explicit provider/mode/policy/role/budget choices with capability/quota/cost status.
 
-- [ ] API key remains server-side/masked. Native schema capability required for director/consolidation.
-- [ ] Default economy/free_only unconfigured; paid mode requires explicit positive USD cap.
-- [ ] Budget-only update preserves pinned role versions. Explicit model switch changes future jobs, never queued payload/story/style.
-- [ ] Show provider billing vs calculated/estimated/unknown honestly, phase/operation counts separately.
-- [ ] Quota/unsupported schema keeps player draft; explicit economy retry only. Never paid fallback.
-- [ ] Use fake/mocked metadata routes in tests, no real key/API inference.
+- [x] API key remains server-side/masked. Verified profile metadata is shown; native strict schema is required for director/consolidation eligibility.
+- [x] Default economy/free_only unconfigured; paid mode requires an explicit positive USD cap.
+- [x] Budget-only updates preserve pinned role versions. Explicit immutable model switches target future jobs and do not rewrite queued payload/story/style.
+- [x] Role budgets expose input/output/wrapper limits, with verified capability, quota and pricing metadata; incomplete metadata is shown as unknown.
+- [x] Mocked settings/profile/verification routes cover credential masking, profile verification, budget/policy/mode saves, role switches and draft/error retention; no real key/API inference.
+
+The job-scoped provider billing vs calculated/estimated/unknown ledger and separate phase/operation count display remain mandatory in U6, because these settings APIs do not expose generation usage. Configuration pricing is not actual generation cost. Quota/unsupported-schema draft retention and explicit economy retry also move to U6 with the generation action flow.
+
+**U5 accepted 2026-10-13:** accepted at `4d6df905445948a85ca421bfd2b31652a4359f23`. Behavioral RED/GREEN covered masked credentials, verified profile metadata and strict-schema eligibility, economy/free_only defaults, positive paid caps, immutable role switches versus budget-only preservation, role budget controls, quota/pricing labels, stale-error clearing, settings focus/keyboard isolation and preserving campaign drafts behind the settings modal. Sol independently ran 36 frontend tests, typecheck, Vite build and `rtk git diff --check`; backend `model_switch` + `provider_contract` coverage passed 22 tests. Independent review found no actionable findings. No real credentials/provider calls were used. U6 is the next review checkpoint.
 
 ### U6: Send/stream/cancel/commit/reconnect
 
@@ -348,6 +351,8 @@ The full requirements of original Task4 remain binding. Use actual current APIs;
 
 - [ ] Persist branch/action/checkpoint/preview/idempotency identity BEFORE POST. Ambiguous response recovers GET by-key; never new-key auto retry.
 - [ ] Automatic preview→send; optional context inspector shows source/omission/budget labels.
+- [ ] Display job-scoped provider billing/calculated/estimated/unknown ledger without treating unknown as zero, and show phase/operation counts separately; configuration pricing must never be presented as actual cost.
+- [ ] Quota/unsupported-schema failures retain the player draft and offer an explicit economy retry only; never fall back to paid/provider/mode automatically.
 - [ ] Distinguish director phase from narrator completion. UTF-16 offsets: deduplicate deltas and fetch authoritative content if a gap occurs.
 - [ ] Reload/foreground/network restore reads existing job; reconnect does not cancel/replay provider.
 - [ ] Complete/current candidate only may commit. Next action first commits displayed complete candidate, refreshes head, then previews the next action.
