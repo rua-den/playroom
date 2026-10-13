@@ -26,6 +26,7 @@ describe("authentication shell", () => {
   it("clears all private client cache when logging out", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ id: "owner-1", email: "owner@example.test" }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
       .mockResolvedValueOnce(new Response(null, { status: 204 }));
     vi.stubGlobal("fetch", fetchMock);
     privateCache.set("stories", [{ id: "story-1" }]);
@@ -44,6 +45,7 @@ describe("authentication shell", () => {
   it("clears private cache and exits the shell when server logout is offline", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ id: "owner-1", email: "owner@example.test" }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
       .mockRejectedValueOnce(new TypeError("Failed to fetch"));
     vi.stubGlobal("fetch", fetchMock);
     privateCache.set("stories", [{ id: "story-1" }]);
@@ -59,6 +61,7 @@ describe("authentication shell", () => {
   it("clears private state and returns to login when an authenticated request expires", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ id: "owner-1", email: "owner@example.test" }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Owner session is required" }), { status: 401 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ owner: { id: "owner-1", email: "owner@example.test" } }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
@@ -81,6 +84,7 @@ describe("authentication shell", () => {
     const never = new Promise<Response>(() => undefined);
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ id: "owner-1", email: "owner@example.test" }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
       .mockReturnValueOnce(never);
     vi.stubGlobal("fetch", fetchMock);
     privateCache.set("stories", [{ id: "story-1" }]);
@@ -99,6 +103,7 @@ describe("authentication shell", () => {
     const logoutRequest = new Promise<Response>((resolve) => { resolveLogout = resolve; });
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ id: "owner-1", email: "old@example.test" }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
       .mockReturnValueOnce(protectedRequest)
       .mockReturnValueOnce(logoutRequest)
       .mockResolvedValueOnce(new Response(JSON.stringify({ owner: { id: "owner-2", email: "new@example.test" } }), { status: 200 }));
@@ -129,6 +134,7 @@ describe("authentication shell", () => {
     const logoutRequest = new Promise<Response>((resolve) => { resolveLogout = resolve; });
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ id: "owner-1", email: "old@example.test" }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
       .mockImplementationOnce((_input, init) => {
         logoutSignal = init?.signal as AbortSignal | undefined;
         return logoutRequest;

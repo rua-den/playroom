@@ -20,6 +20,28 @@ export interface CampaignProjectionProfile {
   data: Record<string, unknown>;
 }
 
+export interface CampaignSummary {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  archived_at: string | null;
+}
+
+export interface CampaignDetail extends CampaignSummary {
+  branch_id: string;
+  state_version: number;
+  checkpoint_id: string;
+  profiles: Record<string, { kind: string; data: Record<string, unknown> }>;
+}
+
+export interface CampaignCreatePayload {
+  title: string;
+  world: Record<string, unknown>;
+  characters: Array<{ id: string; name: string; aliases: string[]; [key: string]: unknown }>;
+  persona: Record<string, unknown>;
+}
+
 export interface CampaignTranscriptEntry {
   revision_id: string;
   turn_id: string;

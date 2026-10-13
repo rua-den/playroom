@@ -1,4 +1,4 @@
-import type { ApiErrorBody, CampaignProjection, GenerationJobSummary, LoginPayload, Owner } from "./types";
+import type { ApiErrorBody, CampaignCreatePayload, CampaignDetail, CampaignProjection, CampaignSummary, GenerationJobSummary, LoginPayload, Owner } from "./types";
 
 export class ApiError extends Error {
   readonly status: number;
@@ -52,6 +52,9 @@ async function request<T>(path: string, init: RequestInit = {}, notifyAuthExpire
 
 export const api = {
   me: (options: { notifyAuthExpired?: boolean } = {}) => request<Owner>("/api/auth/me", {}, options.notifyAuthExpired ?? true),
+  listCampaigns: () => request<CampaignSummary[]>("/api/campaigns"),
+  getCampaign: (campaignId: string) => request<CampaignDetail>(`/api/campaigns/${encodeURIComponent(campaignId)}`),
+  createCampaign: (payload: CampaignCreatePayload) => request<{ id: string; title: string; branch_id: string; character_ids: string[] }>("/api/campaigns", { method: "POST", body: JSON.stringify(payload) }),
   getCampaignProjection: (campaignId: string, branchId: string) => request<CampaignProjection>(`/api/campaigns/${encodeURIComponent(campaignId)}/projection?branch_id=${encodeURIComponent(branchId)}`),
   getGenerationJobs: (campaignId: string, branchId: string, limit = 20) => request<{ jobs: GenerationJobSummary[] }>(`/api/campaigns/${encodeURIComponent(campaignId)}/generation-jobs?branch_id=${encodeURIComponent(branchId)}&limit=${limit}`),
   login: async (payload: LoginPayload) => {

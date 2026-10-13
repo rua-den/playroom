@@ -29,6 +29,46 @@ input:focus { border-color: #d79771; box-shadow: 0 0 0 3px #d7977133; }
 .shell-notice { max-width: 680px; margin-bottom: 22px; }
 .security-note { margin: 24px 0 0; color: #8f8679; font-size: 12px; line-height: 1.55; }
 .app-shell { min-height: 100vh; padding: 20px clamp(20px, 5vw, 72px) 72px; }
+.touch-target { min-width: 44px; min-height: 44px; }
+.story-app { padding-bottom: calc(72px + env(safe-area-inset-bottom)); }
+.story-app h1 { font-size: clamp(38px, 6vw, 70px); }
+.workspace-grid { max-width: 1440px; margin: 48px auto 0; display: grid; grid-template-columns: minmax(180px, 240px) minmax(0, 1fr) minmax(220px, 300px); gap: clamp(24px, 4vw, 64px); }
+.campaign-nav, .details-column { border-top: 1px solid #4d453a; padding-top: 18px; }
+.section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.section-heading h2 { font: 22px Georgia, serif; margin: 0; }
+.campaign-item { display: block; width: 100%; margin-top: 8px; padding: 0 12px; text-align: left; color: #cfc4b5; background: transparent; border: 1px solid transparent; border-radius: 10px; }
+.campaign-item:hover, .campaign-item.selected { color: #fff; border-color: #6c5949; background: #2b241e; }
+.story-column { min-width: 0; }
+.story-column, .story-turn, .markdown-content, .profile-block, .campaign-item, .empty-campaign p, .create-card { overflow-wrap: anywhere; }
+.story-column h1 { margin-bottom: 34px; }
+.story-turn { max-width: 760px; margin: 0 0 34px; }
+.turn-action { margin-bottom: 8px; color: #d79771; font-size: 13px; font-style: italic; }
+.markdown-content { color: #ebe0d3; font-family: Georgia, serif; font-size: 19px; line-height: 1.78; }
+.markdown-content p { margin: 0 0 18px; }
+.markdown-content h2, .markdown-content h3, .markdown-content h4 { font-family: Georgia, serif; color: #fff5e8; }
+.markdown-content strong { color: #fff8ee; }
+.details-column h2 { font: 22px Georgia, serif; margin: 0 0 22px; }
+.profile-block { padding: 14px 0; border-bottom: 1px solid #3b342c; }
+.profile-block h3 { margin: 0 0 6px; font: 18px Georgia, serif; }
+.profile-block p, .details-meta, .story-empty p, .empty-campaign p { color: #aaa093; line-height: 1.65; }
+.story-empty, .empty-campaign { max-width: 700px; padding: 30px; border: 1px solid #4d453a; border-radius: 18px; background: #25211d99; }
+.empty-campaign { margin: clamp(70px, 15vh, 150px) auto 0; text-align: center; }
+.empty-campaign h1 { margin-bottom: 12px; }
+.empty-campaign .primary-button { width: auto; padding: 0 20px; }
+.mobile-actions { display: none; }
+.mobile-overlay { position: fixed; inset: 0; z-index: 10; display: flex; align-items: flex-end; padding: 16px 16px calc(16px + env(safe-area-inset-bottom)); background: #080706aa; }
+.mobile-drawer, .mobile-sheet { width: min(100%, 420px); max-height: 88vh; overflow: auto; padding: 20px; border: 1px solid #5a4b3c; border-radius: 18px 18px 0 0; background: #211d19; }
+.mobile-drawer .campaign-item { margin-top: 12px; }
+.create-card { width: min(100%, 720px); margin: 42px auto 0; padding: clamp(22px, 5vw, 42px); border: 1px solid #4d453a; border-radius: 20px; background: #211d19; }
+.create-card h2 { font: 32px Georgia, serif; margin: 0 0 20px; }
+.campaign-form { display: grid; gap: 10px; }
+.campaign-form textarea { width: 100%; min-height: 88px; resize: vertical; border: 1px solid #5b5145; border-radius: 12px; padding: 12px 14px; color: #fff; background: #151311; font: inherit; }
+.campaign-form fieldset { display: grid; gap: 10px; margin: 14px 0 0; padding: 16px; border: 1px solid #43392f; border-radius: 14px; }
+.campaign-form legend { padding: 0 6px; color: #d79771; font: 17px Georgia, serif; }
+.character-row { display: flex; align-items: flex-end; gap: 10px; }
+.character-fields { flex: 1; display: grid; gap: 8px; }
+.campaign-form .primary-button { margin-top: 16px; }
+@media (max-width: 800px) { .workspace-grid { display: block; margin-top: 24px; } .campaign-nav, .details-column { display: none; } .mobile-actions { display: flex; gap: 10px; margin-top: 24px; } .story-column { margin-top: 32px; } }
 .topbar { max-width: 1240px; margin: auto; display: flex; justify-content: space-between; align-items: center; gap: 16px; }
 .wordmark { display: flex; align-items: center; gap: 10px; font-family: Georgia, serif; font-size: 21px; }
 .account-menu { display: flex; align-items: center; gap: 12px; }

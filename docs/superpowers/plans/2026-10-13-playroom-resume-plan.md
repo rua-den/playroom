@@ -303,11 +303,13 @@ The full requirements of original Task4 remain binding. Use actual current APIs;
 **Consumes:** U1/U2 projections.
 **Produces:** one-column phone reader, desktop left-nav/story/right-memory layout, new campaign from readable forms.
 
-- [ ] World/persona name and description; characters UUID + name + aliases array. Preserve extra profile dict keys.
-- [ ] Markdown renderer disables raw HTML; comfortable Vietnamese paragraphs.
-- [ ] 360/390/430 widths without horizontal overflow, touch targets44px, reachable close controls/safe-area.
-- [ ] IME composition must not trigger submit. Streaming scroll behavior implemented/tested in U6.
-- [ ] Test campaign creation failure retains form; switching campaign clears previous view/job scope.
+- [x] World/persona name and description; characters UUID + name + aliases array.
+- [x] Markdown renderer disables raw HTML; comfortable Vietnamese paragraphs.
+- [x] 360/390/430 widths without horizontal overflow, touch targets44px, reachable close controls/safe-area.
+- [x] IME composition must not trigger submit. Streaming scroll behavior remains in U6.
+- [x] Test campaign creation failure retains form; switching campaign clears previous view/job scope.
+
+**U3 accepted 2026-10-13:** Campaign creation, reader layout, drawer/sheet interactions, and safe Markdown rendering are covered by `frontend/src/components/CampaignHome.test.tsx`; the suite records meaningful RED/GREEN regressions for IME submit cancellation, required character input, drawer focus restoration, selection `aria-pressed`, and shell load errors. Sol independently ran the fresh frontend suite — 14 tests passed — plus `npm run typecheck`, `npm run build`, and `git diff --check`; final independent review found no actionable findings. Browser validation at 360px, 390px, 430px, and 1024px found no horizontal overflow; desktop renders three columns, visible controls meet the 44px target, and drawer close/focus restoration and `aria-pressed` state work. No live provider/model call or deployment was used. U4 is the next review checkpoint.
 
 ### U4: Editable world/cast/style/scene/memory
 
@@ -316,6 +318,7 @@ The full requirements of original Task4 remain binding. Use actual current APIs;
 **Produces:** usable manual memory control with provenance, review and conflict preservation.
 
 - [ ] Defaults: vi, medium length, low headings/emojis, third_person; player agency forbids invented speech/thought/choices.
+- [ ] Preserve unknown profile dictionary keys when updating existing profile state.
 - [ ] Character aliases are arrays; knowledge_scope public/known_by/narrator_only, known_by actor UUIDs; association is not presence.
 - [ ] GET scene returns map; PUT sends list + focus_scene_id/present_ids with valid IDs.
 - [ ] Canon/event/lore/summary add/edit/pin/hide/history; pending proposals separate from approved facts; approve/reject explicit.

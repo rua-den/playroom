@@ -1,34 +1,70 @@
-import type { Owner } from "../api/types";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { api, ApiError } from "../api/client";
+import type { CampaignCreatePayload, CampaignProjection, CampaignSummary, Owner } from "../api/types";
+import { Markdown } from "./Markdown";
 
-interface AppShellProps {
-  owner: Owner;
-  onLogout: () => void;
-  notice?: string | null;
+interface AppShellProps { owner: Owner; onLogout: () => void; notice?: string | null; }
+type CharacterDraft = { id: string; name: string; aliases: string };
+type CreateDraft = { title: string; worldName: string; worldDescription: string; personaName: string; personaDescription: string; characters: CharacterDraft[] };
+
+const blankDraft = (): CreateDraft => ({ title: "", worldName: "", worldDescription: "", personaName: "", personaDescription: "", characters: [] });
+let fallbackIdCounter = 0;
+const newId = () => {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  if (typeof crypto !== "undefined" && crypto.getRandomValues) crypto.getRandomValues(bytes);
+  else { const seed = `${Date.now()}-${fallbackIdCounter++}-${Math.random()}`; for (let index = 0; index < bytes.length; index += 1) bytes[index] = seed.charCodeAt(index % seed.length) ^ ((index * 31) & 255); }
+  bytes[6] = (bytes[6] & 0x0f) | 0x40; bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  return Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("").replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, "$1-$2-$3-$4-$5");
+};
+
+function CampaignForm({ onCreated, onCancel }: { onCreated: (campaign: CampaignSummary) => void; onCancel: () => void }) {
+  const [draft, setDraft] = useState<CreateDraft>(blankDraft);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  function update(key: keyof Omit<CreateDraft, "characters">, value: string) { setDraft((current) => ({ ...current, [key]: value })); }
+  async function submit(event: FormEvent) {
+    const native = event.nativeEvent as SubmitEvent & { isComposing?: boolean };
+    event.preventDefault();
+    if (native.isComposing) return;
+    setPending(true); setError(null);
+    const payload: CampaignCreatePayload = { title: draft.title.trim(), world: { name: draft.worldName.trim(), description: draft.worldDescription.trim() }, persona: { name: draft.personaName.trim(), description: draft.personaDescription.trim() }, characters: draft.characters.map((character) => ({ id: character.id, name: character.name.trim(), aliases: character.aliases.split(",").map((alias) => alias.trim()).filter(Boolean) })) };
+    try { const created = await api.createCampaign(payload); onCreated({ id: created.id, title: created.title, created_at: new Date().toISOString(), updated_at: new Date().toISOString(), archived_at: null }); }
+    catch (cause) { setError(cause instanceof ApiError && cause.status >= 400 ? "Không thể tạo chiến dịch. Kiểm tra thông tin rồi thử lại." : "Không thể kết nối tới Playroom."); }
+    finally { setPending(false); }
+  }
+  return <section className="create-card" aria-labelledby="create-title"><div className="section-heading"><div><p className="eyebrow">CHƯƠNG MỚI</p><h2 id="create-title">Tạo chiến dịch</h2></div><button type="button" className="quiet-button touch-target" onClick={onCancel}>Đóng</button></div>{error && <div role="alert" className="form-error">{error}</div>}<form className="campaign-form" onKeyDown={(event) => { if (event.key === "Enter" && (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229)) event.preventDefault(); }} onSubmit={submit}><label htmlFor="campaign-title">Tên chiến dịch</label><input id="campaign-title" required value={draft.title} onChange={(event) => update("title", event.target.value)} /><fieldset><legend>Thế giới</legend><label htmlFor="world-name">Tên thế giới</label><input id="world-name" required value={draft.worldName} onChange={(event) => update("worldName", event.target.value)} /><label htmlFor="world-description">Mô tả thế giới</label><textarea id="world-description" value={draft.worldDescription} onChange={(event) => update("worldDescription", event.target.value)} /></fieldset><fieldset><legend>Persona người chơi</legend><label htmlFor="persona-name">Tên persona</label><input id="persona-name" required value={draft.personaName} onChange={(event) => update("personaName", event.target.value)} /><label htmlFor="persona-description">Mô tả persona</label><textarea id="persona-description" value={draft.personaDescription} onChange={(event) => update("personaDescription", event.target.value)} /></fieldset><fieldset><legend>Nhân vật</legend>{draft.characters.map((character, index) => <div className="character-row" key={character.id}><div className="character-fields"><label htmlFor={`character-name-${index}`}>Tên nhân vật {index + 1}</label><input id={`character-name-${index}`} required value={character.name} onChange={(event) => setDraft((current) => ({ ...current, characters: current.characters.map((item) => item.id === character.id ? { ...item, name: event.target.value } : item) }))} /><label htmlFor={`character-aliases-${index}`}>Bí danh nhân vật {index + 1}</label><input id={`character-aliases-${index}`} placeholder="Cách nhau bằng dấu phẩy" value={character.aliases} onChange={(event) => setDraft((current) => ({ ...current, characters: current.characters.map((item) => item.id === character.id ? { ...item, aliases: event.target.value } : item) }))} /></div><button type="button" className="quiet-button touch-target" onClick={() => setDraft((current) => ({ ...current, characters: current.characters.filter((item) => item.id !== character.id) }))}>Xóa</button></div>)}<button type="button" className="quiet-button touch-target" onClick={() => setDraft((current) => ({ ...current, characters: [...current.characters, { id: newId(), name: "", aliases: "" }] }))}>Thêm nhân vật</button></fieldset><button type="submit" className="primary-button touch-target" disabled={pending}>{pending ? "Đang lưu…" : "Lưu chiến dịch"}</button></form></section>;
 }
 
 export function AppShell({ owner, onLogout, notice }: AppShellProps) {
-  return (
-    <main className="app-shell">
-      <header className="topbar">
-        <div className="wordmark"><span className="brand-mark small" aria-hidden="true">✦</span><span>Playroom</span></div>
-        <div className="account-menu">
-          <span className="account-email">{owner.email}</span>
-          <button type="button" className="quiet-button" onClick={onLogout}>Đăng xuất</button>
-        </div>
-      </header>
-      <section className="welcome-panel" aria-labelledby="welcome-title">
-        {notice && <div role="alert" className="form-error shell-notice">{notice}</div>}
-        <div className="welcome-copy">
-          <p className="eyebrow">PHÒNG VIẾT RIÊNG</p>
-          <h1 id="welcome-title">Chào mừng trở lại</h1>
-          <p>Những chương truyện, ký ức đã duyệt và các nhánh lựa chọn của bạn sẽ ở cùng một nơi.</p>
-        </div>
-        <div className="empty-state" aria-label="Khu vực truyện đang được chuẩn bị">
-          <span className="empty-icon" aria-hidden="true">⌁</span>
-          <h2>Sẵn sàng mở một câu chuyện</h2>
-          <p>Không có lượt chơi nào được tự động gửi. Khi bạn tạo chiến dịch, Playroom sẽ giữ nguyên quyền quyết định của bạn.</p>
-        </div>
-      </section>
-    </main>
-  );
+  const [campaigns, setCampaigns] = useState<CampaignSummary[]>([]); const [selectedId, setSelectedId] = useState<string | null>(null); const [projection, setProjection] = useState<CampaignProjection | null>(null); const [loading, setLoading] = useState(true); const [error, setError] = useState<string | null>(null); const [createOpen, setCreateOpen] = useState(false); const [drawerOpen, setDrawerOpen] = useState(false); const [detailsOpen, setDetailsOpen] = useState(false);
+  const drawerTrigger = useRef<HTMLButtonElement>(null); const drawerClose = useRef<HTMLButtonElement>(null); const detailsTrigger = useRef<HTMLButtonElement>(null); const detailsClose = useRef<HTMLButtonElement>(null);
+  useEffect(() => { let active = true; setLoading(true); api.listCampaigns().then((items) => { if (active) { const safeItems = items ?? []; setCampaigns(safeItems); if (safeItems[0]) setSelectedId(safeItems[0].id); } }).catch(() => { if (active) setError("Không thể tải danh sách chiến dịch."); }).finally(() => { if (active) setLoading(false); }); return () => { active = false; }; }, []);
+  useEffect(() => { if (!selectedId) { setProjection(null); return; } let active = true; setProjection(null); setError(null); api.getCampaign(selectedId).then((detail) => api.getCampaignProjection(selectedId, detail.branch_id)).then((next) => { if (active) setProjection(next); }).catch(() => { if (active) setError("Không thể tải chiến dịch này."); }); return () => { active = false; }; }, [selectedId]);
+  function closeDrawer() { setDrawerOpen(false); drawerTrigger.current?.focus(); }
+  function closeDetails() { setDetailsOpen(false); detailsTrigger.current?.focus(); }
+  useEffect(() => {
+    const dialog = drawerOpen ? drawerClose.current?.closest("[role=dialog]") : detailsOpen ? detailsClose.current?.closest("[role=dialog]") : null;
+    const close = drawerOpen ? closeDrawer : detailsOpen ? closeDetails : null;
+    if (!dialog || !close) return;
+    const closeDialog = close;
+    const dialogElement = dialog;
+    (drawerOpen ? drawerClose.current : detailsClose.current)?.focus();
+    function handleKey(event: KeyboardEvent) {
+      if (event.key === "Escape") { event.preventDefault(); closeDialog(); return; }
+      if (event.key !== "Tab") return;
+      const focusable = Array.from(dialogElement.querySelectorAll<HTMLElement>("button, [href], input, textarea, select, [tabindex]:not([tabindex='-1'])"));
+      if (!focusable.length) return;
+      const first = focusable[0]; const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    }
+    document.addEventListener("keydown", handleKey); return () => document.removeEventListener("keydown", handleKey);
+  }, [drawerOpen, detailsOpen]);
+  const selected = useMemo(() => campaigns.find((item) => item.id === selectedId) ?? null, [campaigns, selectedId]);
+  function created(campaign: CampaignSummary) { setCampaigns((current) => [campaign, ...current]); setCreateOpen(false); setSelectedId(campaign.id); }
+  if (loading) return <main className="app-shell loading-screen" role="status">Đang tải phòng truyện…</main>;
+  return <main className="app-shell story-app"><header className="topbar" aria-hidden={drawerOpen || detailsOpen}><div className="wordmark"><span className="brand-mark small" aria-hidden="true">✦</span><span>Playroom</span></div><div className="account-menu"><span className="account-email">{owner.email}</span><button type="button" className="quiet-button touch-target" onClick={onLogout}>Đăng xuất</button></div></header>{notice && <div role="alert" className="form-error shell-notice">{notice}</div>}{!campaigns.length && !createOpen && error ? <section className="empty-campaign"><h1>Chào mừng trở lại</h1><div role="alert" className="form-error">{error}</div></section> : !campaigns.length && !createOpen ? <section className="empty-campaign" aria-labelledby="empty-campaign-title"><p className="eyebrow">PHÒNG VIẾT RIÊNG</p><h1 id="empty-campaign-title">Chào mừng trở lại</h1><p>Thiết lập thế giới và persona trước khi mở chương đầu tiên.</p><button type="button" className="primary-button touch-target" onClick={() => setCreateOpen(true)}>Tạo chiến dịch đầu tiên</button></section> : createOpen ? <CampaignForm onCreated={created} onCancel={() => setCreateOpen(false)} /> : <><div className="mobile-actions" aria-hidden={drawerOpen || detailsOpen}><button type="button" className="quiet-button touch-target" onClick={() => setDrawerOpen(true)} ref={drawerTrigger}>Chiến dịch</button><button type="button" className="quiet-button touch-target" onClick={() => setDetailsOpen(true)} ref={detailsTrigger}>AI đang nhớ gì</button></div><div className="workspace-grid" aria-hidden={drawerOpen || detailsOpen}><aside className="campaign-nav" aria-label="Danh sách chiến dịch"><div className="section-heading"><h2>Chiến dịch</h2><button type="button" className="quiet-button touch-target" onClick={() => setCreateOpen(true)}>Mới</button></div>{campaigns.map((item) => <button type="button" className={`campaign-item touch-target ${item.id === selectedId ? "selected" : ""}`} key={item.id} onClick={() => setSelectedId(item.id)} aria-pressed={item.id === selectedId}>{item.title}</button>)}</aside><section className="story-column" aria-live="polite">{error && <div role="alert" className="form-error">{error}</div>}{projection ? <><p className="eyebrow">{selected?.title ?? projection.campaign.title}</p><h1>{projection.campaign.title}</h1>{projection.transcript.length ? <div className="transcript">{projection.transcript.map((turn) => <article className="story-turn" key={turn.revision_id}><p className="turn-action">{turn.action_text}</p><Markdown source={turn.narrative_text} /></article>)}</div> : <div className="story-empty"><h2>Chương đầu tiên đang chờ bạn.</h2><p>Thế giới đã sẵn sàng. Bạn có thể tiếp tục thiết lập hồ sơ và ký ức.</p></div>}</> : <div className="loading-story" role="status">Đang mở chiến dịch…</div>}</section><aside className="details-column" aria-label="Hồ sơ và ký ức"><h2>Hồ sơ và ký ức</h2>{projection && <><ProfileBlock title="Thế giới" profile={projection.profiles.world} /><ProfileBlock title="Persona" profile={projection.profiles.persona} /><p className="details-meta">{projection.jobs.length} lượt tạo có thể tiếp tục</p></>}</aside></div></>}{drawerOpen && <div className="mobile-overlay"><section className="mobile-drawer" role="dialog" aria-modal="true" aria-labelledby="campaign-drawer-title"><div className="section-heading"><h2 id="campaign-drawer-title">Danh sách chiến dịch</h2><button type="button" className="quiet-button touch-target" onClick={closeDrawer} ref={drawerClose}>Đóng danh sách chiến dịch</button></div>{campaigns.map((item) => <button type="button" className="campaign-item touch-target" key={item.id} aria-pressed={item.id === selectedId} onClick={() => { setSelectedId(item.id); closeDrawer(); }}>{item.title}</button>)}</section></div>}{detailsOpen && <div className="mobile-overlay"><section className="mobile-sheet" role="dialog" aria-modal="true" aria-labelledby="details-sheet-title"><div className="section-heading"><h2 id="details-sheet-title">Hồ sơ và ký ức</h2><button type="button" className="quiet-button touch-target" onClick={closeDetails} ref={detailsClose}>Đóng hồ sơ và ký ức</button></div>{projection && <><ProfileBlock title="Thế giới" profile={projection.profiles.world} /><ProfileBlock title="Persona" profile={projection.profiles.persona} /></>}</section></div>}</main>;
 }
+
+function ProfileBlock({ title, profile }: { title: string; profile?: { data: Record<string, unknown> } }) { if (!profile) return null; const name = typeof profile.data.name === "string" ? profile.data.name : title; const description = typeof profile.data.description === "string" ? profile.data.description : ""; return <section className="profile-block"><h3>{name}</h3>{description && <p>{description}</p>}</section>; }
