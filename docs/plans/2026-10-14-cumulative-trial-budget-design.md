@@ -13,6 +13,14 @@ Today `GenerationService.generate()` creates one immutable job inside `transacti
 
 A local reservation/cap cannot guarantee a vendor's final invoice when metering, tier pricing, or overage differs. UI must label internal amounts as *reservation/estimate*, provider-reported, calculated, or unknown. The provider dashboard is the external source of billing truth.
 
+## Additional confirmed input-trust boundary: request-side policy and cap overrides
+
+`backend/playroom/api/generation.py::GenerateRequest` accepts `mode`, `policy`, and `cap` from the POST body. Its route chooses submitted values over persisted owner settings. In `GenerationService.generate()` at the reservation lock, `submitted_identity` explicitly preserves non-null submitted values and overlays them on the persisted settings snapshot **before** `_reservation()`. As a result, a posted larger `cap` is currently checked against **itself**, not limited by the separately configured `confirmed_usd_cap`; a submitted `policy=capped_paid` can also override a stored `free_only` value. This does not imply any call already occurred: it is a **missing server-side authorization invariant**. The caller is session-authenticated, but client-side UI state does not constitute a durable trial spending grant.
+
+**Mandatory first RED case:** owner setting `free_only` + paid Ollama narrator; valid authenticated client submits `policy=capped_paid`, `cap=100`; server must reject unless a distinct, active, owner-approved grant permits this exact model/scope and amount. Similarly, persisted per-send USD 0.01 + posted USD 100 must not authorize a job with a larger cap. A stale client from a previously approved trial must not use cached cap after the grant expires/is revoked. Do not conflate an explicit request field with independent spend consent.
+
+Resolution belongs at the **server-side authoritative policy/budget authorization boundary**, not by hiding UI fields. Either prohibit overrides of persisted policy/cap entirely, or permit them only via a pinned, server-validated authorization and `min(server_per_send_cap, submitted_requested_cap, trial_remaining)`. Preserve idempotency hashing and fail closed on any cap/profile/settings mismatch. Re-run B1's definitive 409/422 recovery cases so new validation errors do not poison the Send key.
+
 ## 2. Owner decisions required by the feature
 
 A trial authorization records **owner ID**, immutable trial ID, provider and pinned model/profile version, optional campaign scope, total approved USD, per-generation cap USD, maximum **new** jobs, UTC expiry, and explicit approval timestamp. Approval does **not** authorize direct live calls on its own; sending a turn must still be a deliberate user action. No automatic retries on uncertain completion.
