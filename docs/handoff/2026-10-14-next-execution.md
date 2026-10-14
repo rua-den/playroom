@@ -60,3 +60,18 @@ Run focused Vitest, entire frontend Vitest, typecheck, build, and `git diff --ch
 - Task 5 consolidation, Task 6 fork/reroll, Task 7 import/backup, and isolated Task 8 Caddy/VPS after the earlier gates.
 
 No live provider inference or VPS changes are authorized by this handoff.
+
+
+## Execution update — 14/10/2026 (after PR #3)
+
+**B0/B1: PASS for the reviewed implementation and deterministic CI.**
+
+- Source fix: [PR #3](https://github.com/rua-den/playroom/pull/3), squash merged into `main` at `ead34fbbb56cbe11378b47c9a83a80c54df117e7`. GitHub Issue #2 is closed.
+- Reviewed diff: `GenerationComposer.tsx`, its regression tests and `.github/workflows/frontend-ci.yml`. No backend production files were changed by this PR.
+- Exact merge-head [Actions run #38503392817](https://github.com/rua-den/playroom/actions/runs/38503392817) is green:
+  - Backend `uv run --locked --extra test pytest backend/tests -q`: **265 passed** (as in verified PR job #38503269593); `compileall` PASS.
+  - Frontend `npm test`: **79 passed, 3 skipped** (three pre-existing obsolete composer drafts); `npm run typecheck` PASS; `npm run build` PASS.
+- Runtime tests are fake/mocked provider tests; **not** a real Ollama Cloud model quality validation, production VPS acceptance or phone-browser smoke.
+- B1 repair preserves input on confirmed pre-reservation rejection (e.g. 422), avoids duplicate generation after ambiguous 5xx, checks conflicting 409 key before adoption, and keeps recovery identity when committed transcript cannot be refreshed.
+- B1 RED before production edit was **not observed** in the CI environment; green acceptance regressions were observed at the PR and merge HEAD. Do not retrospectively claim a witnessed RED stage.
+- **Next:** [Issue #4: verify Ollama narrator segment contract](https://github.com/rua-den/playroom/issues/4) (B2). The scoped direct-implementation fallback recorded in `AGENTS.md` applies only to Issue #2; normal agent routing still applies to new B2 code.
