@@ -8,6 +8,7 @@ on:
       - "pyproject.toml"
       - "uv.lock"
       - ".github/workflows/frontend-ci.yml"
+      - "backend/tests/browser_e2e.py"
   push:
     branches: [main]
     paths:
@@ -16,6 +17,7 @@ on:
       - "pyproject.toml"
       - "uv.lock"
       - ".github/workflows/frontend-ci.yml"
+      - "backend/tests/browser_e2e.py"
 
 permissions:
   contents: read
@@ -61,3 +63,29 @@ jobs:
         run: uv run --locked --extra test pytest backend/tests -q
       - name: Compile
         run: uv run --locked python -m compileall -q backend/playroom
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Python 3.12 and uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: Install locked backend dependencies
+        run: uv sync --locked --extra test
+      - name: Build real frontend
+        working-directory: frontend
+        run: npm ci && npm run build
+      - name: Install isolated browser test tools
+        run: uv run --locked --with playwright==1.56.0 python -m playwright install --with-deps chromium
+      - name: End-to-end synthetic gameplay in Chromium
+        run: uv run --locked --with playwright==1.56.0 python backend/tests/browser_e2e.py
