@@ -141,7 +141,7 @@ def browser_synthetic_chat() -> None:
                 assert not app.state.generation_provider.calls
                 compose.fill("Mở dòng mới")
                 compose.press("Shift+Enter")
-                assert compose.input_value().endswith("\\n")
+                assert compose.input_value().endswith("\n")
                 assert not app.state.generation_provider.calls
 
                 # Real DOM->POST->queue->fake worker->commit->projection cycle.
