@@ -269,3 +269,18 @@ def test_revocation_rejected_for_other_owner(tmp_path):
     with pytest.raises(ValidationError, match="not active|owner"):
         revoke_trial_authorization(db, another.id, trial["id"])
     assert get_trial_summary(db, owner.id)["state"] == "active"
+
+
+def test_final_invocation_gate_rechecks_revoked_grant(tmp_path):
+    _, db, owner, profile, cost = prepared(tmp_path)
+    grant = approve(db, owner, profile, cost)
+    campaign = add_story(db, owner, 1)
+    job = reserve(db, owner, campaign, "revoked-at-last-gate")
+    service = GenerationService(db, FakeProvider([]))
+    epoch = service._epoch()
+    stage_key = f"{job['id']}:narration"
+    db.execute("UPDATE generation_jobs SET status='running' WHERE id=?", (job["id"],))
+    db.execute("UPDATE provider_attempts SET status='claimed',claim_epoch=? WHERE stage_key=?", (epoch, stage_key))
+    revoke_trial_authorization(db, owner.id, grant["id"])
+    assert service._invocation_gate(job["id"], stage_key) is False
+    assert db.execute("SELECT status FROM provider_attempts WHERE stage_key=?", (stage_key,)).fetchone()["status"] == "claimed"
