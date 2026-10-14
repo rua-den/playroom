@@ -178,3 +178,70 @@ def test_authenticated_trial_api_cannot_grant_on_behalf_of_another_owner(tmp_pat
     revoked = client.post(f"/api/provider/trials/{approval.json()['id']}/revoke", headers=headers)
     assert revoked.status_code == 200
     assert client.get("/api/provider/trials/current").json()["state"] == "revoked"
+
+
+def test_spend_reservation_survives_generation_row_deletion(tmp_path):
+    _, db, owner, profile, cost = prepared(tmp_path)
+    grant = approve(db, owner, profile, cost)
+    campaign = add_story(db, owner, 1)
+    job = reserve(db, owner, campaign, "held")
+    db.execute("DELETE FROM generation_jobs WHERE id=?", (job["id"],))
+    assert db.execute("SELECT COUNT(*) FROM paid_trial_reservations WHERE authorization_id=?", (grant["id"],)).fetchone()[0] == 1
+    assert Decimal(get_trial_summary(db, owner.id)["reserved_usd"]) == cost
+    with pytest.raises(ValidationError, match="trial|budget"):
+        reserve(db, owner, add_story(db, owner, 2), "blocked-after-delete")
+
+
+def test_disabling_paid_policy_blocks_dispatch_of_already_queued_job(tmp_path):
+    _, db, owner, profile, cost = prepared(tmp_path)
+    approve(db, owner, profile, cost)
+    campaign = add_story(db, owner, 1)
+    job = reserve(db, owner, campaign, "queued-after-revoke")
+    saved = save_owner_settings(db, owner.id, {
+        "roles": {"narrator": {"id": profile["id"], "version": profile["version"], "profile_hash": profile["profile_hash"]}},
+        "mode": "economy", "policy": "free_only",
+    })
+    provider = FakeProvider(["must not run"])
+    service = GenerationService(db, provider)
+    result = service.run(job["id"])
+    assert result["status"] == "failed"
+    assert provider.calls == []
+    assert Decimal(get_trial_summary(db, owner.id)["reserved_usd"]) == cost
+
+
+def test_unapproved_paid_api_override_rejected_before_job_or_dispatch(tmp_path):
+    path, db, owner, _, _ = prepared(tmp_path, policy="free_only")
+    campaign = add_story(db, owner, 1)
+    checkpoint = get_branch_head(db, campaign.id, campaign.initial_branch_id).checkpoint_id
+    provider = FakeProvider(["must never dispatch"])
+    app = create_app(
+        database_url=f"sqlite:///{path}", allowed_hosts={"testserver"},
+        secure_cookies=False, credential_root=tmp_path / "secrets",
+        generation_provider=provider,
+    )
+    client = TestClient(app, base_url="https://testserver")
+    headers = {"origin": "https://testserver"}
+    assert client.post("/api/auth/login", json={"email": owner.email, "password": "long secure test password"}, headers=headers).status_code == 200
+    result = client.post(f"/api/campaigns/{campaign.id}/generate", json={
+        "branch_id": campaign.initial_branch_id, "checkpoint_id": checkpoint,
+        "action": "Unapproved paid", "idempotency_key": "unapproved-post",
+        "mode": "economy", "policy": "capped_paid", "cap": "100",
+    }, headers=headers)
+    assert result.status_code == 422, result.text
+    assert db.execute("SELECT COUNT(*) FROM generation_jobs").fetchone()[0] == 0
+    assert provider.calls == []
+
+
+def test_server_detects_provider_bill_larger_than_reserved_total(tmp_path):
+    _, db, owner, profile, cost = prepared(tmp_path)
+    approve(db, owner, profile, cost * 3)
+    job = reserve(db, owner, add_story(db, owner, 1), "first")
+    row = db.execute("SELECT reserved_cost_json FROM generation_jobs WHERE id=?", (job["id"],)).fetchone()
+    ledger = json.loads(row["reserved_cost_json"])
+    ledger["provider_reported_total_usd"] = str(cost * 4)
+    db.execute("UPDATE generation_jobs SET reserved_cost_json=? WHERE id=?", (json.dumps(ledger), job["id"]))
+    summary = get_trial_summary(db, owner.id)
+    assert summary["state"] == "overrun"
+    assert Decimal(summary["reserved_usd"]) == cost * 4
+    with pytest.raises(ValidationError, match="trial|budget"):
+        reserve(db, owner, add_story(db, owner, 2), "suspended")
