@@ -184,3 +184,46 @@ it("requires explicit consent and separates cumulative grant from per-send setti
   await user.click(screen.getByRole("button", { name: "Thu hồi phiên trả phí" }));
   await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/provider/trials/trial-one/revoke", expect.objectContaining({ method: "POST" })));
 });
+
+
+describe("Free-first provider settings", () => {
+  it("defaults to a free-first explanation without fabricated usage counts or USD budgets", async () => {
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ mode: "economy", policy: "free_only", roles: {}, budgets: {} }), { status: 200 })));
+    render(<SettingsPanel />);
+    expect(await screen.findByText("Chơi với tài khoản Free")).toBeInTheDocument();
+    expect(screen.getByText(/credits miễn phí.*token/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Giới hạn USD")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Số lượt Send tối đa")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Narrator input tokens")).not.toBeInTheDocument();
+    expect(screen.queryByText(/50 lượt/)).not.toBeInTheDocument();
+  });
+
+  it("warns when a pinned paid Ollama model cannot be used with free-only policy", async () => {
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([{ id: "ollama-p", version: 2, model: "gpt-oss:120b", provider: "ollama", credential_tier: "paid" }]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ mode: "economy", policy: "free_only", roles: { narrator: { id: "ollama-p", version: 2 } }, budgets: {} }), { status: 200 })));
+    render(<SettingsPanel />);
+    expect(await screen.findByText("Chơi với tài khoản Free")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("gpt-oss:120b");
+    expect(screen.getByRole("alert")).toHaveTextContent(/không được xác minh là model miễn phí/);
+    expect(screen.queryByLabelText("Số lượt Send tối đa")).not.toBeInTheDocument();
+  });
+
+  it("shows advanced token budgets only after opting into paid settings", async () => {
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ mode: "economy", policy: "free_only", roles: {}, budgets: { narrator: { input_limit: 12000, requested_output: 4000, wrapper_buffer: 512 } } }), { status: 200 })));
+    const user = userEvent.setup();
+    render(<SettingsPanel />);
+    await screen.findByText("Chơi với tài khoản Free");
+    expect(screen.queryByLabelText("Narrator input tokens")).not.toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText("Chính sách chi phí"), "capped_paid");
+    expect(screen.getByLabelText("Narrator input tokens")).toBeInTheDocument();
+    expect(screen.getByLabelText("Số lượt Send tối đa")).toHaveValue(null);
+  });
+});
