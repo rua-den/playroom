@@ -8,6 +8,10 @@
 - If the required Luna model is unavailable, stop implementation and tell the user. Do not silently substitute another model or write implementation code in the orchestrator.
 - Documentation, planning and review can be performed by the orchestrator.
 
+### Owner-authorized temporary fallback — Issue #2 only
+
+The owner asked to continue directly in the ChatGPT session on 2026-10-14 after being told that Luna delegation was unavailable. For [Issue #2](https://github.com/rua-den/playroom/issues/2) only, that instruction authorizes a direct ChatGPT implementation fallback if Luna cannot be dispatched. Keep this explicit exception narrowly scoped to the recovery fix and its tests; do not infer general model-routing changes for future tasks. The implementing assistant must review the exact diff, perform every verification available, explicitly list anything unrun, and never claim B1 PASS without running focused and full relevant tests. The normal Luna-only routing remains the default elsewhere.
+
 ## Read order
 
 1. `README.md`.
