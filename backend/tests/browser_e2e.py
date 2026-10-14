@@ -80,12 +80,10 @@ def _assert_mobile(page, width: int) -> None:
     expect(page.get_by_role("button", name="Gửi", exact=True)).to_be_visible()
     overflow = page.evaluate("document.documentElement.scrollWidth - window.innerWidth")
     assert overflow <= 1, f"Horizontal overflow at {width}px: {overflow}px"
+    # The current responsive UI uses the topbar campaign select; the
+    # legacy mobile-campaign drawer button is intentionally hidden in CSS.
+    expect(page.get_by_role("combobox", name="Chiến dịch hiện tại")).to_be_visible()
     if width == 390:
-        page.get_by_role("button", name="Chiến dịch", exact=True).click()
-        dialog = page.get_by_role("dialog", name="Danh sách chiến dịch")
-        expect(dialog).to_be_visible()
-        page.keyboard.press("Escape")
-        expect(dialog).not_to_be_visible()
         page.get_by_role("button", name="AI đang nhớ gì").click()
         details = page.get_by_role("dialog", name="Hồ sơ và ký ức")
         expect(details).to_be_visible()
