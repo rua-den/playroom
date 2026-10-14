@@ -131,6 +131,12 @@ export function GenerationComposer({ ownerId, projection, profileId, onCommitted
         // existing idempotency key. Resolve it before releasing anything.
         try {
           nextJob = await api.getGenerationByKey(saved.branchId, saved.idempotencyKey);
+          // A conflicting idempotency payload may resolve to a *different*
+          // submitted action; never adopt or auto-commit that foreign job.
+          if (nextJob.branch_id !== saved.branchId || nextJob.checkpoint_id !== saved.checkpointId || nextJob.action !== saved.action) {
+            persist(saved);
+            throw cause;
+          }
         } catch (lookupError) {
           if (lookupError instanceof ApiError && lookupError.status === 404) {
             // The explicit conflict and authoritative missing-key response
