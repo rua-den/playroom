@@ -245,3 +245,27 @@ def test_server_detects_provider_bill_larger_than_reserved_total(tmp_path):
     assert Decimal(summary["reserved_usd"]) == cost * 4
     with pytest.raises(ValidationError, match="trial|budget"):
         reserve(db, owner, add_story(db, owner, 2), "suspended")
+
+
+def test_lowering_owner_cap_blocks_already_queued_paid_job(tmp_path):
+    _, db, owner, profile, cost = prepared(tmp_path)
+    approve(db, owner, profile, cost * 2, per_send=str(cost * 2))
+    job = reserve(db, owner, add_story(db, owner, 1), "queued-cap-changed")
+    save_owner_settings(db, owner.id, {
+        "roles": {"narrator": {"id": profile["id"], "version": profile["version"], "profile_hash": profile["profile_hash"]}},
+        "mode": "economy", "policy": "capped_paid", "confirmed_usd_cap": str(cost / 2),
+    })
+    provider = FakeProvider(["must not dispatch"])
+    result = GenerationService(db, provider).run(job["id"])
+    assert result["status"] == "failed"
+    assert provider.calls == []
+    assert Decimal(get_trial_summary(db, owner.id)["reserved_usd"]) == cost
+
+
+def test_revocation_rejected_for_other_owner(tmp_path):
+    _, db, owner, profile, cost = prepared(tmp_path)
+    trial = approve(db, owner, profile, cost)
+    another = create_owner(db, "second@example.test", "second password for test")
+    with pytest.raises(ValidationError, match="not active|owner"):
+        revoke_trial_authorization(db, another.id, trial["id"])
+    assert get_trial_summary(db, owner.id)["state"] == "active"
