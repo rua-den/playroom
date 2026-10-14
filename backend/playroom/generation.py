@@ -1061,21 +1061,40 @@ class GenerationService:
             return changed == 1
 
     def _invocation_gate(self, job_id, key):
-        """Durably activate an owned claim immediately before provider I/O."""
+        """Durably activate an owned claim immediately before provider I/O.
+
+        Paid-trial permission is rechecked inside the SAME SQLite write
+        transaction that marks the attempt dispatched. Revoking the grant
+        before this boundary cannot race past an earlier read-only preflight.
+        """
         with self._db_lock:
-            current = self._epoch()
-            row = self.connection.execute("SELECT a.stage,a.status,a.claim_epoch,j.status AS job_status,j.execution_epoch,j.cancel_requested FROM provider_attempts a JOIN generation_jobs j ON j.id=a.generation_job_id WHERE a.stage_key=? AND j.id=?", (key, job_id)).fetchone()
-            if row is None or row["claim_epoch"] != current or row["execution_epoch"] != current or row["job_status"] not in {"running", "queued"} or row["cancel_requested"]:
+            with transaction(self.connection):
+                current = self._epoch()
+                row = self.connection.execute("SELECT a.stage,a.status,a.claim_epoch,j.status AS job_status,j.execution_epoch,j.cancel_requested FROM provider_attempts a JOIN generation_jobs j ON j.id=a.generation_job_id WHERE a.stage_key=? AND j.id=?", (key, job_id)).fetchone()
+                if row is None or row["claim_epoch"] != current or row["execution_epoch"] != current or row["job_status"] not in {"running", "queued"} or row["cancel_requested"]:
+                    return False
+                if row["status"] == "dispatched":
+                    return True
+                if row["status"] != "claimed":
+                    return False
+                job = self.connection.execute("SELECT * FROM generation_jobs WHERE id=?", (job_id,)).fetchone()
+                if job is None:
+                    return False
+                if job["policy"] == "capped_paid":
+                    try:
+                        profiles = json.loads(job["profile_snapshot_json"] or "{}")
+                        narrator = profiles.get("narrator") or {}
+                        if narrator.get("credential_tier") == "paid":
+                            persisted, _ = self._persisted_config(job["owner_id"])
+                            if persisted is not None:
+                                assert_trial_dispatch_allowed(self.connection, job, profile=narrator)
+                    except (ValidationError, ValueError, TypeError):
+                        return False
+                changed = self.connection.execute("UPDATE provider_attempts SET status='dispatched',dispatched_at=? WHERE stage_key=? AND status='claimed' AND claim_epoch=? AND EXISTS (SELECT 1 FROM generation_jobs WHERE id=? AND status='running' AND execution_epoch=? AND cancel_requested=0)", (_now(), key, current, job_id, current)).rowcount
+                if changed == 1:
+                    self._event(job_id, row["stage"], "phase_changed", None, "", {"phase": f"{row['stage']}_dispatched"})
+                    return True
                 return False
-            if row["status"] == "dispatched":
-                return True
-            if row["status"] != "claimed":
-                return False
-            changed = self.connection.execute("UPDATE provider_attempts SET status='dispatched',dispatched_at=? WHERE stage_key=? AND status='claimed' AND claim_epoch=? AND EXISTS (SELECT 1 FROM generation_jobs WHERE id=? AND status='running' AND execution_epoch=? AND cancel_requested=0)", (_now(), key, current, job_id, current)).rowcount
-            if changed == 1:
-                self._event(job_id, row["stage"], "phase_changed", None, "", {"phase": f"{row['stage']}_dispatched"})
-                return True
-            return False
 
     def _claim_gate(self, job_id, key):
         """Read-only post-slot eligibility check before credential resolution."""
