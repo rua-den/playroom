@@ -28,6 +28,17 @@ export function GenerationComposer({ ownerId, projection, profileId, onCommitted
   const draftDirty = useRef(false);
   const storageKey = generationIdentityKey(ownerId, projection.campaign.id, projection.branch.id);
   const persist = (value: GenerationIdentity) => { setIdentity(value); localStorage.setItem(storageKey, JSON.stringify(value)); };
+  // A definitive pre-reservation rejection may release only its own durable
+  // identity. Never clear a newer request or an ambiguous provider dispatch.
+  const releaseRejected = (saved: GenerationIdentity) => {
+    const raw = localStorage.getItem(storageKey);
+    if (!raw) return;
+    try {
+      if ((JSON.parse(raw) as GenerationIdentity).idempotencyKey !== saved.idempotencyKey) return;
+    } catch { return; }
+    localStorage.removeItem(storageKey);
+    setIdentity((current) => current?.idempotencyKey === saved.idempotencyKey ? null : current);
+  };
   function commitCandidate(candidate: GenerationJob, saved: GenerationIdentity) {
     if (committedJobs.current.has(candidate.id)) return Promise.resolve();
     const existing = commitPromises.current.get(candidate.id);
@@ -36,6 +47,7 @@ export function GenerationComposer({ ownerId, projection, profileId, onCommitted
       try {
         await api.commitGeneration(candidate.id);
         const refreshed = await onCommitted();
+        if (!refreshed) throw new Error("Committed turn has not been refreshed in the campaign");
         committedJobs.current.add(candidate.id);
         localStorage.removeItem(storageKey);
         setIdentity(null);
@@ -61,7 +73,8 @@ export function GenerationComposer({ ownerId, projection, profileId, onCommitted
     if (found.status === "committed") {
       setPending(true);
       try {
-        await onCommitted();
+        const refreshed = await onCommitted();
+        if (!refreshed) throw new Error("Committed turn has not been refreshed in the campaign");
         localStorage.removeItem(storageKey);
         setIdentity(null);
         setJob(null);
@@ -104,7 +117,48 @@ export function GenerationComposer({ ownerId, projection, profileId, onCommitted
     if (!selectedProfileId) { const settings = await api.getProviderSettings(); const quality = !retryMode && settings.mode === "quality"; selectedProfileId = (quality ? settings.roles.context : settings.roles.narrator)?.id ?? ""; selectedMode = retryMode ?? settings.mode; selectedPolicy = retryMode ? "free_only" : settings.policy; selectedCap = retryMode ? null : settings.confirmed_usd_cap; if (!selectedProfileId) throw new Error("Chưa cấu hình hồ sơ nhà cung cấp cho vai trò kể chuyện."); }
     const nextPreview = await api.createContextPreview(nextProjection.campaign.id, { branch_id: nextProjection.branch.id, action: nextAction, profile_id: selectedProfileId }); setPreview(nextPreview);
     const saved: GenerationIdentity = { ownerId, campaignId: nextProjection.campaign.id, branchId: nextProjection.branch.id, checkpointId: nextPreview.checkpoint_id, action: nextAction, previewId: nextPreview.id, idempotencyKey: newKey(), eventCursor: 0, mode: selectedMode, policy: selectedPolicy, cap: selectedCap }; persist(saved);
-    let nextJob: GenerationJob; try { nextJob = await api.generate(nextProjection.campaign.id, { branch_id: saved.branchId, action: saved.action, idempotency_key: saved.idempotencyKey, checkpoint_id: saved.checkpointId, preview_id: saved.previewId, mode: saved.mode, policy: saved.policy, cap: saved.cap }); } catch (cause) { if (isQuota(cause)) { localStorage.removeItem(storageKey); setIdentity(null); throw cause; } if (!recoverable(cause)) throw cause; try { nextJob = await api.getGenerationByKey(saved.branchId, saved.idempotencyKey); } catch (lookupError) { persist(saved); throw lookupError; } }
+    let nextJob: GenerationJob;
+    try {
+      nextJob = await api.generate(nextProjection.campaign.id, { branch_id: saved.branchId, action: saved.action, idempotency_key: saved.idempotencyKey, checkpoint_id: saved.checkpointId, preview_id: saved.previewId, mode: saved.mode, policy: saved.policy, cap: saved.cap });
+    } catch (cause) {
+      if (cause instanceof ApiError && [400, 401, 403, 404, 422, 429].includes(cause.status)) {
+        // An acknowledged FastAPI rejection: no generation job was reserved.
+        // A 5xx remains uncertain even when its error text mentions quota/schema.
+        releaseRejected(saved);
+        throw cause;
+      }
+      if (cause instanceof ApiError && cause.status === 409) {
+        // A conflict might be a stale checkpoint, but could also be an
+        // existing idempotency key. Resolve it before releasing anything.
+        try {
+          nextJob = await api.getGenerationByKey(saved.branchId, saved.idempotencyKey);
+          // A conflicting idempotency payload may resolve to a *different*
+          // submitted action; never adopt or auto-commit that foreign job.
+          if (nextJob.branch_id !== saved.branchId || nextJob.checkpoint_id !== saved.checkpointId || nextJob.action !== saved.action) {
+            persist(saved);
+            throw cause;
+          }
+        } catch (lookupError) {
+          if (lookupError instanceof ApiError && lookupError.status === 404) {
+            // The explicit conflict and authoritative missing-key response
+            // together establish that no job was reserved under this key.
+            releaseRejected(saved);
+            await onCommitted();
+            throw cause;
+          }
+          persist(saved);
+          throw lookupError;
+        }
+      } else {
+        if (!recoverable(cause)) throw cause;
+        try {
+          nextJob = await api.getGenerationByKey(saved.branchId, saved.idempotencyKey);
+        } catch (lookupError) {
+          persist(saved);
+          throw lookupError;
+        }
+      }
+    }
     const complete = { ...saved, jobId: nextJob.id }; persist(complete); draftDirty.current = false; setJob(nextJob); setDraft(nextJob.draft ?? "");
     if (nextJob.status === "candidate") { try { await commitCandidate(nextJob, complete); } catch (cause) { setError("Không thể lưu lượt kể hoàn chỉnh; hãy thử Gửi lại."); throw cause; } }
   }
