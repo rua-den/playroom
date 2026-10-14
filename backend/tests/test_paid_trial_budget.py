@@ -58,10 +58,10 @@ def reserve(db, owner, campaign, key, *, policy="capped_paid", cap="1"):
     )
 
 
-def approve(db, owner, profile, total, *, per_send="1", max_jobs=5, expires=None):
+def approve(db, owner, profile, total, *, per_send=None, max_jobs=5, expires=None):
     return create_trial_authorization(
         db, owner.id, profile_id=profile["id"], profile_version=profile["version"],
-        total_cap_usd=str(total), per_send_cap_usd=per_send,
+        total_cap_usd=str(total), per_send_cap_usd=per_send or str(total),
         max_jobs=max_jobs,
         expires_at=expires or (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
     )
@@ -106,7 +106,6 @@ def test_idempotent_lookup_has_exactly_one_debit_even_after_restart(tmp_path):
 
 def test_caller_cannot_override_persisted_free_only_or_cap(tmp_path):
     _, db, owner, profile, cost = prepared(tmp_path, policy="free_only")
-    approve(db, owner, profile, cost * 10)
     campaign = add_story(db, owner, 1)
     with pytest.raises(ValidationError, match="policy|free_only|trial"):
         reserve(db, owner, campaign, "upgrade", policy="capped_paid", cap="100")
@@ -118,6 +117,7 @@ def test_caller_cannot_override_persisted_free_only_or_cap(tmp_path):
         "roles": {"narrator": {"id": profile["id"], "version": profile["version"], "profile_hash": profile["profile_hash"]}},
         "mode": "economy", "policy": "capped_paid", "confirmed_usd_cap": "0.01",
     })
+    approve(db, owner, profile, cost * 2, per_send=str(cost))
     with pytest.raises(ValidationError, match="cap|authorization|budget|trial"):
         reserve(db, owner, campaign, "escalate", cap="100")
     assert db.execute("SELECT COUNT(*) FROM generation_jobs").fetchone()[0] == 0
@@ -167,7 +167,7 @@ def test_authenticated_trial_api_cannot_grant_on_behalf_of_another_owner(tmp_pat
     assert client.post("/api/auth/login", json={"email": owner.email, "password": "long secure test password"}, headers=headers).status_code == 200
     approval = client.post("/api/provider/trials", json={
         "profile_id": profile["id"], "profile_version": profile["version"],
-        "total_cap_usd": str(cost * 2), "per_send_cap_usd": "1",
+        "total_cap_usd": str(cost * 2), "per_send_cap_usd": str(cost * 2),
         "max_jobs": 2, "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
     }, headers=headers)
     assert approval.status_code == 201, approval.text
