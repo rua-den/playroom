@@ -71,6 +71,98 @@ describe("GenerationComposer", () => {
     expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/commit")).length).toBe(1);
   });
 
+
+  it("recovers a definitive 422 rejection so a deliberate second Send gets a new key", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "preview-rejected", campaign_id: "campaign-1", branch_id: "branch-1", checkpoint_id: "checkpoint-1", action: "Chào", status: "ready", profile_id: "profile-1" }), { status: 201 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Invalid request" }), { status: 422 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "preview-retry", campaign_id: "campaign-1", branch_id: "branch-1", checkpoint_id: "checkpoint-1", action: "Chào", status: "ready", profile_id: "profile-1" }), { status: 201 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "job-retry", campaign_id: "campaign-1", branch_id: "branch-1", checkpoint_id: "checkpoint-1", status: "queued", draft: "", offset: 0, offset_unit: "utf16_code_units" }), { status: 201 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<GenerationComposer ownerId="owner-1" projection={projection} profileId="profile-1" onCommitted={vi.fn()} />);
+    const input = screen.getByLabelText("Hành động tiếp theo");
+    await user.type(input, "Chào");
+    await user.click(screen.getByRole("button", { name: "Gửi" }));
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(input).toHaveValue("Chào");
+    expect(localStorage.getItem(generationIdentityKey("owner-1", "campaign-1", "branch-1"))).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Gửi" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
+    const rejectedBody = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
+    const retryBody = JSON.parse(String(fetchMock.mock.calls[3][1]?.body));
+    expect(retryBody.idempotency_key).not.toBe(rejectedBody.idempotency_key);
+    expect(retryBody.preview_id).toBe("preview-retry");
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/generate"))).toHaveLength(2);
+  });
+
+  it("refreshes authoritative state after a rejected stale 409 before a new deliberate Send", async () => {
+    const advanced = { ...projection, branch: { ...projection.branch, state_version: 4, checkpoint_id: "checkpoint-2" }, checkpoint: { ...projection.checkpoint, id: "checkpoint-2", state_version: 4 } };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "preview-stale", campaign_id: "campaign-1", branch_id: "branch-1", checkpoint_id: "checkpoint-1", action: "Đi tiếp", status: "ready", profile_id: "profile-1" }), { status: 201 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Generation checkpoint is stale" }), { status: 409 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Generation job not found" }), { status: 404 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "preview-fresh", campaign_id: "campaign-1", branch_id: "branch-1", checkpoint_id: "checkpoint-2", action: "Đi tiếp", status: "ready", profile_id: "profile-1" }), { status: 201 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "job-fresh", campaign_id: "campaign-1", branch_id: "branch-1", checkpoint_id: "checkpoint-2", status: "queued", draft: "", offset: 0, offset_unit: "utf16_code_units" }), { status: 201 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const onCommitted = vi.fn().mockResolvedValue(advanced);
+    const user = userEvent.setup();
+    const { rerender } = render(<GenerationComposer ownerId="owner-1" projection={projection} profileId="profile-1" onCommitted={onCommitted} />);
+    await user.type(screen.getByLabelText("Hành động tiếp theo"), "Đi tiếp");
+    await user.click(screen.getByRole("button", { name: "Gửi" }));
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    await waitFor(() => expect(onCommitted).toHaveBeenCalledOnce());
+    expect(localStorage.getItem(generationIdentityKey("owner-1", "campaign-1", "branch-1"))).toBeNull();
+    rerender(<GenerationComposer ownerId="owner-1" projection={advanced} profileId="profile-1" onCommitted={onCommitted} />);
+    await user.click(screen.getByRole("button", { name: "Gửi" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5));
+    const secondBody = JSON.parse(String(fetchMock.mock.calls[4][1]?.body));
+    expect(secondBody.checkpoint_id).toBe("checkpoint-2");
+    expect(secondBody.preview_id).toBe("preview-fresh");
+  });
+
+  it("does not create a new generation after an ambiguous 503 and a failed by-key recovery", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "preview-ambiguous", campaign_id: "campaign-1", branch_id: "branch-1", checkpoint_id: "checkpoint-1", action: "Tiếp", status: "ready", profile_id: "profile-1" }), { status: 201 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Unavailable" }), { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Lookup unavailable" }), { status: 503 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<GenerationComposer ownerId="owner-1" projection={projection} profileId="profile-1" onCommitted={vi.fn()} />);
+    await user.type(screen.getByLabelText("Hành động tiếp theo"), "Tiếp");
+    await user.click(screen.getByRole("button", { name: "Gửi" }));
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    const saved = localStorage.getItem(generationIdentityKey("owner-1", "campaign-1", "branch-1"));
+    expect(saved).toContain("preview-ambiguous");
+    await user.click(screen.getByRole("button", { name: "Gửi" }));
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(localStorage.getItem(generationIdentityKey("owner-1", "campaign-1", "branch-1"))).toBe(saved);
+  });
+
+  it("retains a committed candidate until the parent confirms its refreshed projection", async () => {
+    const candidate = { id: "job-committed-refresh", campaign_id: "campaign-1", branch_id: "branch-1", checkpoint_id: "checkpoint-1", status: "candidate", action: "Chào", draft: "Mira đáp lời", offset: 12, offset_unit: "utf16_code_units" };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "preview-commit", campaign_id: "campaign-1", branch_id: "branch-1", checkpoint_id: "checkpoint-1", action: "Chào", status: "ready", profile_id: "profile-1" }), { status: 201 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(candidate), { status: 201 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true })));
+    vi.stubGlobal("fetch", fetchMock);
+    const onCommitted = vi.fn().mockResolvedValueOnce(undefined).mockResolvedValueOnce(projection);
+    const user = userEvent.setup();
+    render(<GenerationComposer ownerId="owner-1" projection={projection} profileId="profile-1" onCommitted={onCommitted} />);
+    await user.type(screen.getByLabelText("Hành động tiếp theo"), "Chào");
+    await user.click(screen.getByRole("button", { name: "Gửi" }));
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    const saved = localStorage.getItem(generationIdentityKey("owner-1", "campaign-1", "branch-1"));
+    expect(saved).toContain("job-committed-refresh");
+    expect(screen.getByLabelText("Hành động tiếp theo")).toHaveValue("Chào");
+    await user.click(screen.getByRole("button", { name: "Gửi" }));
+    await waitFor(() => expect(onCommitted).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(localStorage.getItem(generationIdentityKey("owner-1", "campaign-1", "branch-1"))).toBeNull());
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/generate"))).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/commit"))).toHaveLength(2);
+  });
+
   it("keeps the player input and re-enables Send when generation fails", async () => {
     localStorage.clear();
     const preview = { id: "preview-error", campaign_id: "campaign-1", branch_id: "branch-1", checkpoint_id: "checkpoint-1", action: "Xin chào", status: "ready", profile_id: "profile-1" };
