@@ -15,11 +15,13 @@ import threading
 import time
 from pathlib import Path
 from urllib.request import urlopen
+from uuid import uuid4
 
 import uvicorn
 from playwright.sync_api import expect, sync_playwright
 
 from playroom.demo import create_demo_app
+from playroom.provider import ProviderResult
 
 
 REPO = Path(__file__).resolve().parents[2]
@@ -234,8 +236,65 @@ def browser_synthetic_chat() -> None:
                 expect(page.locator(".story-turn")).to_have_count(6)
                 assert len(campaign.calls) == 6
                 assert not any(k.startswith("playroom:generation:") for k in page.evaluate("Object.keys(localStorage)"))
+                # The live frontend should also render *attributed* NPC
+                # dialogue. Seed a scene through the authenticated fake-only
+                # API, then use a deterministic structured fake narrator with
+                # exactly the selected character/profile version from context.
+                yuna_key = next(key for key in final["profiles"] if key.startswith("character:"))
+                yuna_id = yuna_key.partition(":")[2]
+                scene_id = str(uuid4())
+                scene_update = page.context.request.put(
+                    f"{origin}/api/campaigns/{campaign_id}/scene",
+                    headers={"origin": origin, "content-type": "application/json"},
+                    data=json.dumps({
+                        "branch_id": branch_id,
+                        "expected_state_version": final["branch"]["state_version"],
+                        "scene_state": {
+                            "focus_scene_id": scene_id,
+                            "scenes": [{"id": scene_id, "present_ids": [yuna_id]}],
+                        },
+                    }),
+                )
+                assert scene_update.ok, f"Seed scene HTTP {scene_update.status}: {scene_update.text()}"
+                page.reload(wait_until="domcontentloaded")
+                expect(page.locator(".story-turn")).to_have_count(6)
+                chosen_versions = []
+
+                def attributed_fake_narrator(request):
+                    content = json.loads(request["messages"][1]["content"])
+                    selected = [actor for actor in content["selected_characters"] if actor["character_id"] == yuna_id]
+                    assert len(selected) == 1 and selected[0]["present"] is True, content["selected_characters"]
+                    version_id = selected[0]["profile_version_id"]
+                    chosen_versions.append(version_id)
+                    narrative = json.dumps({"segments": [
+                        {"kind": "narration", "text": "Yuna chờ bên lưới."},
+                        {"kind": "dialogue", "text": "Tớ ở đây.", "character_id": yuna_id, "profile_version_id": version_id},
+                    ]}, ensure_ascii=False)
+                    campaign.calls.append({key: value for key, value in request.items() if key != "cancel_event"})
+                    campaign.stage_counts["narration"] = campaign.stage_counts.get("narration", 0) + 1
+                    yield narrative
+                    yield ProviderResult(
+                        text=narrative,
+                        usage={"input_tokens": 24, "output_tokens": 16, "total_tokens": 40},
+                        finish_reason="stop",
+                    )
+
+                campaign.generate_text = attributed_fake_narrator
+                _send_and_wait(page, "Yuna, cậu ở đâu?", 7)
+                expect(page.locator(".story-turn").last.locator(".roleplay-segment.dialogue strong")).to_have_text("Yuna: ", timeout=12000)
+                npc_transcript = _project(page, origin, campaign_id, branch_id)["transcript"]
+                assert len(npc_transcript) == 7
+                assert npc_transcript[-1]["output_segments"] == [
+                    {"kind": "narration", "text": "Yuna chờ bên lưới."},
+                    {"kind": "dialogue", "text": "Tớ ở đây.", "character_id": yuna_id, "profile_version_id": chosen_versions[0]},
+                ]
+                assert len(campaign.calls) == 7 and len(chosen_versions) == 1
+                page.reload(wait_until="domcontentloaded")
+                expect(page.locator(".story-turn")).to_have_count(7)
+                assert len(campaign.calls) == 7
+
                 browser.close()
-                print("B3 Chromium synthetic: six committed turns, reload/reconnect, 409/422/refresh recovery, IME and 360/390/430 mobile PASS")
+                print("B3 Chromium synthetic: seven committed turns, attributed NPC/version, reload/reconnect, 409/422/refresh recovery, IME and 360/390/430 mobile PASS")
         finally:
             server.should_exit = True
             thread.join(timeout=10)
