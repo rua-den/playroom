@@ -241,7 +241,7 @@ describe("GenerationComposer", () => {
     render(<GenerationComposer ownerId="owner-1" projection={projection} profileId="profile-1" onCommitted={vi.fn()} />);
     await user.type(screen.getByLabelText("Hành động tiếp theo"), "Xin chào");
     await user.click(screen.getByRole("button", { name: "Gửi" }));
-    await screen.findByRole("alert");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Chỉ model được xác minh Free mới được gửi");
     await user.click(screen.getByRole("button", { name: "Gửi" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
     expect(JSON.parse(String(fetchMock.mock.calls[3][1]?.body))).toMatchObject({ mode: "economy", policy: "free_only", cap: null });

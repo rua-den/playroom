@@ -180,3 +180,29 @@ input:focus { border-color: #d79771; box-shadow: 0 0 0 3px #d7977133; }
 .input-segment { max-width: 82%; margin: 0; padding: 0.55rem 0.75rem; border-radius: 0.75rem; }
 .input-segment.dialogue { color: #f4dfd0; background: #33291f; }
 .input-segment.action { color: #d79771; background: transparent; font-style: italic; }
+
+
+/* Free-first: explain the real token-credit boundary, without fake Send counts. */
+.free-mode-info {
+  border: 1px solid #617968;
+  border-radius: 16px;
+  padding: 18px;
+  background: linear-gradient(125deg, rgba(49, 85, 63, .32), rgba(33, 30, 26, .88));
+}
+.free-mode-info h3 { font: 24px Georgia, serif; margin: 0 0 10px; color: #dcf4de; }
+.free-mode-info p { max-width: 66ch; font-size: 14px; line-height: 1.6; margin: 0 0 8px; }
+.free-mode-info p:last-child { margin-bottom: 0; }
+.settings-panel > details.details-meta {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 14px;
+}
+.settings-panel > details.details-meta summary { cursor: pointer; font-weight: 650; }
+.budget-fields-paid { display: grid; gap: 8px; }
+:root[data-theme="light"] .free-mode-info, :root:not([data-theme]) .free-mode-info {
+  background: linear-gradient(125deg, rgba(214, 239, 220, .24), rgba(62, 75, 63, .15));
+}
+:root[data-theme="light"] .free-mode-info h3 { color: #234d35; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) .free-mode-info h3 { color: #234d35; }
+}
