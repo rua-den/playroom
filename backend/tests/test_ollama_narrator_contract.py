@@ -92,9 +92,9 @@ def _stream_response(
                 frames.append({"choices": [{"delta": {"content": piece}}]})
         if finish_reason is not None:
             frames.append({"choices": [{"finish_reason": finish_reason}], "usage": {"prompt_tokens": 12, "completion_tokens": 8, "total_tokens": 20}})
-    data = "".join(f"data: {json.dumps(frame, ensure_ascii=False)}\\n\\n" for frame in frames)
+    data = "".join(f"data: {json.dumps(frame, ensure_ascii=False)}\n\n" for frame in frames)
     if terminal:
-        data += "data: [DONE]\\n\\n"
+        data += "data: [DONE]\n\n"
     return httpx.Response(200, content=data.encode("utf-8"), headers={"content-type": "text/event-stream"})
 
 
@@ -146,7 +146,7 @@ def test_mocked_ollama_sse_creates_one_attributed_candidate_commit_and_no_replay
         tmp_path, lambda cid, vid: _stream_response(_valid_segments(cid, vid)), key="ollama-valid",
     )
     assert job["status"] == "candidate"
-    assert job["draft"] == "Yuna đứng bên lưới, đợi câu trả lời.\\nTớ sẵn sàng."
+    assert job["draft"] == "Yuna đứng bên lưới, đợi câu trả lời.\nTớ sẵn sàng."
     assert job["output_segments"][1] == {
         "kind": "dialogue", "text": "Tớ sẵn sàng.",
         "character_id": yuna, "profile_version_id": campaign.profile_ids[f"character:{yuna}"],
@@ -176,7 +176,7 @@ def test_mocked_ollama_sse_creates_one_attributed_candidate_commit_and_no_replay
     ("invalid", "expected"),
     [
         ('Yuna cười và nói.', "SCHEMA_INVALID"),
-        ('```json\\n{"segments": [{"kind": "narration", "text": "ok"}]}\\n```', "SCHEMA_INVALID"),
+        ('```json\n{"segments": [{"kind": "narration", "text": "ok"}]}\n```', "SCHEMA_INVALID"),
         ('{"segments":', "SCHEMA_INVALID"),
         ('{"segments": []}', "SCHEMA_INVALID"),
         ('{"segments": [{"kind": "dialogue", "text": "Sai", "character_id": "unknown", "profile_version_id": "v1"}]}', "SCHEMA_INVALID"),
