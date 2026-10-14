@@ -1,6 +1,6 @@
 # Playroom — atomic cumulative paid-trial budget (Issue #10)
 
-Status: **design / not implemented**  
+Status: **implemented for owner-approved paid Economy narrator trials; verified with fake provider/Chromium CI**  
 Review date: 2026-10-14  
 Source inspected: main `88b9753e326add94e92ec37ce09b1676ca5de74a`  
 Related: [B4 trial readiness](../acceptance/2026-10-14-b4-live-trial-readiness.md), [Issue #9](https://github.com/rua-den/playroom/issues/9), [Issue #10](https://github.com/rua-den/playroom/issues/10)
@@ -104,3 +104,16 @@ Run focused budget tests and backend full suite, frontend tests/typecheck/build,
 Read-only source audit of `backend/playroom/generation.py`, `wire_cost.py`, `model_profiles.py`, `db.py`, and `001_initial.sql` confirms the missing cross-job reservation. Existing fake/real-Chromium CI verifies earlier B1–B3 functionality, **not** this new aggregate accounting contract.
 
 **Design review ready; implementation/test/merge not started; B4 NOT PASS.**
+
+
+## Implementation acceptance — PR #11 / 2026-10-14
+
+- [PR #11](https://github.com/rua-den/playroom/pull/11) merged to `main` at exact SHA `01548fb1a620455022e3a50dac63d72e82b85c22` after independent patch/whitespace review.
+- The TDD RED run [#38537039019](https://github.com/rua-den/playroom/actions/runs/38537039019) failed at collection because `playroom.paid_trials` was absent; that is an observed **missing-feature RED**, not proof that each individual acceptance case was witnessed RED.
+- GREEN [PR run #38537932312](https://github.com/rua-den/playroom/actions/runs/38537932312) on exact head `1dc09a18b2372d9345c4b3401961371b72c3be1f` passed all jobs.
+- GREEN again [merge-head main #38538132285](https://github.com/rua-den/playroom/actions/runs/38538132285): backend **293 passed**, frontend **80 passed / 3 skipped**, typecheck/build/compileall and real Chromium synthetic gameplay PASS.
+- Implemented an additive SQLite `002_paid_trials.sql` schema, durable owner+model scoped grant, exact-decimal cumulative holds, separate per-job cap from owner settings, expiry/revocation and max Send count, idempotent job-row reservations, cross-branch atomic `BEGIN IMMEDIATE` contention, closed policy/cap request overrides, and last-moment provider dispatch gate with the same DB transaction.
+- Authenticated API: `GET /api/provider/trials/current`, `POST /api/provider/trials`, `POST /api/provider/trials/{id}/revoke`. Frontend Settings contains distinct cumulative budget inputs and explicit owner-consent checkbox.
+- The current implementation conservatively **holds** all reserved estimates, including ambiguous failed attempts; it has no operator reconciliation flow for reclaiming unused estimates. Provider-reported overage is detected and stops new jobs. The grant alone never triggers an AI request.
+- **Not verified and not authorized:** real paid Ollama Cloud call, invoice-based billing accuracy, physically held phone, VPS/Caddy deploy, real-world semantic narrator trial. These remain [Issue #9](https://github.com/rua-den/playroom/issues/9); they are **not** implied by Issue #10 PASS.
+
