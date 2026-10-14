@@ -1,0 +1,180 @@
+"""RED-first paid-trial server authorization and cross-job budget tests (fake provider only)."""
+from __future__ import annotations
+
+import json
+import threading
+from decimal import Decimal
+from datetime import datetime, timedelta, timezone
+
+import pytest
+from fastapi.testclient import TestClient
+
+from playroom.app import create_app
+from playroom.auth import create_owner
+from playroom.campaigns import create_campaign
+from playroom.db import connect, migrate
+from playroom.domain import ValidationError
+from playroom.generation import GenerationService
+from playroom.model_profiles import persist_model_profile
+from playroom.provider import FakeProvider
+from playroom.settings import save_owner_settings
+from playroom.timeline import get_branch_head
+from playroom.paid_trials import create_trial_authorization, get_trial_summary, revoke_trial_authorization
+
+
+def prepared(tmp_path, *, policy="capped_paid"):
+    path = tmp_path / "trial.sqlite3"
+    db = connect(path)
+    migrate(db)
+    owner = create_owner(db, "budget@example.test", "long secure test password")
+    profile = persist_model_profile(db, owner.id, {
+        "id": "paid-narrator", "provider": "ollama", "endpoint": "https://ollama.com/v1",
+        "model": "gpt-oss:120b", "context_limit": 131072, "output_limit": 4096,
+        "credential_tier": "paid", "pricing_verified": True,
+        "pricing": {"prompt": "0.00000015", "completion": "0.00000060"},
+        "secret_version": "test-fixture-secret-id", "is_test_profile": True,
+    })
+    settings = save_owner_settings(db, owner.id, {
+        "roles": {"narrator": {"id": profile["id"], "version": profile["version"], "profile_hash": profile["profile_hash"]}},
+        "mode": "economy", "policy": policy,
+        "confirmed_usd_cap": "1" if policy == "capped_paid" else None,
+    })
+    job_cost = Decimal(GenerationService(db, FakeProvider([]))._reservation(
+        {"narrator": profile, "context": profile}, "economy", "capped_paid", "1", settings,
+    )["reserved_total_usd"])
+    return path, db, owner, profile, job_cost
+
+
+def add_story(db, owner, n):
+    return create_campaign(db, owner.id, f"Story {n}", {"name": "World"}, [], {"name": "Player"})
+
+
+def reserve(db, owner, campaign, key, *, policy="capped_paid", cap="1"):
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    return GenerationService(db, FakeProvider([])).generate(
+        owner.id, campaign.id, campaign.initial_branch_id, "Look",
+        idempotency_key=key, expected_checkpoint_id=head.checkpoint_id,
+        policy=policy, cap=cap, execute=False,
+    )
+
+
+def approve(db, owner, profile, total, *, per_send="1", max_jobs=5, expires=None):
+    return create_trial_authorization(
+        db, owner.id, profile_id=profile["id"], profile_version=profile["version"],
+        total_cap_usd=str(total), per_send_cap_usd=per_send,
+        max_jobs=max_jobs,
+        expires_at=expires or (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+    )
+
+
+def test_no_active_trial_denies_paid_reservation_and_preserves_other_tables(tmp_path):
+    _, db, owner, _, _ = prepared(tmp_path)
+    campaign = add_story(db, owner, 1)
+    with pytest.raises(ValidationError, match="trial|authoriz|approval"):
+        reserve(db, owner, campaign, "missing")
+    assert db.execute("SELECT COUNT(*) FROM generation_jobs").fetchone()[0] == 0
+    assert db.execute("SELECT COUNT(*) FROM provider_attempts").fetchone()[0] == 0
+
+
+def test_two_reserved_jobs_exhaust_total_third_is_denied_before_provider(tmp_path):
+    _, db, owner, profile, cost = prepared(tmp_path)
+    grant = approve(db, owner, profile, cost * 2, max_jobs=10)
+    first = reserve(db, owner, add_story(db, owner, 1), "first")
+    second = reserve(db, owner, add_story(db, owner, 2), "second")
+    with pytest.raises(ValidationError, match="trial|budget|cap"):
+        reserve(db, owner, add_story(db, owner, 3), "third")
+    rows = db.execute("SELECT job_id FROM paid_trial_reservations WHERE authorization_id=?", (grant["id"],)).fetchall()
+    assert {row["job_id"] for row in rows} == {first["id"], second["id"]}
+    assert db.execute("SELECT COUNT(*) FROM generation_jobs").fetchone()[0] == 2
+    summary = get_trial_summary(db, owner.id)
+    assert Decimal(summary["reserved_usd"]) == cost * 2
+    assert Decimal(summary["remaining_usd"]) == 0
+
+
+def test_idempotent_lookup_has_exactly_one_debit_even_after_restart(tmp_path):
+    _, db, owner, profile, cost = prepared(tmp_path)
+    grant = approve(db, owner, profile, cost)
+    campaign = add_story(db, owner, 1)
+    first = reserve(db, owner, campaign, "same")
+    again = reserve(db, owner, campaign, "same")
+    assert again["id"] == first["id"]
+    GenerationService(db, FakeProvider([])).recover_after_restart()
+    again = reserve(db, owner, campaign, "same")
+    assert again["id"] == first["id"]
+    assert db.execute("SELECT COUNT(*) FROM paid_trial_reservations WHERE authorization_id=?", (grant["id"],)).fetchone()[0] == 1
+
+
+def test_caller_cannot_override_persisted_free_only_or_cap(tmp_path):
+    _, db, owner, profile, cost = prepared(tmp_path, policy="free_only")
+    approve(db, owner, profile, cost * 10)
+    campaign = add_story(db, owner, 1)
+    with pytest.raises(ValidationError, match="policy|free_only|trial"):
+        reserve(db, owner, campaign, "upgrade", policy="capped_paid", cap="100")
+    assert db.execute("SELECT COUNT(*) FROM generation_jobs").fetchone()[0] == 0
+
+    # Change to paid mode with a hard per-send setting; a stale crafted request
+    # cannot increase the persisted per-send cap.
+    save_owner_settings(db, owner.id, {
+        "roles": {"narrator": {"id": profile["id"], "version": profile["version"], "profile_hash": profile["profile_hash"]}},
+        "mode": "economy", "policy": "capped_paid", "confirmed_usd_cap": "0.01",
+    })
+    with pytest.raises(ValidationError, match="cap|authorization|budget|trial"):
+        reserve(db, owner, campaign, "escalate", cap="100")
+    assert db.execute("SELECT COUNT(*) FROM generation_jobs").fetchone()[0] == 0
+
+
+def test_revoked_or_expired_grant_blocks_new_jobs(tmp_path):
+    _, db, owner, profile, cost = prepared(tmp_path)
+    grant = approve(db, owner, profile, cost * 5)
+    revoke_trial_authorization(db, owner.id, grant["id"])
+    with pytest.raises(ValidationError, match="trial|approval|authoriz"):
+        reserve(db, owner, add_story(db, owner, 1), "revoked")
+    past = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+    with pytest.raises(ValidationError, match="expiry|future|expired"):
+        approve(db, owner, profile, cost, expires=past)
+
+
+def test_parallel_reservations_cannot_oversubscribe_same_trial(tmp_path):
+    path, db, owner, profile, cost = prepared(tmp_path)
+    grant = approve(db, owner, profile, cost)
+    campaigns = [add_story(db, owner, i) for i in range(2)]
+    barrier = threading.Barrier(2)
+    accepted, errors = [], []
+
+    def work(i):
+        connection = connect(path)
+        try:
+            barrier.wait(timeout=5)
+            accepted.append(reserve(connection, owner, campaigns[i], f"parallel-{i}")["id"])
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            connection.close()
+
+    threads = [threading.Thread(target=work, args=(i,)) for i in range(2)]
+    for thread in threads: thread.start()
+    for thread in threads: thread.join(timeout=12)
+    assert len(accepted) == 1
+    assert len(errors) == 1 and isinstance(errors[0], ValidationError)
+    assert db.execute("SELECT COUNT(*) FROM paid_trial_reservations WHERE authorization_id=?", (grant["id"],)).fetchone()[0] == 1
+
+
+def test_authenticated_trial_api_cannot_grant_on_behalf_of_another_owner(tmp_path):
+    path, db, owner, profile, cost = prepared(tmp_path)
+    app = create_app(database_url=f"sqlite:///{path}", allowed_hosts={"testserver"}, secure_cookies=False, credential_root=tmp_path / "secrets")
+    client = TestClient(app, base_url="https://testserver")
+    headers = {"origin": "https://testserver"}
+    assert client.post("/api/auth/login", json={"email": owner.email, "password": "long secure test password"}, headers=headers).status_code == 200
+    approval = client.post("/api/provider/trials", json={
+        "profile_id": profile["id"], "profile_version": profile["version"],
+        "total_cap_usd": str(cost * 2), "per_send_cap_usd": "1",
+        "max_jobs": 2, "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+    }, headers=headers)
+    assert approval.status_code == 201, approval.text
+    assert approval.json()["id"] and approval.json()["max_jobs"] == 2
+    status = client.get("/api/provider/trials/current")
+    assert status.status_code == 200 and status.json()["id"] == approval.json()["id"]
+    assert Decimal(status.json()["reserved_usd"]) == 0
+    revoked = client.post(f"/api/provider/trials/{approval.json()['id']}/revoke", headers=headers)
+    assert revoked.status_code == 200
+    assert client.get("/api/provider/trials/current").json()["state"] == "revoked"
