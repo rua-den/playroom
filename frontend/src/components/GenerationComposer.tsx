@@ -121,8 +121,9 @@ export function GenerationComposer({ ownerId, projection, profileId, onCommitted
     try {
       nextJob = await api.generate(nextProjection.campaign.id, { branch_id: saved.branchId, action: saved.action, idempotency_key: saved.idempotencyKey, checkpoint_id: saved.checkpointId, preview_id: saved.previewId, mode: saved.mode, policy: saved.policy, cap: saved.cap });
     } catch (cause) {
-      if (isQuota(cause) || (cause instanceof ApiError && cause.status === 422)) {
-        // The server rejected this request before reserving a generation.
+      if (cause instanceof ApiError && [400, 401, 403, 404, 422, 429].includes(cause.status)) {
+        // An acknowledged FastAPI rejection: no generation job was reserved.
+        // A 5xx remains uncertain even when its error text mentions quota/schema.
         releaseRejected(saved);
         throw cause;
       }
