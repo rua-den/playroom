@@ -22,6 +22,7 @@ from .context import build_candidate_pool, build_context_preview, _profiles
 from .db import transaction
 from .domain import NotFound, StateConflict, ValidationError
 from .model_profiles import estimate_cost_usd, validate_dispatch
+from .paid_trials import check_trial_reservation, insert_trial_reservation, assert_trial_dispatch_allowed
 from .model_profiles import get_model_profile
 from .settings import get_owner_settings, ROLE_BUDGET_DEFAULTS
 from .provider import ProviderAdapter, ProviderFailure, ProviderResult
@@ -305,6 +306,19 @@ class GenerationService:
                         policy = settings.get("policy", policy)
                     if not submitted_identity["cap"]["present"] or submitted_identity["cap"]["value"] is None:
                         cap = settings.get("confirmed_usd_cap")
+                # A request's policy and cap are NOT independent spending
+                # approval. Persisted owner settings are the upper bound.
+                if policy != locked_settings.get("policy", "free_only"):
+                    raise ValidationError("Submitted paid policy differs from persisted owner approval")
+                if mode == "quality" and locked_settings.get("mode") != "quality":
+                    raise ValidationError("Submitted quality mode differs from persisted owner approval")
+                if policy == "capped_paid":
+                    configured = locked_settings.get("confirmed_usd_cap")
+                    if configured is None or cap is None:
+                        raise ValidationError("Persisted paid cap is required")
+                    from decimal import Decimal as _Money
+                    if _Money(str(cap)) > _Money(str(configured)):
+                        raise ValidationError("Submitted paid cap exceeds persisted owner cap")
                 settings = _copy(settings)
                 settings.update({"mode": mode, "policy": policy, "confirmed_usd_cap": str(cap) if cap is not None else settings.get("confirmed_usd_cap")})
                 settings.setdefault("budgets", {role: dict(values) for role, values in ROLE_BUDGET_DEFAULTS.items()})
@@ -339,7 +353,17 @@ class GenerationService:
             # later wire/cost checks.  The configured role budgets participate
             # in both the settings hash and this conservative reservation.
             reservation = self._reservation(profiles, mode, policy, cap, settings)
+            trial_id = None
+            if locked_settings is not None and policy == "capped_paid" and profiles["narrator"].get("credential_tier") == "paid":
+                trial_id = check_trial_reservation(
+                    self.connection, owner_id, profile=profiles["narrator"],
+                    campaign_id=campaign_id, proposed_usd=reservation["reserved_total_usd"],
+                    requested_cap=cap, policy=policy, mode=mode,
+                )
+                reservation["trial_authorization_id"] = trial_id
             self.connection.execute("INSERT INTO generation_jobs(id,owner_id,campaign_id,branch_id,operation,idempotency_key,request_hash,checkpoint_id,action,status,mode,policy,created_at,settings_revision,settings_snapshot_json,profile_snapshot_json,credential_version,execution_epoch,cancel_requested,reserved_cost_json,preview_id,preview_snapshot_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (job_id, owner_id, campaign_id, branch_id, "generation", idempotency_key, request_hash, expected_checkpoint_id, action, "queued", mode, policy, created, settings.get("settings_revision", 0), json.dumps(settings, sort_keys=True), json.dumps(profiles, sort_keys=True), profiles.get("narrator", {}).get("secret_version"), self._epoch(), 0, json.dumps(reservation, sort_keys=True), preview_id, json.dumps(preview_snapshot, ensure_ascii=False, sort_keys=True)))
+            if trial_id is not None:
+                insert_trial_reservation(self.connection, job_id, trial_id, reservation["reserved_total_usd"])
             planned = ["narration"] if mode == "economy" else ["context", "narration"]
             for stage in planned:
                 stage_profile = profiles["context" if stage == "context" else "narrator"]
@@ -747,6 +771,10 @@ class GenerationService:
         self._narrate(job, narrator, final_preview, request=narrator_request)
 
     def _check_dispatch(self, job, context, narrator, preview, *, aggregate: bool, stage_meta=None, stage="narration"):
+        if job["policy"] == "capped_paid":
+            persisted, _ = self._persisted_config(job["owner_id"])
+            if persisted is not None and narrator.get("credential_tier") == "paid":
+                assert_trial_dispatch_allowed(self.connection, job, profile=narrator)
         settings = json.loads(job["settings_snapshot_json"] or "{}")
         profile = context if stage == "context" else narrator
         budget = self._role_budget(profile, settings, "context" if stage == "context" else "narrator")
@@ -1033,21 +1061,40 @@ class GenerationService:
             return changed == 1
 
     def _invocation_gate(self, job_id, key):
-        """Durably activate an owned claim immediately before provider I/O."""
+        """Durably activate an owned claim immediately before provider I/O.
+
+        Paid-trial permission is rechecked inside the SAME SQLite write
+        transaction that marks the attempt dispatched. Revoking the grant
+        before this boundary cannot race past an earlier read-only preflight.
+        """
         with self._db_lock:
-            current = self._epoch()
-            row = self.connection.execute("SELECT a.stage,a.status,a.claim_epoch,j.status AS job_status,j.execution_epoch,j.cancel_requested FROM provider_attempts a JOIN generation_jobs j ON j.id=a.generation_job_id WHERE a.stage_key=? AND j.id=?", (key, job_id)).fetchone()
-            if row is None or row["claim_epoch"] != current or row["execution_epoch"] != current or row["job_status"] not in {"running", "queued"} or row["cancel_requested"]:
+            with transaction(self.connection):
+                current = self._epoch()
+                row = self.connection.execute("SELECT a.stage,a.status,a.claim_epoch,j.status AS job_status,j.execution_epoch,j.cancel_requested FROM provider_attempts a JOIN generation_jobs j ON j.id=a.generation_job_id WHERE a.stage_key=? AND j.id=?", (key, job_id)).fetchone()
+                if row is None or row["claim_epoch"] != current or row["execution_epoch"] != current or row["job_status"] not in {"running", "queued"} or row["cancel_requested"]:
+                    return False
+                if row["status"] == "dispatched":
+                    return True
+                if row["status"] != "claimed":
+                    return False
+                job = self.connection.execute("SELECT * FROM generation_jobs WHERE id=?", (job_id,)).fetchone()
+                if job is None:
+                    return False
+                if job["policy"] == "capped_paid":
+                    try:
+                        profiles = json.loads(job["profile_snapshot_json"] or "{}")
+                        narrator = profiles.get("narrator") or {}
+                        if narrator.get("credential_tier") == "paid":
+                            persisted, _ = self._persisted_config(job["owner_id"])
+                            if persisted is not None:
+                                assert_trial_dispatch_allowed(self.connection, job, profile=narrator)
+                    except (ValidationError, ValueError, TypeError):
+                        return False
+                changed = self.connection.execute("UPDATE provider_attempts SET status='dispatched',dispatched_at=? WHERE stage_key=? AND status='claimed' AND claim_epoch=? AND EXISTS (SELECT 1 FROM generation_jobs WHERE id=? AND status='running' AND execution_epoch=? AND cancel_requested=0)", (_now(), key, current, job_id, current)).rowcount
+                if changed == 1:
+                    self._event(job_id, row["stage"], "phase_changed", None, "", {"phase": f"{row['stage']}_dispatched"})
+                    return True
                 return False
-            if row["status"] == "dispatched":
-                return True
-            if row["status"] != "claimed":
-                return False
-            changed = self.connection.execute("UPDATE provider_attempts SET status='dispatched',dispatched_at=? WHERE stage_key=? AND status='claimed' AND claim_epoch=? AND EXISTS (SELECT 1 FROM generation_jobs WHERE id=? AND status='running' AND execution_epoch=? AND cancel_requested=0)", (_now(), key, current, job_id, current)).rowcount
-            if changed == 1:
-                self._event(job_id, row["stage"], "phase_changed", None, "", {"phase": f"{row['stage']}_dispatched"})
-                return True
-            return False
 
     def _claim_gate(self, job_id, key):
         """Read-only post-slot eligibility check before credential resolution."""

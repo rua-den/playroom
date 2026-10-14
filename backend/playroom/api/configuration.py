@@ -10,6 +10,7 @@ from ..domain import Owner, ValidationError
 from ..db import request_connection
 from ..model_profiles import get_model_profile, list_model_profiles, persist_model_profile, OpenRouterVerifier, OllamaCloudVerifier, OLLAMA_CLOUD_ENDPOINT, OLLAMA_CLOUD_MODEL, profile_hash
 from ..settings import get_owner_settings, save_owner_settings
+from ..paid_trials import create_trial_authorization, revoke_trial_authorization, get_trial_summary
 from .auth import require_owner
 
 router = APIRouter(prefix="/api/provider", tags=["provider-configuration"])
@@ -35,6 +36,35 @@ class SettingsRequest(BaseModel):
     policy: str | None = None
     confirmed_usd_cap: str | float | None = None
     budgets: dict[str, dict[str, int]] | None = None
+
+
+class PaidTrialRequest(BaseModel):
+    profile_id: str = Field(min_length=1, max_length=128)
+    profile_version: int = Field(ge=1)
+    total_cap_usd: str = Field(min_length=1, max_length=48)
+    per_send_cap_usd: str = Field(min_length=1, max_length=48)
+    max_jobs: int = Field(ge=1, le=100)
+    expires_at: str = Field(min_length=10, max_length=80)
+
+
+@router.get("/trials/current")
+def current_paid_trial(connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
+    return get_trial_summary(connection, owner.id)
+
+
+@router.post("/trials", status_code=201)
+def create_paid_trial(payload: PaidTrialRequest, connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
+    return create_trial_authorization(
+        connection, owner.id, profile_id=payload.profile_id,
+        profile_version=payload.profile_version, total_cap_usd=payload.total_cap_usd,
+        per_send_cap_usd=payload.per_send_cap_usd, max_jobs=payload.max_jobs,
+        expires_at=payload.expires_at,
+    )
+
+
+@router.post("/trials/{trial_id}/revoke")
+def revoke_paid_trial(trial_id: str, connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
+    return revoke_trial_authorization(connection, owner.id, trial_id)
 
 
 def _store(request: Request) -> CredentialStore:

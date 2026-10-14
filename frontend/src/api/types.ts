@@ -118,3 +118,10 @@ export interface GenerationLedgerStage {
 }
 export interface GenerationCostLedger { policy?: string; cap?: string | null; stages?: Record<string, GenerationLedgerStage>; actual_status?: string; actual_total_usd?: string | null; provider_reported_total_usd?: string | null; calculated_total_usd?: string | null; }
 export interface GenerationJob { id: string; campaign_id: string; branch_id: string; checkpoint_id: string; status: GenerationJobSummary["status"]; action?: string | null; draft: string; offset: number; offset_unit: "utf16_code_units"; failure?: { code?: string; message?: string } | null; candidate?: boolean; usage?: Record<string, unknown>; events?: GenerationEvent[]; attempt_counts_by_stage?: Record<string, Record<string, number>>; cost_ledger?: GenerationCostLedger; }
+
+export interface PaidTrialSummary {
+  id?: string; state: "none" | "active" | "expired" | "revoked" | "overrun";
+  profile_id?: string; profile_version?: number; total_cap_usd?: string;
+  per_send_cap_usd?: string; max_jobs?: number; expires_at?: string;
+  reserved_usd: string; remaining_usd: string; jobs_used: number;
+}
