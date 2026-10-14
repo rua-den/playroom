@@ -2,7 +2,7 @@
 
 Date: 2026-10-14  
 Inspected `main`: `4fa03cdbb8cca6fb3cfd9ef3861f5ee102797646`  
-Status: **READY TO REQUEST OWNER AUTHORIZATION**, **NOT B4 PASS**
+Status: **BUDGET GUARD VERIFIED; LIVE APPROVAL/PHONE STILL NOT B4 PASS**
 
 ## Evidence already obtained (do not repeat as a live-model claim)
 
@@ -19,7 +19,7 @@ Status: **READY TO REQUEST OWNER AUTHORIZATION**, **NOT B4 PASS**
 | Model profile | `backend/playroom/model_profiles.py::OllamaCloudVerifier` pins `https://ollama.com/v1`, API `gpt-oss:120b`; server GET `/models` checks model availability. | **Even profile verification makes a real provider HTTP request**. Require approval before trying. |
 | JSON output | Strict schema is disabled for Ollama Cloud, while `backend/playroom/generation.py::_narrator_request` demands JSON `segments` for non-test narrator. | Observe actual model's JSON success rate; parser still validates cast/version; malformed output must not auto-commit. |
 | Cost rate | Static uncached USD/token prices are input `0.00000015` and output `0.00000060`, with `pricing_verified=True` in a pinned profile. | Rate is **not fetched from a live billing endpoint**. Reconfirm vendor price before the first call and inspect provider-side billing afterward. |
-| Cost authorization | `GenerationService._reservation` and dispatch check a `confirmed_usd_cap` **per generation job**, but the generate API can also accept submitted `policy`/`cap` values in place of persisted settings. | **No cross-turn cumulative spending ceiling and no independent persisted spending grant guarding request overrides**. Track [Issue #10](https://github.com/rua-den/playroom/issues/10); do not treat UI per-job cap as an unoverrideable server-side hard cap. |
+| Cost authorization | [PR #11](https://github.com/rua-den/playroom/pull/11) enforces persisted owner `policy`/per-job cap and requires an additional, owner-approved, expiring cumulative trial grant for paid pinned narrator jobs. The `paid_trial_reservations` ledger is inserted atomically with the job and rechecked just before upstream dispatch. | **Conservative local reservation/ceiling only, not a vendor invoice guarantee.** The app retains unknown/cancelled post-dispatch reservations, blocks concurrent oversubscription, and stops on cost overrun. Code merge CI [PASS](https://github.com/rua-den/playroom/actions/runs/38538132285). |
 | Credential storage | `backend/playroom/credentials.py` stores credentials in server-side JSON; file `0600`, secret root `0700`; API list uses masked text. | Keep credential off Git, CI, docs, log, screenshots and conversation; owner configures through a private HTTPS/loopback app or server-side secret mechanism. Treat server/shared-data backups as sensitive. |
 | Production access | `backend/playroom/app.py` defaults allowed hosts to localhost/127.0.0.1 and uses secure cookies; production requires explicit host config. | Do not open on Internet via arbitrary port or turn off secure cookies to make a phone link work. |
 | Deployment | This repository currently has no `deploy/playroom.service`, `deploy/playroom.caddyfile` or production release workflow. | Existing Playroom demo cannot be described as already deployed. VPS/Caddy/SSH changes are a **separate owner gate**. |
@@ -47,10 +47,18 @@ Record approval outside Git with **all** fields; missing/ambiguous values mean n
 - Who enters the credential: owner on a secure, supported server environment. **Do not paste secrets into this issue or report.**
 - Approved content: explicitly **synthetic only**, or separately name the private campaign/data explicitly authorized to leave the host. Default is synthetic only.
 - Run mode: **economy**, narrator only; no quality/context/consolidation calls to non-strict Ollama.
-- Cost policy: `capped_paid`; **positive per-generation USD cap:** `<owner value>`; **total authorized trial USD ceiling:** `<owner value>`; **max number of user-confirmed Send actions:** `<owner value>`. The app currently only enforces the **per-generation** cap; all-turn hard stop is not implemented ([#10](https://github.com/rua-den/playroom/issues/10)). Until #10 is resolved, a person must track the total/usage and stop, never run an automated paid multi-turn sequence.
+- Cost policy: `capped_paid` in persisted Settings; **positive per-generation USD cap:** `<owner value>`; **total authorized trial USD ceiling:** `<owner value>`; **approved maximum per-send USD:** `<owner value>`; **max number of manually confirmed Send actions:** `<owner value>`. Both per-job and trial caps now require a distinct owner-approved backend grant ([PR #11](https://github.com/rua-den/playroom/pull/11)). The UI values are conservative **estimates**, not a hard vendor billing guarantee; monitor the vendor dashboard. Never run an automated paid multi-turn sequence without separate explicit provider/content authorization.
 - Allowed trial location: owner-local/staging environment `<actual URL/host>`; **physical device test** `<authorized yes/no>`. No VPS/site/SSH change is implied by model-trial consent.
 - Trial authorization expiry `<UTC date/time>`; recording `<approver>` and explicit acceptance of API costs. Once expired, require new approval.
 - Abort rule: unparseable/refused/truncated output, unselected NPC, player-agency violation, unexpected billed cost, questionable transcript privacy, or unknown job outcome => **STOP**, retain idempotency identity, do not automatically resend.
+
+## Configuring the verified budget guard (no provider call until an explicit Send)
+
+After choosing a paid verified narrator profile in Playroom, save **Economy** mode, **Capped paid** policy, and the maximum per-generation USD under **Cài đặt provider → Ngân sách và chính sách**. Under **Ngân sách toàn phiên trả phí**, enter total authorized USD, maximum estimated USD per send, maximum number of new jobs, and an ISO UTC expiry timestamp. Tick the explicit consent checkbox; **Chấp thuận ngân sách phiên** creates an owner-scoped, durable grant. **Xem hạn mức toàn phiên** displays reserved/remaining and jobs used; **Thu hồi phiên trả phí** prevents queued new upstream dispatch.
+
+No key is included in this document. The credential is added only by the owner in the supported secure, isolated environment. The grant does **not** itself dispatch model requests; each Send requires a separate user action. Exceeding the estimated total/individual allowance or expiry blocks before provider dispatch, but **the vendor may still bill differently**; stop and reconcile any discrepancy. An ambiguous provider outcome retains its reservation and cannot be charged again by automatic reconnect.
+
+At this checkpoint the feature is implemented, but the owner has **not** authorized actual Ollama inference, any private story transfer, production publication, or physical-device validation in this conversation. The source HEAD merge verification applies to code SHA `01548fb1a620455022e3a50dac63d72e82b85c22`; later documentation-only commits do not supersede that test record.
 
 ## Public-safe synthetic mini-world for the live trial
 
@@ -97,7 +105,7 @@ Acceptance: zero persona/scene/knowledge/duplicate-charge blockers, each quality
 
 ## Decision / blockers as of 2026-10-14
 
-**Completed:** read-only latest-main audit, confirm exact prior B1–B3 CI evidence, verified public provider pricing, identified per-job-vs-cumulative-budget gap ([#10](https://github.com/rua-den/playroom/issues/10)), synthetic test script and quality scorecard.
+**Completed:** earlier B1–B3 synthetic/browser acceptance, static provider pricing review, then [PR #11](https://github.com/rua-den/playroom/pull/11) implemented and tested the owner-granted cumulative budget guard, immutable job debit, queued policy revocation and last-moment dispatch check (merge code CI: backend 293, frontend 80 PASS/3 skipped, real Chromium PASS). Synthetic three-turn plan and owner scorecard are ready.
 
 **Not completed:** provider account/credential verification, any network call to Ollama with credentials, actual cost measurement, semantic live story scoring, physical phone test, VPS/Caddy inventory or deployment.
 
