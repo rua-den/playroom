@@ -108,7 +108,7 @@ def _charged_amount(row) -> Decimal:
 
 def _usage(connection, trial_id: str) -> tuple[Decimal, int]:
     rows = connection.execute(
-        "SELECT r.reserved_usd, j.reserved_cost_json FROM paid_trial_reservations r JOIN generation_jobs j ON j.id=r.job_id WHERE r.authorization_id=?",
+        "SELECT r.reserved_usd, j.reserved_cost_json FROM paid_trial_reservations r LEFT JOIN generation_jobs j ON j.id=r.job_id WHERE r.authorization_id=?",
         (trial_id,),
     ).fetchall()
     return sum((_charged_amount(row) for row in rows), Decimal("0")), len(rows)
@@ -199,6 +199,12 @@ def assert_trial_dispatch_allowed(connection, job: dict, *, profile: dict) -> No
     if (row is None or row["state"] != "active" or _date(row["expires_at"]) <= _now()
             or (row["profile_id"], row["profile_version"]) != (profile.get("id"), profile.get("version"))):
         raise ValidationError("Paid trial authorization is missing, revoked, expired, or mismatched")
+    from .settings import get_owner_settings
+    settings = get_owner_settings(connection, job["owner_id"])
+    binding = (settings.get("roles") or {}).get("narrator") or {}
+    if (settings.get("policy") != "capped_paid" or settings.get("mode") != "economy"
+            or (binding.get("id"), binding.get("version")) != (profile.get("id"), profile.get("version"))):
+        raise ValidationError("Owner disabled or changed the paid trial configuration")
     used, _ = _usage(connection, row["id"])
     if used > _usd(row["total_cap_usd"], "Trial total cap"):
         raise ValidationError("Trial billed cost exceeded its approved budget")
