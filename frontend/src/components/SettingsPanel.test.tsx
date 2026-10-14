@@ -154,3 +154,33 @@ describe("SettingsPanel", () => {
     await user.click(screen.getByRole("button", { name: "Xác minh profile" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/provider/profiles/verify", expect.objectContaining({ method: "POST", body: JSON.stringify({ provider: "ollama", credential_id: "cred-1", model: "gpt-oss:120b-cloud", endpoint: "https://ollama.com/v1" }) })));
   });
+
+
+it("requires explicit consent and separates cumulative grant from per-send settings", async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify([{ id: "ollama-paid", version: 2, model: "gpt-oss:120b", credential_tier: "paid" }]), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ mode: "economy", policy: "capped_paid", confirmed_usd_cap: "0.05", roles: { narrator: { id: "ollama-paid", version: 2 } }, budgets: {} }), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ id: "trial-one", state: "active", total_cap_usd: "0.02", per_send_cap_usd: "0.01", reserved_usd: "0", remaining_usd: "0.02", max_jobs: 2, jobs_used: 0 }), { status: 201 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ id: "trial-one", state: "revoked", total_cap_usd: "0.02", reserved_usd: "0", remaining_usd: "0.02", max_jobs: 2, jobs_used: 0 }), { status: 200 }));
+  vi.stubGlobal("fetch", fetchMock);
+  render(<SettingsPanel />);
+  await screen.findByText("Ngân sách toàn phiên trả phí");
+  const approve = screen.getByRole("button", { name: "Chấp thuận ngân sách phiên" });
+  expect(approve).toBeDisabled();
+  const user = userEvent.setup();
+  await user.type(screen.getByLabelText("Tổng ngân sách được duyệt (USD)"), "0.02");
+  await user.type(screen.getByLabelText("Tối đa mỗi lượt (USD)"), "0.01");
+  await user.clear(screen.getByLabelText("Số lượt Send tối đa"));
+  await user.type(screen.getByLabelText("Số lượt Send tối đa"), "2");
+  await user.type(screen.getByLabelText("Hết hạn (ISO UTC)"), "2026-10-15T12:00:00Z");
+  expect(approve).toBeDisabled();
+  await user.click(screen.getByLabelText(/Tôi chấp thuận hạn mức phiên trả phí/));
+  await user.click(approve);
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/provider/trials", expect.objectContaining({ method: "POST" })));
+  const sent = JSON.parse(String(fetchMock.mock.calls[3][1].body));
+  expect(sent).toMatchObject({ profile_id: "ollama-paid", profile_version: 2, total_cap_usd: "0.02", per_send_cap_usd: "0.01", max_jobs: 2, expires_at: "2026-10-15T12:00:00Z" });
+  expect(await screen.findByText(/Trạng thái: active.*còn 0.02 USD/)).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Thu hồi phiên trả phí" }));
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/provider/trials/trial-one/revoke", expect.objectContaining({ method: "POST" })));
+});
