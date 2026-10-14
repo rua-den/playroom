@@ -16,6 +16,10 @@ The owner asked to continue directly in the ChatGPT session on 2026-10-14 after 
 
 On 2026-10-14, after receiving an explicit request to extend the Issue #2 coding fallback to [Issue #4](https://github.com/rua-den/playroom/issues/4), the owner replied "continue". Treat that as authorization to implement **Issue #4 only** directly in this ChatGPT session when the required Luna coding agent is unavailable. Apply test-first, independently inspect the GitHub diff, require full CI on the exact PR and merge SHA, and report any verification not performed. Do not silently extend this exception to Issue #5 or other future tasks; Luna-first routing remains the default.
 
+### Owner-directed implementation exception — Issue #6 only
+
+On 2026-10-14, after the B2 completion/handoff explicitly identified [Issue #6](https://github.com/rua-den/playroom/issues/6) as the next checkpoint and the owner replied "continue", the owner authorized direct implementation of **Issue #6 only** in this ChatGPT session if Luna cannot be dispatched. Restrict changes to the synthetic three-turn/browser-mobile/reconnect acceptance scope and test infrastructure. Run a failing browser regression first if an existing defect is reproduced, then full real-browser CI plus backend/frontend tests at exact PR and merge SHA; never claim physical phone or live provider validation from Chromium emulation. Other issues remain Luna-first unless explicitly authorized.
+
 ## Read order
 
 1. `README.md`.
