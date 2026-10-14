@@ -13,7 +13,8 @@ CREATE TABLE IF NOT EXISTS paid_trial_authorizations (
 );
 CREATE INDEX IF NOT EXISTS ix_trial_owner ON paid_trial_authorizations(owner_id,approved_at);
 CREATE TABLE IF NOT EXISTS paid_trial_reservations (
-  job_id TEXT PRIMARY KEY REFERENCES generation_jobs(id) ON DELETE CASCADE,
+  -- Retain spending evidence even if the linked job/campaign is later deleted.
+  job_id TEXT PRIMARY KEY,
   authorization_id TEXT NOT NULL REFERENCES paid_trial_authorizations(id),
   reserved_usd TEXT NOT NULL,
   created_at TEXT NOT NULL
