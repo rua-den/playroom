@@ -121,6 +121,24 @@ describe("GenerationComposer", () => {
     expect(secondBody.preview_id).toBe("preview-fresh");
   });
 
+
+  it("does not adopt or commit a conflicting existing job after 409", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "preview-collision", campaign_id: "campaign-1", branch_id: "branch-1", checkpoint_id: "checkpoint-1", action: "Đúng", status: "ready", profile_id: "profile-1" }), { status: 201 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Conflicting idempotency payload" }), { status: 409 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "job-foreign", campaign_id: "campaign-1", branch_id: "branch-1", checkpoint_id: "checkpoint-1", action: "Khác", status: "candidate", draft: "Foreign", offset: 7, offset_unit: "utf16_code_units" }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<GenerationComposer ownerId="owner-1" projection={projection} profileId="profile-1" onCommitted={vi.fn()} />);
+    await user.type(screen.getByLabelText("Hành động tiếp theo"), "Đúng");
+    await user.click(screen.getByRole("button", { name: "Gửi" }));
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(localStorage.getItem(generationIdentityKey("owner-1", "campaign-1", "branch-1"))).toContain("preview-collision");
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/commit"))).toHaveLength(0);
+    await user.click(screen.getByRole("button", { name: "Gửi" }));
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
   it("does not create a new generation after an ambiguous 503 and a failed by-key recovery", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ id: "preview-ambiguous", campaign_id: "campaign-1", branch_id: "branch-1", checkpoint_id: "checkpoint-1", action: "Tiếp", status: "ready", profile_id: "profile-1" }), { status: 201 }))
