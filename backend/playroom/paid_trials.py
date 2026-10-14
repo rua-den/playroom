@@ -205,6 +205,18 @@ def assert_trial_dispatch_allowed(connection, job: dict, *, profile: dict) -> No
     if (settings.get("policy") != "capped_paid" or settings.get("mode") != "economy"
             or (binding.get("id"), binding.get("version")) != (profile.get("id"), profile.get("version"))):
         raise ValidationError("Owner disabled or changed the paid trial configuration")
+    # A queued job cannot outlive a tighter owner per-send limit. The
+    # provider budget estimate is held in the durable reservation, not in UI.
+    held_row = connection.execute(
+        "SELECT reserved_usd FROM paid_trial_reservations WHERE job_id=?",
+        (job["id"],),
+    ).fetchone()
+    if held_row is None:
+        raise ValidationError("Paid trial job reservation is missing")
+    held = Decimal(held_row["reserved_usd"])
+    current_cap = _usd(str(settings.get("confirmed_usd_cap") or ""), "Persisted paid cap")
+    if held > current_cap or held > _usd(row["per_send_cap_usd"], "Trial per-send cap"):
+        raise ValidationError("Queued job exceeds the latest owner per-send budget")
     used, _ = _usage(connection, row["id"])
     if used > _usd(row["total_cap_usd"], "Trial total cap"):
         raise ValidationError("Trial billed cost exceeded its approved budget")
