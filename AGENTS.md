@@ -24,6 +24,10 @@ On 2026-10-14, after the B2 completion/handoff explicitly identified [Issue #6](
 
 On 2026-10-14 the owner was explicitly asked to authorize direct ChatGPT implementation of [Issue #10](https://github.com/rua-den/playroom/issues/10) (cumulative budget and per-request cap authorization) in place of unavailable Luna, and responded "continue". This authorizes direct source and test changes for **Issue #10 only**, in a feature branch with RED-before-GREEN regression tests, independent diff review and exact-SHA full CI before merge. No real AI provider calls, secrets, physical device access, or VPS deployment are authorized. Routing for other issues remains Luna-first.
 
+### Owner-directed free-first UI exception — Issue #12 only
+
+On 2026-10-14, the owner explicitly rejected the mockup's invented fixed Send limits for their Ollama Free account. The assistant committed to adjusting Playroom UI to free-first behavior and the owner replied "continue". Interpret that reply as a **narrow owner authorization for Issue #12 UI implementation only** in this ChatGPT session if Luna delegation is unavailable. Preserve all server-side spending controls, prevent fake quota claims and do not grant paid inference, repo secret exposure, or deployment authority. Require regression-first tests, reviewed PR patch, exact PR and merged-main CI. Normal Luna routing remains for all other tasks.
+
 ## Read order
 
 1. `README.md`.
