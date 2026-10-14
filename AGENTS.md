@@ -12,6 +12,10 @@
 
 The owner asked to continue directly in the ChatGPT session on 2026-10-14 after being told that Luna delegation was unavailable. For [Issue #2](https://github.com/rua-den/playroom/issues/2) only, that instruction authorizes a direct ChatGPT implementation fallback if Luna cannot be dispatched. Keep this explicit exception narrowly scoped to the recovery fix and its tests; do not infer general model-routing changes for future tasks. The implementing assistant must review the exact diff, perform every verification available, explicitly list anything unrun, and never claim B1 PASS without running focused and full relevant tests. The normal Luna-only routing remains the default elsewhere.
 
+### Owner-directed implementation exception — Issue #4 only
+
+On 2026-10-14, after receiving an explicit request to extend the Issue #2 coding fallback to [Issue #4](https://github.com/rua-den/playroom/issues/4), the owner replied "continue". Treat that as authorization to implement **Issue #4 only** directly in this ChatGPT session when the required Luna coding agent is unavailable. Apply test-first, independently inspect the GitHub diff, require full CI on the exact PR and merge SHA, and report any verification not performed. Do not silently extend this exception to Issue #5 or other future tasks; Luna-first routing remains the default.
+
 ## Read order
 
 1. `README.md`.
