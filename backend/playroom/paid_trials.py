@@ -173,7 +173,7 @@ def check_trial_reservation(
         raise ValidationError("Trial model/profile does not match the grant")
     per_send = _usd(row["per_send_cap_usd"], "Trial per-send cap")
     proposed = _usd(proposed_usd, "Reserved cost")
-    if proposed > per_send or requested > per_send:
+    if proposed > per_send:
         raise ValidationError("Generation exceeds authorized trial per-send cap")
     used, jobs = _usage(connection, row["id"])
     if jobs >= row["max_jobs"] or used + proposed > _usd(row["total_cap_usd"], "Trial total cap"):
