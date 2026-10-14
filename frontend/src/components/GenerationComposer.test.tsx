@@ -142,7 +142,7 @@ describe("GenerationComposer", () => {
   it("does not create a new generation after an ambiguous 503 and a failed by-key recovery", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ id: "preview-ambiguous", campaign_id: "campaign-1", branch_id: "branch-1", checkpoint_id: "checkpoint-1", action: "Tiếp", status: "ready", profile_id: "profile-1" }), { status: 201 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Unavailable" }), { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "quota schema unavailable" }), { status: 503 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Lookup unavailable" }), { status: 503 }));
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
