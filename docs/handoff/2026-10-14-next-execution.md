@@ -82,3 +82,16 @@ No live provider inference or VPS changes are authorized by this handoff.
 - Material design decision: Ollama Cloud supports OpenAI-compatible **JSON mode**, but official docs say Cloud **does not support strict structured outputs**. Narrator nevertheless needs attributed JSON segments for Playroom; its prompt should demand them **unconditionally** for production narrator profiles, with post-parse speaker/version validation retained.
 - Official prices checked on 2026-10-14: gpt-oss:120b USD $0.15/1M input, $0.60/1M output; cached input $0.014/1M. Verified against vendor pages, not a live account/endpoint request. Model quality is still unmeasured.
 - **B2 code/tests not started**: AGENTS.md delegates coding to Luna except for the limited Issue #2 fallback. No Luna dispatch tool is available in this session; B2 is explicitly **NOT PASS**. The independent review itself is a docs-only commit and requires no app test re-run.
+
+
+## B2 mocked narrator contract — implementation acceptance
+
+- **PASS for deterministic/mock-provider contract**. [PR #5](https://github.com/rua-den/playroom/pull/5) merged into `main` as `4d22e451e1881f09e476f0ab1173aae2cac72a50` (Issue #4 closed).
+- RED baseline observed at [CI #38510735756](https://github.com/rua-den/playroom/actions/runs/38510735756): new unconditional JSON narrator-prompt assertion failed. That initial run also exposed a pre-existing race in the test that asserted released slots too soon.
+- GREEN on exact PR SHA `3510ca348896c4ee065231631926453fbfd972e1`: [CI #38511020183](https://github.com/rua-den/playroom/actions/runs/38511020183) passed backend **279/279**, frontend **79 passed, 3 skipped**, typecheck, build and compileall.
+- GREEN again on exact merge SHA `4d22e45`: [main CI #38511140177](https://github.com/rua-den/playroom/actions/runs/38511140177) passed both backend and frontend jobs, full test/typecheck/build/compile.
+- Production change: narrator system prompt unconditionally asks production narrator profiles for one JSON `segments` object and exact selected speaker/version pairing; explicitly disallows fences and new player-agency actions. Native strict-schema capability stays **disabled** for Ollama Cloud, and no automatic paid retry is introduced.
+- New deterministic integration tests: streaming Ollama OpenAI-compatible mock transport with UTF-8 SSE frames; JSON attribution/candidate/commit and exact-once idempotency; malformed JSON/prose/fences/unselected speaker/wrong version/kind mismatch/length/refusal/missing terminal; paid-only pre-dispatch and missing strict quality capability; usage cost ledger.
+- Concurrent test reliability fix was test-only: wait bounded for the physical-slot finalizer rather than asserting immediately after provider's `finished` event.
+- **NOT validated:** real Ollama Cloud API/schema adherence, persona agency in unconstrained model prose, browser/mobile E2E, account-specific pricing/cap, VPS Caddy or deployment. Do not conflate mocked B2 PASS with live-model acceptance.
+- **Next unlocked planning target:** [Issue #6 — three-turn synthetic mobile/reconnect E2E](https://github.com/rua-den/playroom/issues/6) (B3). The owner-directed coding exception in AGENTS only covers Issue #4; follow normal coding-agent routing for Issue #6 unless the owner explicitly broadens it.
