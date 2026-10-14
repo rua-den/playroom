@@ -1019,6 +1019,12 @@ def test_two_logically_timed_out_calls_retain_slots_against_third_invocation():
     first.release.set()
     second.release.set()
     assert first.finished.wait(1) and second.finished.wait(1)
+    # finished is raised inside the provider, before PhysicalAttemptRegistry's
+    # worker-finally block releases the occupied slots. Wait for that physical
+    # cleanup boundary rather than racing against the finalizer.
+    deadline = time.monotonic() + 1
+    while registry.active() and time.monotonic() < deadline:
+        time.sleep(0.005)
     assert registry.active() == 0
     assert third.calls == 0
 

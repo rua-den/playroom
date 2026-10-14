@@ -485,7 +485,20 @@ class GenerationService:
             "No invented canon"
         )
         if not profile.get("is_test_profile") and not profile.get("legacy_plain_output"):
-            system += " Return exactly one JSON object with a segments array when structured roleplay output is enabled."
+            # This is a narrator *application* contract even if the provider
+            # cannot enforce a native JSON schema (e.g. Ollama Cloud). Keep
+            # post-parse attribution validation regardless of wire capability.
+            system += (
+                ' Return exactly one JSON object with a "segments" array. '
+                'Do not include Markdown fences, commentary, or text outside the JSON object. '
+                'Each element must be either {"kind": "narration", "text": "..."} '
+                'or {"kind": "dialogue", "text": "...", "character_id": "selected ID", '
+                '"profile_version_id": "selected version ID"}. '
+                'For dialogue, copy character_id and profile_version_id exactly from the selected_characters list; '
+                'if no NPC is eligible, return narration segments only. '
+                'Do not place NPCs who are marked present=false into the active scene without an actual scene transition. '
+                'Never narrate new actions, dialogue, thoughts, or decisions for the player persona.'
+            )
         required = [block for block in preview.get("blocks", []) if block.get("mandatory")]
         optional = [block for block in preview.get("blocks", []) if not block.get("mandatory")]
 
