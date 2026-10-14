@@ -75,3 +75,10 @@ No live provider inference or VPS changes are authorized by this handoff.
 - B1 repair preserves input on confirmed pre-reservation rejection (e.g. 422), avoids duplicate generation after ambiguous 5xx, checks conflicting 409 key before adoption, and keeps recovery identity when committed transcript cannot be refreshed.
 - B1 RED before production edit was **not observed** in the CI environment; green acceptance regressions were observed at the PR and merge HEAD. Do not retrospectively claim a witnessed RED stage.
 - **Next:** [Issue #4: verify Ollama narrator segment contract](https://github.com/rua-den/playroom/issues/4) (B2). The scoped direct-implementation fallback recorded in `AGENTS.md` applies only to Issue #2; normal agent routing still applies to new B2 code.
+
+## B2 Ollama Cloud research checkpoint (2026-10-14)
+
+- Source and official-provider-doc contract audit is complete: [Ollama B2 contract review](../reviews/2026-10-14-ollama-b2-contract-review.md); [Issue #4](https://github.com/rua-den/playroom/issues/4) contains the expanded acceptance matrix.
+- Material design decision: Ollama Cloud supports OpenAI-compatible **JSON mode**, but official docs say Cloud **does not support strict structured outputs**. Narrator nevertheless needs attributed JSON segments for Playroom; its prompt should demand them **unconditionally** for production narrator profiles, with post-parse speaker/version validation retained.
+- Official prices checked on 2026-10-14: gpt-oss:120b USD $0.15/1M input, $0.60/1M output; cached input $0.014/1M. Verified against vendor pages, not a live account/endpoint request. Model quality is still unmeasured.
+- **B2 code/tests not started**: AGENTS.md delegates coding to Luna except for the limited Issue #2 fallback. No Luna dispatch tool is available in this session; B2 is explicitly **NOT PASS**. The independent review itself is a docs-only commit and requires no app test re-run.
