@@ -96,6 +96,22 @@ def estimate_cost_usd(profile: dict, reserved_input_tokens: int, reserved_comple
     return prompt * Decimal(reserved_input_tokens) + completion * Decimal(reserved_completion_tokens)
 
 
+def requires_spending_authorization(profile: dict) -> bool:
+    """Does this profile expose the account to provider-billed or purchased credits?
+
+    A published Free-starter label and /v1/models presence do NOT prove the
+    provider will refuse purchased credits after included credits are depleted.
+    No provider-enforced credit-source lockout is verified for Ollama Cloud.
+    Therefore every Ollama Cloud profile must use an owner-approved trial grant
+    if dispatched. A future lockout cannot be enabled by an untrusted flag.
+    """
+    return (
+        profile.get("provider") == "ollama"
+        or profile.get("credential_tier") == "paid"
+        or profile.get("purchased_credit_exposure_unknown") is True
+    )
+
+
 def validate_dispatch(profile: dict, policy: str, estimated_total, cap: Decimal | int | str | None = None) -> None:
     if not profile.get("endpoint") or not profile.get("model") or not profile.get("secret_version"):
         raise ValidationError("Provider profile is missing a pinned endpoint, model, or credential version")
@@ -105,6 +121,8 @@ def validate_dispatch(profile: dict, policy: str, estimated_total, cap: Decimal 
         raise ValidationError("Unknown cost policy")
     if policy == "free_only" and profile.get("credential_tier") != "free":
         raise ValidationError("free_only requires a verified free credential tier")
+    if policy == "free_only" and requires_spending_authorization(profile):
+        raise ValidationError("free_only cannot exclude purchased-credit billing by the provider")
     if policy == "capped_paid":
         if cap is None:
             raise ValidationError("A confirmed USD cap is required")
