@@ -126,3 +126,10 @@ The previous "no balance endpoint" uncertainty has been superseded by Ollama's [
 [Issue #17](https://github.com/rua-den/playroom/issues/17) now CLOSED by [PR #18](https://github.com/rua-den/playroom/pull/18): starter Gemma4 in `free_only` cannot be dispatched when purchased-credit billing exclusion isn't proven. Owner-approved `capped_paid` grants are mandatory even for starter-labelled Ollama profiles. Backend **309** and frontend **85 pass/3 skipped**, Chromium PASS on exact PR/main code. B4 *real* model/physical phone still NOT PASS and requires independent approval; see current [Issue #9](https://github.com/rua-den/playroom/issues/9).
 
 [PR #19](https://github.com/rua-den/playroom/pull/19) main verification [#38695103532](https://github.com/rua-den/playroom/actions/runs/38695103532): first Chromium browser job timed out waiting for turn count; failed-job rerun PASS on same SHA. Keep this flake visible for follow-up if it recurs.
+
+
+## 2026-10-15 live Gemma4 adapter trial evidence
+
+With user approval for *synthetic Free-account testing only*, [one-turn run #38720371467](https://github.com/rua-den/playroom/actions/runs/38720371467) produced valid streamed JSON, but its job status was FAILED on a heuristic false positive repeating Lan's *already-authored* box-opening. [Three-turn run #38721810244](https://github.com/rua-den/playroom/actions/runs/38721810244) later PASSed all three streamed Gemma4 outputs: 2042 input / 513 output tokens, locally calculated USD 0.00049108, valid `segments` and Vy speaker/version, no detected new Lan agency, absent Bình speech or private-knowledge leakage. Purchased balance was ZERO at each preflight; included balance covered the next local guard. No exact account balances were printed. [Details](2026-10-15-b4-gemma4-live-results.md).
+
+This is a real model adapter test, NOT a live end-to-end HTTP/SQLite Playroom story or a physical-device result. Existing B4 device/VPS/site approval boundaries remain; do not mark B4 PASS on this evidence alone. [Browser flake #25](https://github.com/rua-den/playroom/issues/25) is separate.
