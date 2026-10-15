@@ -1,0 +1,57 @@
+name: B4 approved three-turn Gemma4 synthetic narrator trial
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/b4-gemma4-three-turn-live.yml"
+      - "backend/tests/live_ollama_three_turn_trial.py"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/b4-gemma4-three-turn-live.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: b4-2026-10-15-three-turns-synthetic
+  cancel-in-progress: false
+
+jobs:
+  offline-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Python and uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: Verify offline profile, adapter, cast and cost guard with NO credentials
+        run: |
+          uv sync --locked --extra test
+          python -m py_compile backend/tests/live_ollama_three_turn_trial.py
+          PYTHONPATH=backend B4_DRY_RUN=1 uv run --locked --extra test python backend/tests/live_ollama_three_turn_trial.py
+
+  three-turns:
+    if: >-
+      ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && startsWith(github.event.head_commit.message, 'ci(ollama): run approved synthetic Gemma4 three-turn quality trial') }}
+    needs: offline-contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+      B4_THREE_TURN_APPROVAL: B4_THREE_SYNTHETIC_TURNS_2026_10_15
+      PYTHONPATH: backend
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Python and uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: Install locked dependencies
+        run: uv sync --locked --extra test
+      - name: Check included and purchased credit buckets and stream at most three turns
+        run: uv run --locked --extra test python backend/tests/live_ollama_three_turn_trial.py
