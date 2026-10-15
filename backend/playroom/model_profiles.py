@@ -14,6 +14,32 @@ from .domain import NotFound, ValidationError
 OLLAMA_CLOUD_ENDPOINT = "https://ollama.com/v1"
 OLLAMA_CLOUD_MODEL = "gpt-oss:120b-cloud"
 OLLAMA_CLOUD_API_MODEL = "gpt-oss:120b"
+OLLAMA_FREE_CLOUD_MODEL = "gemma4:31b-cloud"
+OLLAMA_FREE_CLOUD_API_MODEL = "gemma4:31b"
+# This vetted label-to-wire mapping is intentionally narrow. /v1/models is
+# model availability, NOT account free-credit balance or a billing guarantee.
+OLLAMA_CLOUD_MODELS = {
+    OLLAMA_CLOUD_MODEL: {
+        "api_model": OLLAMA_CLOUD_API_MODEL,
+        "credential_tier": "paid",
+        "context_limit": 131072,
+        "output_limit": 4096,
+        "prompt_price": "0.00000015",
+        "completion_price": "0.00000060",
+        "pricing_source": "https://ollama.com/library/gpt-oss:120b-cloud",
+        "free_starter_eligible": False,
+    },
+    OLLAMA_FREE_CLOUD_MODEL: {
+        "api_model": OLLAMA_FREE_CLOUD_API_MODEL,
+        "credential_tier": "free",
+        "context_limit": 262144,
+        "output_limit": 4096,
+        "prompt_price": "0.00000014",
+        "completion_price": "0.00000040",
+        "pricing_source": "https://ollama.com/library/gemma4:31b-cloud",
+        "free_starter_eligible": True,
+    },
+}
 
 
 @dataclass(frozen=True)
@@ -181,8 +207,11 @@ class OllamaCloudVerifier:
     def verify(self, api_key: str, model: str, endpoint: str, *, provider_tag: str | None = None) -> dict:
         if endpoint != OLLAMA_CLOUD_ENDPOINT:
             raise ValidationError("Only the pinned Ollama Cloud endpoint is supported")
-        if model != OLLAMA_CLOUD_MODEL:
+        entry = OLLAMA_CLOUD_MODELS.get(model)
+        if entry is None:
             raise ValidationError("The requested Ollama Cloud model is unavailable")
+        if provider_tag is not None:
+            raise ValidationError("An Ollama Cloud provider tag is unsupported")
         if not api_key:
             raise ValidationError("Provider credential could not be verified")
         try:
@@ -195,20 +224,36 @@ class OllamaCloudVerifier:
             models = response.json().get("data", [])
         except Exception as exc:
             raise ValidationError("Ollama Cloud metadata could not be verified") from exc
-        if not any(isinstance(item, dict) and item.get("id") == OLLAMA_CLOUD_API_MODEL for item in models):
+        if not isinstance(models, list) or not any(
+            isinstance(item, dict) and item.get("id") == entry["api_model"] for item in models
+        ):
             raise ValidationError("Requested Ollama Cloud model is unavailable")
-        source = f"{OLLAMA_CLOUD_ENDPOINT}/models"
+        date = datetime.now(timezone.utc)
+        free_starter = entry["free_starter_eligible"]
+        # A model's presence in /models does not establish which credit pool
+        # Ollama will debit. The published free-plan policy is independent.
         return {
-            "provider": "ollama", "endpoint": OLLAMA_CLOUD_ENDPOINT, "model": OLLAMA_CLOUD_API_MODEL, "model_label": OLLAMA_CLOUD_MODEL,
-            "provider_tag": None, "context_limit": 131072, "output_limit": 4096,
-            "pricing": {"prompt": "0.00000015", "completion": "0.00000060", "currency": "USD", "unit": "USD/token"},
-            "credential_tier": "paid", "structured_output": False, "native_structured_output": False,
+            "provider": "ollama", "endpoint": OLLAMA_CLOUD_ENDPOINT,
+            "model": entry["api_model"], "model_label": model,
+            "provider_tag": None, "context_limit": entry["context_limit"],
+            "output_limit": entry["output_limit"],
+            "pricing": {
+                "prompt": entry["prompt_price"], "completion": entry["completion_price"],
+                "currency": "USD", "unit": "USD/token",
+            },
+            "credential_tier": entry["credential_tier"],
+            "structured_output": False, "native_structured_output": False,
             "structured_schema_parameter": None, "supported_parameters": ["max_tokens"],
-            "reasoning_parameters": [], "metadata_source": source,
-            "pricing_source": "https://ollama.com/library/gpt-oss:120b-cloud",
-            "pricing_retrieved_at": datetime.now(timezone.utc).date().isoformat(),
-            "verified_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "reasoning_parameters": [], "metadata_source": f"{OLLAMA_CLOUD_ENDPOINT}/models",
+            "pricing_source": entry["pricing_source"],
+            "pricing_retrieved_at": date.date().isoformat(),
+            "verified_at": date.isoformat().replace("+00:00", "Z"),
             "pricing_verified": True,
+            "free_starter_eligible": free_starter,
+            "starter_eligibility_source": "https://ollama.com/download" if free_starter else None,
+            "starter_eligibility_checked_at": date.date().isoformat() if free_starter else None,
+            "account_free_credits_remaining": None,
+            "purchased_credit_exposure_unknown": True,
         }
 
 
