@@ -52,3 +52,7 @@ No physical phone, VPS/Caddy, real-model quality score, token invoice, or usage 
 ## Routing
 
 Current AGENTS.md requires Luna for code changes; past single-issue direct-coding exceptions (#2/#4/#6/#10/#12) do not cover Issue #14. This session does not have a Luna dispatcher. This plan is documentation-only, not a silent coding exception.
+
+## Codex Astra ownership update (2026-10-15)
+
+The owner has now explicitly selected **Codex Astra** to implement Playroom from the latest GitHub `main`. This 2026-10-15 owner direction **supersedes** the older Luna-only route written at the end of this 2026-10-14 planning document. Refer to [the active Codex handoff](../handoff/2026-10-15-codex-astra.md) and topmost `AGENTS.md` owner override. All verification, privacy, budget and live-provider approval gates above remain unchanged. This is authorization for code implementation and tests by Astra, not for unbounded purchased-credit API calls or VPS deployment.

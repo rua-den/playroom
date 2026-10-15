@@ -1,5 +1,13 @@
 # Playroom agent instructions
 
+## Active owner routing — Codex Astra (2026-10-15)
+
+The owner explicitly directed on 2026-10-15: **sync all Playroom work to `main`, transfer execution to Codex, and use Astra as the coding model**. This owner instruction **supersedes the historical Luna-only implementation rule below for Playroom work executed in Codex**, starting with [Issue #14](https://github.com/rua-den/playroom/issues/14) and any follow-up development authorized by the owner. Codex **Astra owns production implementation and tests**; reviewing/orchestrating agents may plan, document, check tests, and review PRs. Do not stall or ask to substitute Luna merely because the older default mentions Luna. The single-issue Luna exceptions below are historical, not limits on this newer owner-approved routing.
+
+Read [Codex Astra handoff](docs/handoff/2026-10-15-codex-astra.md) before writing. Start from the latest GitHub `main`; do not assume the SHA in any older handoff is still HEAD. Work in a feature branch, implement regression-first, commit incrementally, review the diff and require exact-PR-SHA and merged-`main` CI before declaring PASS. Preserve the forward-progress policy: bounded recovery on test/tool failures; do not abandon a checkpoint prematurely.
+
+**Security and consent boundaries are unchanged:** the repository has an `OLLAMA_API_KEY` Actions secret, usable for owner-authorized **read-only metadata** checks on protected `main`. This is not blanket consent for chargeable completions, purchased-credit draw, private Henn/BANGTAN exports, physical device access, or VPS/Caddy changes. Maintain strict `free_only` fail-closed behavior and separate explicit approval before any inference with billing exposure or deployment.
+
 ## Model routing
 
 - Use `gpt-5.6-sol` for orchestration: requirements, architecture, planning, coordination, review and final verification.
