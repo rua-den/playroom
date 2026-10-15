@@ -30,17 +30,17 @@ jobs:
         with:
           python-version: "3.12"
           enable-cache: true
-      - name: Validate live smoke imports with NO API key or network inference
+      - name: Validate pinned profile persistence and adapter wire OFFLINE without credential
         run: |
           uv sync --locked --extra test
-          PYTHONPATH=backend uv run --locked --extra test python -c "import runpy; runpy.run_path('backend/tests/live_ollama_gemma4_smoke.py', run_name='b4_import_only')"
+          PYTHONPATH=backend B4_DRY_RUN=1 uv run --locked --extra test python backend/tests/live_ollama_gemma4_smoke.py
 
   one-shot-synthetic:
     # The owner explicitly approved a synthetic Gemma4 Free-account trial.
     # Restrict to the specific squash-merge title, push-to-main, first attempt.
     # Never issue another completion on Actions "Re-run jobs".
     if: >-
-      ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && startsWith(github.event.head_commit.message, 'ci(ollama): run synthetic Gemma4 live smoke after dependency fix') }}
+      ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && startsWith(github.event.head_commit.message, 'ci(ollama): run synthetic Gemma4 after immutable profile fix') }}
     needs: syntax
     runs-on: ubuntu-latest
     timeout-minutes: 4
