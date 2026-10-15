@@ -135,7 +135,7 @@ describe("SettingsPanel", () => {
     await screen.findByLabelText("Provider");
     await userEvent.setup().selectOptions(screen.getByLabelText("Provider"), "ollama");
     expect(screen.getByLabelText("Ollama Cloud API key")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("gpt-oss:120b-cloud")).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Model Ollama Cloud" })).toHaveValue("gemma4:31b-cloud");
     expect(screen.queryByLabelText("Endpoint")).not.toBeInTheDocument();
   });
 
@@ -151,6 +151,7 @@ describe("SettingsPanel", () => {
     await screen.findByLabelText("Provider");
     await user.selectOptions(screen.getByLabelText("Provider"), "ollama");
     await user.selectOptions(screen.getByLabelText("Credential"), "cred-1");
+    await user.selectOptions(screen.getByLabelText("Model Ollama Cloud"), "gpt-oss:120b-cloud");
     await user.click(screen.getByRole("button", { name: "Xác minh profile" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/provider/profiles/verify", expect.objectContaining({ method: "POST", body: JSON.stringify({ provider: "ollama", credential_id: "cred-1", model: "gpt-oss:120b-cloud", endpoint: "https://ollama.com/v1" }) })));
   });
@@ -226,4 +227,27 @@ describe("Free-first provider settings", () => {
     expect(screen.getByLabelText("Narrator input tokens")).toBeInTheDocument();
     expect(screen.getByLabelText("Số lượt Send tối đa")).toHaveValue(null);
   });
+});
+
+
+it("submits the officially supported Gemma4 starter model by default without inventing free quota", async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(new Response(JSON.stringify([{ id: "cred-1", masked: "ol-•••123" }]), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ mode: "economy", policy: "free_only", roles: {}, budgets: {} }), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ id: "gemma-profile", version: 1, model: "gemma4:31b", model_label: "gemma4:31b-cloud", provider: "ollama", credential_tier: "free" }), { status: 201 }));
+  vi.stubGlobal("fetch", fetchMock);
+  const user = userEvent.setup();
+  render(<SettingsPanel />);
+  await screen.findByLabelText("Provider");
+  await user.selectOptions(screen.getByLabelText("Provider"), "ollama");
+  await user.selectOptions(screen.getByLabelText("Credential"), "cred-1");
+  expect(screen.getByRole("combobox", { name: "Model Ollama Cloud" })).toHaveValue("gemma4:31b-cloud");
+  expect(screen.getByText(/credits mua thêm/)).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Xác minh profile" }));
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/provider/profiles/verify",
+    expect.objectContaining({ method: "POST", body: JSON.stringify({
+      provider: "ollama", credential_id: "cred-1", model: "gemma4:31b-cloud", endpoint: "https://ollama.com/v1",
+    }) })));
+  expect(screen.queryByLabelText("Số lượt Send tối đa")).not.toBeInTheDocument();
 });
