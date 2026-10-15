@@ -13,7 +13,7 @@ import urllib.error
 import urllib.request
 from decimal import Decimal, InvalidOperation
 
-import httpx
+import httpx2 as httpx
 
 from playroom.model_profiles import OLLAMA_CLOUD_ENDPOINT, OLLAMA_FREE_CLOUD_MODEL, OllamaCloudVerifier
 from playroom.provider import OllamaCloudAdapter, ProviderFailure, ProviderResult
