@@ -20,18 +20,27 @@ concurrency:
 jobs:
   syntax:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: Validate one-shot synthetic test script without any credential
         run: python -m py_compile backend/tests/live_ollama_gemma4_smoke.py
+      - name: Install pinned Python environment for dry import
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: Validate live smoke imports with NO API key or network inference
+        run: |
+          uv sync --locked --extra test
+          PYTHONPATH=backend uv run --locked --extra test python -c "import runpy; runpy.run_path('backend/tests/live_ollama_gemma4_smoke.py', run_name='b4_import_only')"
 
   one-shot-synthetic:
     # The owner explicitly approved a synthetic Gemma4 Free-account trial.
     # Restrict to the specific squash-merge title, push-to-main, first attempt.
     # Never issue another completion on Actions "Re-run jobs".
     if: >-
-      ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && startsWith(github.event.head_commit.message, 'ci(ollama): run one authorized synthetic Gemma4 live smoke') }}
+      ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && startsWith(github.event.head_commit.message, 'ci(ollama): run synthetic Gemma4 live smoke after dependency fix') }}
     needs: syntax
     runs-on: ubuntu-latest
     timeout-minutes: 4
