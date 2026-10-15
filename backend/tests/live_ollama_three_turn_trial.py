@@ -25,7 +25,7 @@ APPROVAL = "B4_THREE_SYNTHETIC_TURNS_2026_10_15"
 MAX_TURNS = 3
 MAX_OUTPUT_TOKENS = 640
 MAX_USD_TRIAL = Decimal("0.01")
-MAX_ESTIMATED_PER_TURN = Decimal("0.0025")
+MAX_ESTIMATED_PER_TURN = Decimal("0.0015")
 MODEL = "gemma4:31b"
 VY_ID = "npc-vy-synthetic"
 VY_VERSION = "vy-profile-v1"
@@ -51,9 +51,15 @@ SYSTEM = (
 )
 
 
-def _credit_gate(api_key: str, reserve: Decimal) -> None:
-    if reserve <= 0 or reserve * MAX_TURNS > MAX_USD_TRIAL:
+def _check_risk_allowance(reserve: Decimal) -> None:
+    # 'reserve' is already either the TOTAL 3-turn allowance or ONE turn.
+    # Multiplying the total again would incorrectly reject every trial.
+    if reserve <= 0 or not reserve.is_finite() or reserve > MAX_USD_TRIAL:
         raise RuntimeError("Internal synthetic cost allowance violates owner approval")
+
+
+def _credit_gate(api_key: str, reserve: Decimal) -> None:
+    _check_risk_allowance(reserve)
     req = urllib.request.Request(
         "https://ollama.com/api/balance",
         headers={"Authorization": "Bearer " + api_key, "Accept": "application/json"},
@@ -93,6 +99,16 @@ def main() -> int:
         _dry_adapter_contract()
         assert MAX_TURNS == len(ACTIONS)
         assert MAX_ESTIMATED_PER_TURN * MAX_TURNS <= MAX_USD_TRIAL
+        # Exercise BOTH branches of the guard, without reading the balance.
+        _check_risk_allowance(MAX_ESTIMATED_PER_TURN)
+        _check_risk_allowance(MAX_ESTIMATED_PER_TURN * MAX_TURNS)
+        for invalid in (Decimal("0"), Decimal("-0.001"), MAX_USD_TRIAL + Decimal("0.000001")):
+            try:
+                _check_risk_allowance(invalid)
+            except RuntimeError:
+                pass
+            else:
+                raise AssertionError("Invalid trial risk allowance was accepted")
         assert CAST == {VY_ID: VY_VERSION}
         print("THREE-TURN OFFLINE CONTRACT: PASS, zero network calls")
         return 0

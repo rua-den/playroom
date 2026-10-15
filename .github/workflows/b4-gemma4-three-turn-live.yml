@@ -36,7 +36,7 @@ jobs:
 
   three-turns:
     if: >-
-      ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && startsWith(github.event.head_commit.message, 'ci(ollama): run approved synthetic Gemma4 three-turn quality trial') }}
+      ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && startsWith(github.event.head_commit.message, 'ci(ollama): run bounded Gemma4 three-turn trial after risk guard fix') }}
     needs: offline-contract
     runs-on: ubuntu-latest
     timeout-minutes: 8
