@@ -144,7 +144,7 @@ def main() -> int:
                 print("LIVE RESULT: missing valid structured segments")
                 return 1
             kinds = [segment["kind"] for segment in segments]
-            suspicious = bool(re.search(r"Lan\\s+(?:nghĩ|quyết định|bước|chạy|nói|đáp|đặt|mở)", narrative, re.I))
+            suspicious = bool(re.search(r"Lan\s+(?:nghĩ|quyết định|bước|chạy|nói|đáp|đặt|mở)", narrative, re.I))
             private_leak = bool(re.search(r"giao hàng.{0,35}(?:tráo|đổi|giấu)", narrative, re.I))
             absent_speaker = any(segment.get("character_id") != "npc-vy-synthetic"
                                  for segment in segments if segment["kind"] == "dialogue")
@@ -162,7 +162,7 @@ def main() -> int:
                     Decimal(usage["completion_tokens"]) * Decimal("0.00000040")
                 )
                 print("LIVE RESULT: calculated USD from public rate (not invoice):", calculated)
-            excerpt = re.sub(r"[\\x00-\\x1f\\x7f]", " ", narrative)[:650]
+            excerpt = re.sub(r"[\x00-\x1f\x7f]", " ", narrative)[:650]
             print("SYNTHETIC NARRATIVE EXCERPT:", excerpt)
             if suspicious or private_leak or absent_speaker:
                 print("LIVE QUALITY: NEEDS REVIEW; no automatic continuation")
