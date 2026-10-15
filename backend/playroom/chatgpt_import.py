@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from .campaigns import create_campaign
 from .db import transaction
@@ -124,7 +124,7 @@ def preview_conversation(source: dict) -> dict:
     }
 
 
-def _validated_config(config: dict) -> tuple[str, dict, dict, list[dict]]:
+def _validated_config(config: dict, owner_id: str, source_id: str) -> tuple[str, dict, dict, list[dict]]:
     if not isinstance(config, dict):
         raise ValidationError("Import settings are required")
     title = config.get("title")
@@ -138,17 +138,20 @@ def _validated_config(config: dict) -> tuple[str, dict, dict, list[dict]]:
             raise ValidationError(f"Import {label} name is invalid")
     if not isinstance(characters, list) or len(characters) > 128:
         raise ValidationError("Import characters list is invalid")
-    for item in characters:
+    normalized = []
+    for index, item in enumerate(characters):
         if not isinstance(item, dict) or not isinstance(item.get("name"), str) or not item["name"].strip():
             raise ValidationError("Imported character name is invalid")
-    return title.strip(), world, persona, characters
+        ident = item.get("id") or str(uuid5(NAMESPACE_URL, f"playroom:{owner_id}:{source_id}:{index}:{item['name']}"))
+        normalized.append({**item, "id": ident, "aliases": item.get("aliases", [])})
+    return title.strip(), world, persona, normalized
 
 
 def import_conversation(connection: sqlite3.Connection, owner_id: str, source: dict, config: dict, import_key: str) -> dict:
     from .domain import require_uuid
     key = require_uuid(import_key, "import key")
     parsed = preview_conversation(source)
-    title, world, persona, characters = _validated_config(config)
+    title, world, persona, characters = _validated_config(config, owner_id, parsed["conversation_id"])
     original = _serialized_source(source)
     config_json = json.dumps({"title": title, "world": world, "persona": persona, "characters": characters},
                              ensure_ascii=False, sort_keys=True, separators=(",", ":"))
