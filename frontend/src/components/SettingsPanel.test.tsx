@@ -251,3 +251,18 @@ it("submits the officially supported Gemma4 starter model by default without inv
     }) })));
   expect(screen.queryByLabelText("Số lượt Send tối đa")).not.toBeInTheDocument();
 });
+
+
+it("explains that Gemma4 starter cannot be sent under Free only when purchased credits may be used", async () => {
+  vi.stubGlobal("fetch", vi.fn()
+    .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify([{ id: "starter", version: 1, provider: "ollama", model: "gemma4:31b", model_label: "gemma4:31b-cloud", credential_tier: "free" }]), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ mode: "economy", policy: "free_only", roles: { narrator: { id: "starter", version: 1 } }, budgets: {} }), { status: 200 })));
+  render(<SettingsPanel />);
+  expect(await screen.findByText("Chơi với tài khoản Free")).toBeInTheDocument();
+  const warning = screen.getByRole("alert");
+  expect(warning).toHaveTextContent("gemma4:31b");
+  expect(warning).toHaveTextContent("Free only sẽ chặn");
+  expect(warning).toHaveTextContent("Capped paid");
+  expect(screen.queryByLabelText("Số lượt Send tối đa")).not.toBeInTheDocument();
+});

@@ -21,7 +21,7 @@ from jsonschema import Draft202012Validator
 from .context import build_candidate_pool, build_context_preview, _profiles
 from .db import transaction
 from .domain import NotFound, StateConflict, ValidationError
-from .model_profiles import estimate_cost_usd, validate_dispatch
+from .model_profiles import estimate_cost_usd, validate_dispatch, requires_spending_authorization
 from .paid_trials import check_trial_reservation, insert_trial_reservation, assert_trial_dispatch_allowed
 from .model_profiles import get_model_profile
 from .settings import get_owner_settings, ROLE_BUDGET_DEFAULTS
@@ -354,7 +354,7 @@ class GenerationService:
             # in both the settings hash and this conservative reservation.
             reservation = self._reservation(profiles, mode, policy, cap, settings)
             trial_id = None
-            if locked_settings is not None and policy == "capped_paid" and profiles["narrator"].get("credential_tier") == "paid":
+            if locked_settings is not None and policy == "capped_paid" and requires_spending_authorization(profiles["narrator"]):
                 trial_id = check_trial_reservation(
                     self.connection, owner_id, profile=profiles["narrator"],
                     campaign_id=campaign_id, proposed_usd=reservation["reserved_total_usd"],
@@ -773,7 +773,7 @@ class GenerationService:
     def _check_dispatch(self, job, context, narrator, preview, *, aggregate: bool, stage_meta=None, stage="narration"):
         if job["policy"] == "capped_paid":
             persisted, _ = self._persisted_config(job["owner_id"])
-            if persisted is not None and narrator.get("credential_tier") == "paid":
+            if persisted is not None and requires_spending_authorization(narrator):
                 assert_trial_dispatch_allowed(self.connection, job, profile=narrator)
         settings = json.loads(job["settings_snapshot_json"] or "{}")
         profile = context if stage == "context" else narrator
@@ -1080,11 +1080,15 @@ class GenerationService:
                 job = self.connection.execute("SELECT * FROM generation_jobs WHERE id=?", (job_id,)).fetchone()
                 if job is None:
                     return False
-                if job["policy"] == "capped_paid":
+                if job["policy"] in {"capped_paid", "free_only"}:
                     try:
                         profiles = json.loads(job["profile_snapshot_json"] or "{}")
                         narrator = profiles.get("narrator") or {}
-                        if narrator.get("credential_tier") == "paid":
+                        if requires_spending_authorization(narrator):
+                            if job["policy"] == "free_only":
+                                # Protect jobs queued under older code, too.
+                                # No verified Ollama purchased-credit lockout.
+                                return False
                             persisted, _ = self._persisted_config(job["owner_id"])
                             if persisted is not None:
                                 assert_trial_dispatch_allowed(self.connection, job, profile=narrator)

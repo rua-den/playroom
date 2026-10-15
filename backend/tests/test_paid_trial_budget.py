@@ -22,15 +22,19 @@ from playroom.timeline import get_branch_head
 from playroom.paid_trials import create_trial_authorization, get_trial_summary, revoke_trial_authorization
 
 
-def prepared(tmp_path, *, policy="capped_paid"):
+def prepared(tmp_path, *, policy="capped_paid", starter=False):
     path = tmp_path / "trial.sqlite3"
     db = connect(path)
     migrate(db)
     owner = create_owner(db, "budget@example.test", "long secure test password")
     profile = persist_model_profile(db, owner.id, {
-        "id": "paid-narrator", "provider": "ollama", "endpoint": "https://ollama.com/v1",
-        "model": "gpt-oss:120b", "context_limit": 131072, "output_limit": 4096,
-        "credential_tier": "paid", "pricing_verified": True,
+        "id": "starter-narrator" if starter else "paid-narrator", "provider": "ollama", "endpoint": "https://ollama.com/v1",
+        "model": "gemma4:31b" if starter else "gpt-oss:120b",
+        "context_limit": 131072, "output_limit": 4096,
+        "credential_tier": "free" if starter else "paid", "pricing_verified": True,
+        "free_starter_eligible": starter,
+        "account_free_credits_remaining": None if starter else None,
+        "purchased_credit_exposure_unknown": True,
         "pricing": {"prompt": "0.00000015", "completion": "0.00000060"},
         "secret_version": "test-fixture-secret-id", "is_test_profile": True,
     })
@@ -284,3 +288,79 @@ def test_final_invocation_gate_rechecks_revoked_grant(tmp_path):
     revoke_trial_authorization(db, owner.id, grant["id"])
     assert service._invocation_gate(job["id"], stage_key) is False
     assert db.execute("SELECT status FROM provider_attempts WHERE stage_key=?", (stage_key,)).fetchone()["status"] == "claimed"
+
+
+def test_gemma_starter_free_only_unknown_purchased_credits_rejects_without_job(tmp_path):
+    _, db, owner, profile, _ = prepared(tmp_path, policy="free_only", starter=True)
+    assert profile["credential_tier"] == "free" and profile["free_starter_eligible"] is True
+    assert profile["purchased_credit_exposure_unknown"] is True
+    with pytest.raises(ValidationError, match="free_only|purchased.credit|billing"):
+        reserve(db, owner, add_story(db, owner, 1), "starter-free", policy="free_only", cap=None)
+    assert db.execute("SELECT COUNT(*) FROM generation_jobs").fetchone()[0] == 0
+    assert db.execute("SELECT COUNT(*) FROM provider_attempts").fetchone()[0] == 0
+
+
+def test_gemma_starter_capped_paid_without_separate_grant_denies_before_job(tmp_path):
+    _, db, owner, profile, cost = prepared(tmp_path, starter=True)
+    assert cost > 0 and profile["credential_tier"] == "free"
+    with pytest.raises(ValidationError, match="trial|approv|authoriz"):
+        reserve(db, owner, add_story(db, owner, 1), "starter-no-grant")
+    assert db.execute("SELECT COUNT(*) FROM generation_jobs").fetchone()[0] == 0
+
+
+def test_gemma_starter_explicit_trial_grant_debits_across_branches_and_replays(tmp_path):
+    _, db, owner, profile, cost = prepared(tmp_path, starter=True)
+    grant = approve(db, owner, profile, cost * 2, per_send=str(cost), max_jobs=5)
+    campaign = add_story(db, owner, 1)
+    first = reserve(db, owner, campaign, "starter-granted")
+    again = reserve(db, owner, campaign, "starter-granted")
+    assert first["id"] == again["id"]
+    second = reserve(db, owner, add_story(db, owner, 2), "starter-second")
+    with pytest.raises(ValidationError, match="budget|trial|cap"):
+        reserve(db, owner, add_story(db, owner, 3), "starter-third")
+    rows = db.execute("SELECT job_id FROM paid_trial_reservations WHERE authorization_id=?", (grant["id"],)).fetchall()
+    assert {x["job_id"] for x in rows} == {first["id"], second["id"]}
+    assert Decimal(get_trial_summary(db, owner.id)["reserved_usd"]) == cost * 2
+    revoke_trial_authorization(db, owner.id, grant["id"])
+    assert GenerationService(db, FakeProvider([])).run(first["id"])["status"] == "failed"
+
+
+def test_gemma_starter_quality_context_never_bypasses_paid_authorization(tmp_path):
+    _, db, owner, profile, _ = prepared(tmp_path, starter=True)
+    campaign = add_story(db, owner, 1)
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    with pytest.raises(ValidationError, match="quality|strict|paid|trial"):
+        GenerationService(db, FakeProvider([])).generate(
+            owner.id, campaign.id, campaign.initial_branch_id, "Look",
+            idempotency_key="starter-quality", expected_checkpoint_id=head.checkpoint_id,
+            mode="quality", policy="capped_paid", cap="1", execute=False,
+        )
+    assert db.execute("SELECT COUNT(*) FROM generation_jobs").fetchone()[0] == 0
+
+
+def test_starter_last_invocation_gate_rejects_revoked_grant_and_legacy_free_only_job(tmp_path):
+    _, db, owner, profile, cost = prepared(tmp_path, starter=True)
+    grant = approve(db, owner, profile, cost, per_send=str(cost))
+    job = reserve(db, owner, add_story(db, owner, 1), "starter-last-gate")
+    service = GenerationService(db, FakeProvider([]))
+    epoch = service._epoch()
+    key = f"{job['id']}:narration"
+    db.execute("UPDATE generation_jobs SET status='running' WHERE id=?", (job["id"],))
+    db.execute("UPDATE provider_attempts SET status='claimed',claim_epoch=? WHERE stage_key=?", (epoch, key))
+    revoke_trial_authorization(db, owner.id, grant["id"])
+    assert service._invocation_gate(job["id"], key) is False
+    assert db.execute("SELECT status FROM provider_attempts WHERE stage_key=?", (key,)).fetchone()["status"] == "claimed"
+    # Simulate a queued job created by an older Free-only version of Playroom.
+    # It must never slip past the last-moment provider gate after an upgrade.
+    db.execute("UPDATE generation_jobs SET policy='free_only' WHERE id=?", (job["id"],))
+    assert service._invocation_gate(job["id"], key) is False
+    assert db.execute("SELECT status FROM provider_attempts WHERE stage_key=?", (key,)).fetchone()["status"] == "claimed"
+
+
+def test_starter_purchased_credit_exposure_cannot_be_disabled_by_profile_flag(tmp_path):
+    _, db, owner, profile, _ = prepared(tmp_path, starter=True, policy="free_only")
+    from playroom.model_profiles import validate_dispatch
+    modified = {**profile, "purchased_credit_exposure_unknown": False,
+                "account_free_credits_remaining": "999", "free_starter_eligible": True}
+    with pytest.raises(ValidationError, match="purchased|billing|free_only"):
+        validate_dispatch(modified, "free_only", None)
