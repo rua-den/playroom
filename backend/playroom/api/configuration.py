@@ -102,7 +102,11 @@ def verify_profile(payload: VerifyProfileRequest, request: Request, connection: 
         secret = _store(request).get(owner.id, payload.credential_id)
         if payload.provider == "ollama":
             verifier = OllamaCloudVerifier()
-            endpoint, model = OLLAMA_CLOUD_ENDPOINT, OLLAMA_CLOUD_MODEL
+            if payload.endpoint != OLLAMA_CLOUD_ENDPOINT:
+                raise ValidationError("Only the pinned Ollama Cloud endpoint is supported")
+            if payload.provider_tag is not None:
+                raise ValidationError("An Ollama Cloud provider tag is unsupported")
+            endpoint, model = OLLAMA_CLOUD_ENDPOINT, payload.model
         else:
             verifier = request.app.state.provider_verifier
             endpoint, model = payload.endpoint, payload.model
