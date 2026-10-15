@@ -97,7 +97,8 @@ def test_http_preview_and_import_require_auth_and_reject_empty_story(tmp_path):
                      credential_root=tmp_path / "secrets")
     client = TestClient(app, base_url="https://testserver")
     src = fixture_conversation()
-    assert client.post("/api/transfers/chatgpt/preview", json={"conversation": src}).status_code == 401
+    assert client.post("/api/transfers/chatgpt/preview", json={"conversation": src},
+                       headers={"origin": "https://testserver"}).status_code == 401
     assert client.post("/api/auth/login", json={"email": owner.email, "password": "synthetic strong password"},
                        headers={"origin": "https://testserver"}).status_code == 200
     preview = client.post("/api/transfers/chatgpt/preview", json={"conversation": src},
