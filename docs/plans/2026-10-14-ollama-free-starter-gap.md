@@ -56,3 +56,11 @@ Current AGENTS.md requires Luna for code changes; past single-issue direct-codin
 ## Codex Astra ownership update (2026-10-15)
 
 The owner has now explicitly selected **Codex Astra** to implement Playroom from the latest GitHub `main`. This 2026-10-15 owner direction **supersedes** the older Luna-only route written at the end of this 2026-10-14 planning document. Refer to [the active Codex handoff](../handoff/2026-10-15-codex-astra.md) and topmost `AGENTS.md` owner override. All verification, privacy, budget and live-provider approval gates above remain unchanged. This is authorization for code implementation and tests by Astra, not for unbounded purchased-credit API calls or VPS deployment.
+
+## Issue #14 implementation acceptance — 2026-10-15
+
+**IMPLEMENTED / automated regression PASS.** [PR #16](https://github.com/rua-den/playroom/pull/16) merged into `main` as **`e81533f4597f2c35d46f28d0a7b026a9d9679439`**. [Exact PR-head CI #38677871475](https://github.com/rua-den/playroom/actions/runs/38677871475) and [exact merged-main CI #38678014735](https://github.com/rua-den/playroom/actions/runs/38678014735) both PASS: **303 backend tests, 84 frontend tests (3 skipped), Python compile, TS typecheck/build, real Chromium synthetic E2E**. RED was witnessed in the early PR commits before verifier/UI implementation.
+
+Confirmed via the user's authenticated **read-only** `GET /v1/models` [catalog workflow #38675986601](https://github.com/rua-den/playroom/actions/runs/38675986601): `gemma4:31b=True`, `gemma4:cloud=False`, `gemma4=False`. Official [Gemma 4 model card](https://ollama.com/library/gemma4:31b-cloud) uses API ID `gemma4:31b` for the `gemma4:31b-cloud` display label. This supersedes the guessed wire ID `gemma4` in the original plan. Exact allowlist and provider metadata provenance, immutable tier and version, API endpoint spoof rejection, free-only vs paid dispatch validation, UI dropdown, and synthetic SSE test are implemented.
+
+**Still unverified / no authorization:** balance of included monthly credits, possibility of spending purchased credits, any actual `/chat/completions` call, live narrator quality, real mobile device and VPS publication. Continue [Issue #9](https://github.com/rua-den/playroom/issues/9) only up to its documented security/financial approval boundary.

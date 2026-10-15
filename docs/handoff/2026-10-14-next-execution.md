@@ -149,3 +149,10 @@ No live provider inference or VPS changes are authorized by this handoff.
 ## Codex / Astra transfer — 2026-10-15
 
 The owner selected **Codex Astra as the next implementation agent** and requested all current work to be committed on `main`. Treat this 2026-10-14 log as history and read the new [Codex Astra execution handoff](2026-10-15-codex-astra.md) first. Issue #14 is the immediate coding checkpoint; Issue #9 remains the live financial/device authorization gate. No production code was changed or live inference performed during this docs-only transfer.
+
+## 2026-10-15 — Issue #14 merged; B4 still gated
+
+- Direct continuation in ChatGPT after Codex tokens were exhausted, no permission expansion to paid credit usage.
+- PR #16 merged at code SHA `e81533f4597f2c35d46f28d0a7b026a9d9679439`; [main CI #38678014735](https://github.com/rua-den/playroom/actions/runs/38678014735) green: backend 303, frontend 84 passed/3 skipped, Chromium synthetic PASS.
+- Exact Gemini4 alias correction: display `gemma4:31b-cloud` → API `gemma4:31b` (model present in authenticated catalog); gpt-oss remains paid. Supports Free starter profile and honest unknown balance/purchased-credit exposure warnings.
+- [Issue #14](https://github.com/rua-den/playroom/issues/14) implementation is PASS; [Issue #9](https://github.com/rua-den/playroom/issues/9) awaits separate synthetic provider inference/financial and real phone approvals. No real completion or VPS action performed.

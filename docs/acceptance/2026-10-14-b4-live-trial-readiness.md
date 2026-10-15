@@ -110,3 +110,10 @@ Acceptance: zero persona/scene/knowledge/duplicate-charge blockers, each quality
 **Not completed:** provider account/credential verification, any network call to Ollama with credentials, actual cost measurement, semantic live story scoring, physical phone test, VPS/Caddy inventory or deployment.
 
 **B4: NOT PASS.** Execute [Issue #9](https://github.com/rua-den/playroom/issues/9) only under explicit cost/data/device authorization and new coding work under `AGENTS.md` model-routing rules.
+
+## 2026-10-15 verified Free starter implementation
+
+[PR #16](https://github.com/rua-den/playroom/pull/16) is merged (exact code SHA `e81533f4597f2c35d46f28d0a7b026a9d9679439`). [Merge-head CI #38678014735](https://github.com/rua-den/playroom/actions/runs/38678014735) PASS — 303 backend and 84 frontend PASS/3 skipped, Chromium E2E PASS. UI now allows verified `gemma4:31b-cloud` Free starter and retains paid `gpt-oss:120b-cloud` explicitly.
+
+A repository secret preflight [#38675986601](https://github.com/rua-den/playroom/actions/runs/38675986601) confirmed `gemma4:31b` is visible in this account's authenticated catalog, without invoking an inference. The original older paragraph here about the **only** fixed Ollama `gpt-oss:120b` profile is a historical finding and is superseded. **Still B4 NOT PASS**: model availability and static starter-plan eligibility do not verify remaining credits, billing source, actual narrator quality or a physical device. Consent and risk ceiling for a live completion remain separate.
+
