@@ -1,0 +1,52 @@
+name: B4 one-shot synthetic Ollama Gemma4 live smoke
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/b4-gemma4-live-once.yml"
+      - "backend/tests/live_ollama_gemma4_smoke.py"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/b4-gemma4-live-once.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: b4-2026-10-15-one-shot-synthetic-gemma4
+  cancel-in-progress: false
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate one-shot synthetic test script without any credential
+        run: python -m py_compile backend/tests/live_ollama_gemma4_smoke.py
+
+  one-shot-synthetic:
+    # The owner explicitly approved a synthetic Gemma4 Free-account trial.
+    # Restrict to the specific squash-merge title, push-to-main, first attempt.
+    # Never issue another completion on Actions "Re-run jobs".
+    if: >-
+      ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && startsWith(github.event.head_commit.message, 'ci(ollama): run one authorized synthetic Gemma4 live smoke') }}
+    needs: syntax
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    env:
+      OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+      B4_LIVE_APPROVAL: B4_SYNTHETIC_GEMMA4_2026_10_15
+      PYTHONPATH: backend
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: Install locked dependencies
+        run: uv sync --locked --extra test
+      - name: Check Free credit buckets and make at most ONE synthetic Gemma4 streaming completion
+        run: uv run --locked --extra test python backend/tests/live_ollama_gemma4_smoke.py
