@@ -31,7 +31,7 @@ jobs:
     # Restrict to the specific squash-merge title, push-to-main, first attempt.
     # Never issue another completion on Actions "Re-run jobs".
     if: >-
-      ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && github.event.head_commit.message == 'ci(ollama): run one authorized synthetic Gemma4 live smoke' }}
+      ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && startsWith(github.event.head_commit.message, 'ci(ollama): run one authorized synthetic Gemma4 live smoke') }}
     needs: syntax
     runs-on: ubuntu-latest
     timeout-minutes: 4
