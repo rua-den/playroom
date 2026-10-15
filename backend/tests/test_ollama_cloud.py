@@ -191,3 +191,30 @@ def test_ollama_profile_endpoint_explicit_free_model_and_no_spoof(monkeypatch, t
         denied = client.post("/api/provider/profiles/verify", json=bad, headers=origin)
         assert denied.status_code == 422
     assert len(received) == 1
+
+
+def test_free_starter_uses_unchanged_ollama_sse_narrator_wire_without_paid_fallback():
+    parsed = []
+    payload = (
+        b'data: {"choices":[{"delta":{"content":"{\\\"segments\\\":[{\\\"kind\\\":\\\"narration\\\",\\\"text\\\":\\\"Dem xuan.\\\"}]"}}]}\n\n'
+        b'data: {"choices":[{"delta":{"content":"}"}}]}\n\n'
+        b'data: {"usage":{"prompt_tokens":5,"completion_tokens":9,"total_tokens":14},"choices":[{"finish_reason":"stop"}]}\n\n'
+        b'data: [DONE]\n\n'
+    )
+    def route(request):
+        parsed.append(json.loads(request.content))
+        assert str(request.url) == f"{OLLAMA_CLOUD_ENDPOINT}/chat/completions"
+        return httpx.Response(200, content=payload, headers={"content-type": "text/event-stream"})
+    profile = _profile(model=OLLAMA_FREE_CLOUD_API_MODEL, model_label=OLLAMA_FREE_CLOUD_MODEL,
+                       credential_tier="free")
+    adapter = default_provider_factory(owner_id="owner", stage="narration", profile=profile,
+                                       credential="fixture-key", http_client=httpx.Client(
+                                           transport=httpx.MockTransport(route)))
+    events = list(adapter.generate_text({"messages": [{"role": "user", "content": "Hello"}],
+                                         "reserved_completion_tokens": 18}))
+    assert len(parsed) == 1
+    assert parsed[0]["model"] == "gemma4:31b"
+    assert "provider" not in parsed[0]
+    assert "".join(part for part in events if isinstance(part, str)).startswith('{"segments"')
+    assert isinstance(events[-1], ProviderResult)
+    assert events[-1].usage["total_tokens"] == 14
