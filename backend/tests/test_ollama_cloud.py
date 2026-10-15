@@ -6,7 +6,7 @@ import httpx2 as httpx
 import pytest
 
 from playroom.domain import ValidationError
-from playroom.model_profiles import OLLAMA_CLOUD_ENDPOINT, OLLAMA_CLOUD_MODEL, OLLAMA_CLOUD_API_MODEL, OllamaCloudVerifier
+from playroom.model_profiles import OLLAMA_CLOUD_ENDPOINT, OLLAMA_CLOUD_MODEL, OLLAMA_CLOUD_API_MODEL, OLLAMA_FREE_CLOUD_MODEL, OLLAMA_FREE_CLOUD_API_MODEL, OllamaCloudVerifier, validate_dispatch
 from playroom.provider import OllamaCloudAdapter, ProviderResult, default_provider_factory
 from playroom.wire_cost import provider_wire
 
@@ -87,3 +87,60 @@ def test_ollama_wire_omits_openrouter_fields():
 def test_ollama_factory_is_narrator_only():
     with pytest.raises(ValueError, match="narrator"):
         default_provider_factory(owner_id="o", stage="context", profile=_profile(), credential="secret")
+
+
+def test_gemma4_free_starter_verifier_uses_real_api_model_id_and_separate_evidence():
+    calls = []
+    def route(request):
+        calls.append(request)
+        return httpx.Response(200, json={"data": [{"id": "gemma4:31b"}, {"id": "gpt-oss:120b"}]})
+    verifier = OllamaCloudVerifier(http_client=httpx.Client(transport=httpx.MockTransport(route)))
+    free = verifier.verify("secret-fixture", OLLAMA_FREE_CLOUD_MODEL, OLLAMA_CLOUD_ENDPOINT)
+    assert free["provider"] == "ollama"
+    assert free["model_label"] == "gemma4:31b-cloud"
+    assert free["model"] == "gemma4:31b"
+    assert free["credential_tier"] == "free"
+    assert free["free_starter_eligible"] is True
+    assert free["starter_eligibility_source"].startswith("https://ollama.com/")
+    assert free["starter_eligibility_checked_at"]
+    assert free["account_free_credits_remaining"] is None
+    assert free["purchased_credit_exposure_unknown"] is True
+    assert free["context_limit"] == 262144
+    assert free["native_structured_output"] is False
+    assert free["pricing"] == {
+        "prompt": "0.00000014", "completion": "0.00000040",
+        "currency": "USD", "unit": "USD/token",
+    }
+    assert len(calls) == 1 and str(calls[0].url) == "https://ollama.com/v1/models"
+    validate_dispatch({**free, "secret_version": "credential-fixture"}, "free_only", None)
+    paid = verifier.verify("secret-fixture", OLLAMA_CLOUD_MODEL, OLLAMA_CLOUD_ENDPOINT)
+    assert paid["model"] == "gpt-oss:120b" and paid["credential_tier"] == "paid"
+    with pytest.raises(ValidationError, match="free_only"):
+        validate_dispatch({**paid, "secret_version": "credential-fixture"}, "free_only", None)
+
+
+def test_free_model_must_be_exact_catalog_id_not_display_alias():
+    verifier = OllamaCloudVerifier(http_client=httpx.Client(transport=httpx.MockTransport(
+        lambda _: httpx.Response(200, json={"data": [{"id": "gemma4:cloud"}, {"id": "gemma4"}]})
+    )))
+    with pytest.raises(ValidationError, match="unavailable"):
+        verifier.verify("secret", OLLAMA_FREE_CLOUD_MODEL, OLLAMA_CLOUD_ENDPOINT)
+
+
+@pytest.mark.parametrize("label", ["gemma4", "gemma4:cloud", "gemma4:31b", "unknown:cloud", "gpt-oss:120b"])
+def test_reject_unverified_model_labels(label):
+    verifier = OllamaCloudVerifier(http_client=httpx.Client(transport=httpx.MockTransport(
+        lambda _: httpx.Response(200, json={"data": [{"id": label}, {"id": OLLAMA_FREE_CLOUD_API_MODEL}]})
+    )))
+    with pytest.raises(ValidationError, match="unavailable"):
+        verifier.verify("secret", label, OLLAMA_CLOUD_ENDPOINT)
+
+
+def test_free_starter_pinned_endpoint_and_credentials_are_mandatory():
+    verifier = OllamaCloudVerifier(http_client=httpx.Client(transport=httpx.MockTransport(
+        lambda _: httpx.Response(200, json={"data": [{"id": OLLAMA_FREE_CLOUD_API_MODEL}]})
+    )))
+    with pytest.raises(ValidationError, match="pinned"):
+        verifier.verify("secret", OLLAMA_FREE_CLOUD_MODEL, "https://example.invalid/v1")
+    with pytest.raises(ValidationError, match="credential"):
+        verifier.verify("", OLLAMA_FREE_CLOUD_MODEL, OLLAMA_CLOUD_ENDPOINT)
