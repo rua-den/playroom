@@ -293,8 +293,43 @@ def browser_synthetic_chat() -> None:
                 expect(page.locator(".story-turn")).to_have_count(7)
                 assert len(campaign.calls) == 7
 
+                # Task 7A: import ONLY a chosen synthetic ChatGPT thread,
+                # with an alternate assistant branch excluded from the active path.
+                sample = {
+                    "id": "chatgpt-fixture-1", "title": "Nhập thử từ ChatGPT",
+                    "mapping": {
+                        "root": {"parent": None, "message": None},
+                        "u1": {"parent": "root", "message": {"id": "u1", "author": {"role": "user"}, "recipient": "all", "content": {"content_type": "text", "parts": ["*Lan mở hộp.*"]}}},
+                        "alt": {"parent": "u1", "message": {"id": "alt", "author": {"role": "assistant"}, "recipient": "all", "content": {"content_type": "text", "parts": ["ALT NOT SELECTED"]}}},
+                        "a1": {"parent": "u1", "message": {"id": "a1", "author": {"role": "assistant"}, "recipient": "all", "content": {"content_type": "text", "parts": ["Vy đứng cạnh quầy."]}}},
+                        "u2": {"parent": "a1", "message": {"id": "u2", "author": {"role": "user"}, "recipient": "all", "content": {"content_type": "text", "parts": ['"Vy, cậu đã thấy chưa?"']}}},
+                        "a2": {"parent": "u2", "message": {"id": "a2", "author": {"role": "assistant"}, "recipient": "all", "content": {"content_type": "text", "parts": ["Vy gật đầu. 💙"]}}},
+                    }, "current_node": "a2",
+                }
+                page.get_by_role("button", name="Nhập ChatGPT").click()
+                page.get_by_label("Tệp xuất từ ChatGPT").set_input_files({
+                    "name": "conversations.json", "mimeType": "application/json",
+                    "buffer": json.dumps([sample], ensure_ascii=False).encode("utf-8"),
+                })
+                expect(page.get_by_text("Đã đọc 1 cuộc hội thoại", exact=False)).to_be_visible()
+                page.get_by_role("button", name="Xem trước thread này").click()
+                expect(page.get_by_text("Tìm thấy", exact=False)).to_be_visible()
+                page.get_by_label("Tôi đã xem đúng thread", exact=False).check()
+                page.get_by_role("button", name="Nhập và mở chiến dịch").click()
+                expect(page.get_by_role("heading", name="Nhập thử từ ChatGPT")).to_be_visible(timeout=12000)
+                expect(page.locator(".story-turn")).to_have_count(2, timeout=12000)
+                campaigns_after_import = page.context.request.get(f"{origin}/api/campaigns").json()
+                imported = next(c for c in campaigns_after_import if c["title"] == "Nhập thử từ ChatGPT")
+                detail_imported = page.context.request.get(f"{origin}/api/campaigns/{imported['id']}").json()
+                imported_text = _project(page, origin, imported["id"], detail_imported["branch_id"])["transcript"]
+                assert len(imported_text) == 2
+                assert imported_text[0]["action_text"] == "*Lan mở hộp.*"
+                assert imported_text[-1]["narrative_text"] == "Vy gật đầu. 💙"
+                assert all("ALT NOT SELECTED" not in t["narrative_text"] for t in imported_text)
+                assert len(campaign.calls) == 7, "Import must never call the model"
+                _assert_mobile(page, 360)
                 browser.close()
-                print("B3 Chromium synthetic: seven committed turns, attributed NPC/version, reload/reconnect, 409/422/refresh recovery, IME and 360/390/430 mobile PASS")
+                print("B3 Chromium synthetic: seven committed turns, attributed NPC/version, reload/reconnect, 409/422/refresh recovery, IME and 360/390/430 mobile PASS; selected ChatGPT JSON import PASS")
         finally:
             server.should_exit = True
             thread.join(timeout=10)
