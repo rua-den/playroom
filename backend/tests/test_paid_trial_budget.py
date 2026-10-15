@@ -336,3 +336,31 @@ def test_gemma_starter_quality_context_never_bypasses_paid_authorization(tmp_pat
             mode="quality", policy="capped_paid", cap="1", execute=False,
         )
     assert db.execute("SELECT COUNT(*) FROM generation_jobs").fetchone()[0] == 0
+
+
+def test_starter_last_invocation_gate_rejects_revoked_grant_and_legacy_free_only_job(tmp_path):
+    _, db, owner, profile, cost = prepared(tmp_path, starter=True)
+    grant = approve(db, owner, profile, cost, per_send=str(cost))
+    job = reserve(db, owner, add_story(db, owner, 1), "starter-last-gate")
+    service = GenerationService(db, FakeProvider([]))
+    epoch = service._epoch()
+    key = f"{job['id']}:narration"
+    db.execute("UPDATE generation_jobs SET status='running' WHERE id=?", (job["id"],))
+    db.execute("UPDATE provider_attempts SET status='claimed',claim_epoch=? WHERE stage_key=?", (epoch, key))
+    revoke_trial_authorization(db, owner.id, grant["id"])
+    assert service._invocation_gate(job["id"], key) is False
+    assert db.execute("SELECT status FROM provider_attempts WHERE stage_key=?", (key,)).fetchone()["status"] == "claimed"
+    # Simulate a queued job created by an older Free-only version of Playroom.
+    # It must never slip past the last-moment provider gate after an upgrade.
+    db.execute("UPDATE generation_jobs SET policy='free_only' WHERE id=?", (job["id"],))
+    assert service._invocation_gate(job["id"], key) is False
+    assert db.execute("SELECT status FROM provider_attempts WHERE stage_key=?", (key,)).fetchone()["status"] == "claimed"
+
+
+def test_starter_purchased_credit_exposure_cannot_be_disabled_by_profile_flag(tmp_path):
+    _, db, owner, profile, _ = prepared(tmp_path, starter=True, policy="free_only")
+    from playroom.model_profiles import validate_dispatch
+    modified = {**profile, "purchased_credit_exposure_unknown": False,
+                "account_free_credits_remaining": "999", "free_starter_eligible": True}
+    with pytest.raises(ValidationError, match="purchased|billing|free_only"):
+        validate_dispatch(modified, "free_only", None)
