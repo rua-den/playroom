@@ -144,3 +144,50 @@ def test_free_starter_pinned_endpoint_and_credentials_are_mandatory():
         verifier.verify("secret", OLLAMA_FREE_CLOUD_MODEL, "https://example.invalid/v1")
     with pytest.raises(ValidationError, match="credential"):
         verifier.verify("", OLLAMA_FREE_CLOUD_MODEL, OLLAMA_CLOUD_ENDPOINT)
+
+
+def test_ollama_profile_endpoint_explicit_free_model_and_no_spoof(monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+    from playroom.app import create_app
+    from playroom.auth import create_owner
+    from playroom.db import connect, migrate
+    from playroom.api import configuration
+
+    file = tmp_path / "model-config.sqlite3"
+    connection = connect(file)
+    migrate(connection)
+    owner = create_owner(connection, "ollama-free@example.test", "local fixture password")
+    connection.close()
+    app = create_app(database_url=f"sqlite:///{file}", allowed_hosts={"testserver"},
+                     secure_cookies=False, credential_root=tmp_path / "secrets")
+    client = TestClient(app, base_url="https://testserver")
+    origin = {"origin": "https://testserver"}
+    assert client.post("/api/auth/login", json={
+        "email": owner.email, "password": "local fixture password",
+    }, headers=origin).status_code == 200
+    credential = client.post("/api/provider/credentials", json={"secret": "synthetic-token"},
+                             headers=origin).json()
+    received = []
+    class StubOllamaVerifier:
+        def verify(self, secret, model, endpoint, *, provider_tag=None):
+            received.append((secret, model, endpoint, provider_tag))
+            return {
+                "provider": "ollama", "endpoint": endpoint,
+                "model": OLLAMA_FREE_CLOUD_API_MODEL, "model_label": model,
+                "context_limit": 262144, "output_limit": 4096,
+                "credential_tier": "free", "pricing_verified": True,
+                "pricing": {"prompt": "0.00000014", "completion": "0.00000040"},
+                "free_starter_eligible": True,
+            }
+    monkeypatch.setattr(configuration, "OllamaCloudVerifier", StubOllamaVerifier)
+    request = {"provider": "ollama", "credential_id": credential["id"],
+               "model": OLLAMA_FREE_CLOUD_MODEL, "endpoint": OLLAMA_CLOUD_ENDPOINT}
+    good = client.post("/api/provider/profiles/verify", json=request, headers=origin)
+    assert good.status_code == 201, good.text
+    assert received == [("synthetic-token", OLLAMA_FREE_CLOUD_MODEL, OLLAMA_CLOUD_ENDPOINT, None)]
+    assert good.json()["credential_tier"] == "free"
+    for bad in [{**request, "endpoint": "https://example.invalid/v1"},
+                {**request, "provider_tag": "fake-route"}]:
+        denied = client.post("/api/provider/profiles/verify", json=bad, headers=origin)
+        assert denied.status_code == 422
+    assert len(received) == 1
