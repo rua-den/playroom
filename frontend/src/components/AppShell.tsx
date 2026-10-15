@@ -8,6 +8,7 @@ import { SceneEditor } from "./SceneEditor";
 import { SettingsPanel } from "./SettingsPanel";
 import { GenerationComposer } from "./GenerationComposer";
 import { ThemeSelector } from "./ThemeSelector";
+import { ChatGptImport } from "./ChatGptImport";
 
 const RECOVERABLE_JOB_STATUSES = new Set(["queued", "running", "cancelling", "interrupted", "candidate"]);
 export function recoverableJobCount(jobs: Array<{ status?: string }>) { return jobs.filter((job) => RECOVERABLE_JOB_STATUSES.has(job.status ?? "")).length; }
@@ -47,7 +48,7 @@ function CampaignForm({ onCreated, onCancel, ariaHidden = false }: { onCreated: 
 }
 
 export function AppShell({ owner, onLogout, notice }: AppShellProps) {
-  const [campaigns, setCampaigns] = useState<CampaignSummary[]>([]); const [selectedId, setSelectedId] = useState<string | null>(null); const [projection, setProjection] = useState<CampaignProjection | null>(null); const [loading, setLoading] = useState(true); const [error, setError] = useState<string | null>(null); const [demoInfo, setDemoInfo] = useState<import("../api/types").DemoInfo | null>(null); const [createOpen, setCreateOpen] = useState(false); const [drawerOpen, setDrawerOpen] = useState(false); const [detailsOpen, setDetailsOpen] = useState(false); const [settingsOpen, setSettingsOpen] = useState(false); const [editorTab, setEditorTab] = useState<"profiles" | "memory" | "scene">("profiles");
+  const [campaigns, setCampaigns] = useState<CampaignSummary[]>([]); const [selectedId, setSelectedId] = useState<string | null>(null); const [projection, setProjection] = useState<CampaignProjection | null>(null); const [loading, setLoading] = useState(true); const [error, setError] = useState<string | null>(null); const [demoInfo, setDemoInfo] = useState<import("../api/types").DemoInfo | null>(null); const [createOpen, setCreateOpen] = useState(false); const [importOpen, setImportOpen] = useState(false); const [drawerOpen, setDrawerOpen] = useState(false); const [detailsOpen, setDetailsOpen] = useState(false); const [settingsOpen, setSettingsOpen] = useState(false); const [editorTab, setEditorTab] = useState<"profiles" | "memory" | "scene">("profiles");
   const drawerTrigger = useRef<HTMLButtonElement>(null); const drawerClose = useRef<HTMLButtonElement>(null); const detailsTrigger = useRef<HTMLButtonElement>(null); const detailsReturn = useRef<HTMLButtonElement | null>(null); const detailsClose = useRef<HTMLButtonElement>(null); const settingsTrigger = useRef<HTMLButtonElement>(null); const settingsClose = useRef<HTMLButtonElement>(null);
   useEffect(() => { let active = true; setLoading(true); if (import.meta.env.PROD) api.getDemoInfo().then((info) => { if (active) setDemoInfo(info); }).catch(() => undefined); api.listCampaigns().then((items) => { if (active) { const safeItems = Array.isArray(items) ? items : []; setCampaigns(safeItems); if (safeItems[0]) setSelectedId(safeItems[0].id); } }).catch(() => { if (active) setError("Không thể tải danh sách chiến dịch."); }).finally(() => { if (active) setLoading(false); }); return () => { active = false; }; }, []);
   useEffect(() => { if (!selectedId) { setProjection(null); return; } let active = true; setProjection(null); setError(null); api.getCampaign(selectedId).then((detail) => api.getCampaignProjection(selectedId, detail.branch_id)).then((next) => { if (active) setProjection(next); }).catch(() => { if (active) setError("Không thể tải chiến dịch này."); }); return () => { active = false; }; }, [selectedId]);
@@ -93,7 +94,7 @@ export function AppShell({ owner, onLogout, notice }: AppShellProps) {
   const selected = useMemo(() => campaigns.find((item) => item.id === selectedId) ?? null, [campaigns, selectedId]);
   async function refreshProjection() { if (!selectedId) return undefined; try { const detail = await api.getCampaign(selectedId); const next = await api.getCampaignProjection(selectedId, detail.branch_id); setProjection(next); return next; } catch { setError("Không thể làm mới chiến dịch."); return undefined; } }
   const editorChanged = () => refreshProjection();
-  function created(campaign: CampaignSummary) { setCampaigns((current) => [campaign, ...current]); setCreateOpen(false); setSelectedId(campaign.id); }
+  function created(campaign: CampaignSummary) { setCampaigns((current) => [campaign, ...current]); setCreateOpen(false); setImportOpen(false); setSelectedId(campaign.id); }
   if (loading) return <main className="app-shell loading-screen" role="status">Đang tải phòng truyện…</main>;
   const contextPanel = projection && <ContextPanel projection={projection} editorTab={editorTab} setEditorTab={setEditorTab} editorChanged={editorChanged} />;
   return <main className="app-shell story-app">
@@ -103,6 +104,7 @@ export function AppShell({ owner, onLogout, notice }: AppShellProps) {
         <label htmlFor="campaign-select">Chiến dịch</label>
         <select id="campaign-select" aria-label="Chiến dịch hiện tại" value={selectedId ?? ""} onChange={(event) => setSelectedId(event.target.value)}>{campaigns.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select>
         <button type="button" className="quiet-button touch-target" onClick={() => setCreateOpen(true)}>Mới</button>
+        <button type="button" className="quiet-button touch-target" onClick={() => { setCreateOpen(false); setImportOpen(true); }}>Nhập ChatGPT</button>
         {campaigns.length > 1 && <div className="campaign-quick-list" aria-label="Chiến dịch gần đây">{campaigns.map((item) => <button type="button" className="campaign-item" key={`quick-${item.id}`} onClick={() => setSelectedId(item.id)} aria-pressed={item.id === selectedId}>{item.title}</button>)}</div>}
       </div>}
       <div className="account-menu">
@@ -113,7 +115,7 @@ export function AppShell({ owner, onLogout, notice }: AppShellProps) {
       </div>
     </header>
     {notice && <div role="alert" className="form-error shell-notice" aria-hidden={settingsOpen}> {notice}</div>}
-    {!campaigns.length && !createOpen && error ? <section className="empty-campaign" aria-hidden={settingsOpen}><h1>Chào mừng trở lại</h1><div role="alert" className="form-error">{error}</div></section> : !campaigns.length && !createOpen ? <section className="empty-campaign" aria-labelledby="empty-campaign-title" aria-hidden={settingsOpen}><p className="eyebrow">PHÒNG VIẾT RIÊNG</p><h1 id="empty-campaign-title">Chào mừng trở lại</h1><p>Thiết lập thế giới và persona trước khi mở chương đầu tiên.</p><button type="button" className="primary-button touch-target" onClick={() => setCreateOpen(true)}>Tạo chiến dịch đầu tiên</button></section> : createOpen ? <CampaignForm onCreated={created} onCancel={() => setCreateOpen(false)} ariaHidden={settingsOpen} /> : <>
+    {importOpen ? <ChatGptImport onImported={created} onCancel={() => setImportOpen(false)} /> : !campaigns.length && !createOpen && error ? <section className="empty-campaign" aria-hidden={settingsOpen}><h1>Chào mừng trở lại</h1><div role="alert" className="form-error">{error}</div></section> : !campaigns.length && !createOpen ? <section className="empty-campaign" aria-labelledby="empty-campaign-title" aria-hidden={settingsOpen}><p className="eyebrow">PHÒNG VIẾT RIÊNG</p><h1 id="empty-campaign-title">Chào mừng trở lại</h1><p>Thiết lập thế giới và persona trước khi mở chương đầu tiên.</p><button type="button" className="primary-button touch-target" onClick={() => setCreateOpen(true)}>Tạo chiến dịch đầu tiên</button><button type="button" className="quiet-button touch-target" onClick={() => setImportOpen(true)}>Nhập hội thoại ChatGPT</button></section> : createOpen ? <CampaignForm onCreated={created} onCancel={() => setCreateOpen(false)} ariaHidden={settingsOpen} /> : <>
       <div className="mobile-actions" aria-hidden={drawerOpen || detailsOpen || settingsOpen}>
         <button type="button" className="quiet-button touch-target mobile-campaign-trigger" onClick={() => setDrawerOpen(true)} ref={drawerTrigger}>Chiến dịch</button>
         <button type="button" className="quiet-button touch-target" onClick={(event) => openDetails(event.currentTarget)} ref={detailsTrigger}>AI đang nhớ gì</button>
