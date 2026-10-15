@@ -56,6 +56,17 @@ export const api = {
   listCampaigns: () => request<CampaignSummary[]>("/api/campaigns"),
   getCampaign: (campaignId: string) => request<CampaignDetail>(`/api/campaigns/${encodeURIComponent(campaignId)}`),
   createCampaign: (payload: CampaignCreatePayload) => request<{ id: string; title: string; branch_id: string; character_ids: string[] }>("/api/campaigns", { method: "POST", body: JSON.stringify(payload) }),
+  previewChatGptImport: (conversation: Record<string, unknown>) => request<{
+    conversation_id: string; title: string; turn_count: number; skipped_messages: number;
+    warnings: string[]; sample_first: { action_text: string; narrative_text: string };
+    sample_last: { action_text: string; narrative_text: string };
+  }>("/api/transfers/chatgpt/preview", { method: "POST", body: JSON.stringify({ conversation }) }),
+  importChatGpt: (conversation: Record<string, unknown>, config: {
+    title: string; world: { name: string }; persona: { name: string };
+    characters: Array<{ id: string; name: string; aliases: string[] }>;
+  }, importKey: string) => request<{
+    campaign_id: string; branch_id: string; turn_count: number; already_imported: boolean;
+  }>("/api/transfers/chatgpt/import", { method: "POST", body: JSON.stringify({ conversation, config, import_key: importKey }) }),
   getCampaignProjection: (campaignId: string, branchId: string) => request<CampaignProjection>(`/api/campaigns/${encodeURIComponent(campaignId)}/projection?branch_id=${encodeURIComponent(branchId)}`),
   getGenerationJobs: (campaignId: string, branchId: string, limit = 20) => request<{ jobs: GenerationJobSummary[] }>(`/api/campaigns/${encodeURIComponent(campaignId)}/generation-jobs?branch_id=${encodeURIComponent(branchId)}&limit=${limit}`),
   updateProfile: (campaignId: string, profileKey: string, payload: { branch_id: string; expected_state_version: number; data: Record<string, unknown> }) => request<ProfileUpdateResult>(`/api/campaigns/${encodeURIComponent(campaignId)}/profiles/${encodeURIComponent(profileKey)}`, { method: "PATCH", body: JSON.stringify(payload) }),
