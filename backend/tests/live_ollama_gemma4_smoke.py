@@ -9,14 +9,18 @@ import json
 import os
 import re
 import sys
+import tempfile
+from pathlib import Path
 import urllib.error
 import urllib.request
 from decimal import Decimal, InvalidOperation
 
 import httpx2 as httpx
 
-from playroom.model_profiles import OLLAMA_CLOUD_ENDPOINT, OLLAMA_FREE_CLOUD_MODEL, OllamaCloudVerifier
+from playroom.model_profiles import OLLAMA_CLOUD_ENDPOINT, OLLAMA_FREE_CLOUD_MODEL, OllamaCloudVerifier, persist_model_profile
 from playroom.provider import OllamaCloudAdapter, ProviderFailure, ProviderResult
+from playroom.db import connect, migrate
+from playroom.auth import create_owner
 from playroom.roleplay_segments import parse_narrator_payload
 
 
@@ -51,7 +55,50 @@ def _balance_status(secret: str) -> None:
     print("PRECHECK: conservative estimated USD <= 0.002; owner risk ceiling USD <= 0.01")
 
 
+
+def _persist_verified_profile(profile: dict) -> dict:
+    """Mirror Playroom's immutable model-profile DB step; never persist the key."""
+    with tempfile.TemporaryDirectory(prefix="playroom-b4-local-") as work:
+        conn = connect(Path(work) / "synthetic-trial.sqlite3")
+        try:
+            migrate(conn)
+            owner = create_owner(conn, "synthetic-smoke@example.test", "offline fixture password only")
+            pinned = persist_model_profile(conn, owner.id, profile)
+        finally:
+            conn.close()
+    assert pinned["id"] and pinned["version"] and pinned["profile_hash"]
+    return pinned
+
+
+def _dry_adapter_contract() -> int:
+    """Validate constructor, pinned profile and outgoing wire WITHOUT any API key."""
+    fixture = {
+        "provider": "ollama", "endpoint": OLLAMA_CLOUD_ENDPOINT,
+        "model": MODEL, "model_label": OLLAMA_FREE_CLOUD_MODEL,
+        "context_limit": 262144, "output_limit": 4096,
+        "credential_tier": "free", "pricing_verified": True,
+        "structured_output": False, "native_structured_output": False,
+        "supported_parameters": ["max_tokens"],
+        "pricing": {"prompt": "0.00000014", "completion": "0.00000040"},
+    }
+    pinned = _persist_verified_profile(fixture)
+    with httpx.Client(timeout=5.0) as client:
+        adapter = OllamaCloudAdapter("synthetic-not-a-secret", OLLAMA_CLOUD_ENDPOINT, profile=pinned, http_client=client)
+        payload = adapter._payload({
+            "model": MODEL, "reserved_completion_tokens": MAX_OUTPUT_TOKENS,
+            "messages": [{"role": "user", "content": "synthetic offline test"}],
+        })
+        assert payload["model"] == MODEL
+        assert payload["max_tokens"] == MAX_OUTPUT_TOKENS
+        assert payload["stream"] is True
+        assert "provider" not in payload
+    print("DRY ADAPTER CONTRACT: PASS; no network request, no provider credential")
+    return 0
+
+
 def main() -> int:
+    if os.environ.get("B4_DRY_RUN") == "1":
+        return _dry_adapter_contract()
     if os.environ.get("B4_LIVE_APPROVAL") != APPROVAL_MARKER:
         print("DENIED: B4 approval marker absent; no inference")
         return 2
@@ -65,14 +112,19 @@ def main() -> int:
     if ESTIMATED_RESERVATION_USD > OWNER_APPROVED_MAX_USD:
         print("DENIED: local reservation exceeds approved risk ceiling")
         return 2
+    stage = "balance_precheck"
     try:
         _balance_status(secret)
+        stage = "catalog_verification"
         with httpx.Client(timeout=httpx.Timeout(75.0, connect=15.0)) as client:
             verifier = OllamaCloudVerifier(http_client=client)
             profile = verifier.verify(secret, OLLAMA_FREE_CLOUD_MODEL, OLLAMA_CLOUD_ENDPOINT)
             if profile["model"] != MODEL or profile.get("free_starter_eligible") is not True:
                 print("DENIED: Gemma4 catalog or model identity not verified")
                 return 2
+            stage = "immutable_profile_persistence"
+            profile = _persist_verified_profile(profile)
+            stage = "narrator_wire"
 
             selected = {"npc-vy-synthetic": "vy-profile-v1"}
             system = (
@@ -115,6 +167,7 @@ def main() -> int:
                 return 2
             adapter = OllamaCloudAdapter(secret, OLLAMA_CLOUD_ENDPOINT, profile=profile, http_client=client)
             # EXACTLY ONE POST. Do not retry a timeout/429/partial response.
+            stage = "streaming_inference"
             events = list(adapter.generate_text({
                 "model": MODEL, "messages": messages,
                 "reserved_completion_tokens": MAX_OUTPUT_TOKENS,
@@ -172,7 +225,7 @@ def main() -> int:
             return 0
     except Exception as exc:
         # Do not expose secret-bearing requests/headers/URLs or raw responses.
-        print("LIVE RESULT: aborted without retry; exception class:", type(exc).__name__)
+        print("LIVE RESULT: aborted without retry; stage:", stage, "exception class:", type(exc).__name__)
         return 1
 
 
