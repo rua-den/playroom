@@ -8,6 +8,7 @@ on:
       - "pyproject.toml"
       - "uv.lock"
       - ".github/workflows/frontend-ci.yml"
+      - ".github/workflows/ollama-secret-preflight.yml"
       - "backend/tests/browser_e2e.py"
   push:
     branches: [main]
@@ -17,6 +18,7 @@ on:
       - "pyproject.toml"
       - "uv.lock"
       - ".github/workflows/frontend-ci.yml"
+      - ".github/workflows/ollama-secret-preflight.yml"
       - "backend/tests/browser_e2e.py"
 
 permissions:
