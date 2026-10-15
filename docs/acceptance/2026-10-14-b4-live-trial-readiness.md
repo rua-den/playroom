@@ -117,3 +117,12 @@ Acceptance: zero persona/scene/knowledge/duplicate-charge blockers, each quality
 
 A repository secret preflight [#38675986601](https://github.com/rua-den/playroom/actions/runs/38675986601) confirmed `gemma4:31b` is visible in this account's authenticated catalog, without invoking an inference. The original older paragraph here about the **only** fixed Ollama `gpt-oss:120b` profile is a historical finding and is superseded. **Still B4 NOT PASS**: model availability and static starter-plan eligibility do not verify remaining credits, billing source, actual narrator quality or a physical device. Consent and risk ceiling for a live completion remain separate.
 
+
+
+## Update — 2026-10-15 B4 credit-source preflight
+
+The previous "no balance endpoint" uncertainty has been superseded by Ollama's [official `GET /api/balance` documentation](https://docs.ollama.com/api/balance). Protected-main preflight [#38695103573](https://github.com/rua-den/playroom/actions/runs/38695103573) checked the owner's existing repository key **read-only** and recorded included credits POSITIVE / purchased credits ZERO (snapshot only, no exact amounts in logs); zero inference calls. It is not a guaranteed purchased-credit lockout.
+
+[Issue #17](https://github.com/rua-den/playroom/issues/17) now CLOSED by [PR #18](https://github.com/rua-den/playroom/pull/18): starter Gemma4 in `free_only` cannot be dispatched when purchased-credit billing exclusion isn't proven. Owner-approved `capped_paid` grants are mandatory even for starter-labelled Ollama profiles. Backend **309** and frontend **85 pass/3 skipped**, Chromium PASS on exact PR/main code. B4 *real* model/physical phone still NOT PASS and requires independent approval; see current [Issue #9](https://github.com/rua-den/playroom/issues/9).
+
+[PR #19](https://github.com/rua-den/playroom/pull/19) main verification [#38695103532](https://github.com/rua-den/playroom/actions/runs/38695103532): first Chromium browser job timed out waiting for turn count; failed-job rerun PASS on same SHA. Keep this flake visible for follow-up if it recurs.
