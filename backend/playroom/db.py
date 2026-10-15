@@ -46,6 +46,8 @@ def migrate(connection: sqlite3.Connection) -> None:
     # Additive paid-trial grant ledger: idempotent, owner-scoped and durable.
     paid_trials = Path(__file__).parent / "migrations" / "002_paid_trials.sql"
     connection.executescript(paid_trials.read_text(encoding="utf-8"))
+    source_imports = Path(__file__).parent / "migrations" / "003_chatgpt_import.sql"
+    connection.executescript(source_imports.read_text(encoding="utf-8"))
     columns = {row[1] for row in connection.execute("PRAGMA table_info(campaigns)")}
     if "archived_at" not in columns:
         connection.execute("ALTER TABLE campaigns ADD COLUMN archived_at TEXT")
