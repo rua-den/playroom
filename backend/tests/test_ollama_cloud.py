@@ -6,7 +6,7 @@ import httpx2 as httpx
 import pytest
 
 from playroom.domain import ValidationError
-from playroom.model_profiles import OLLAMA_CLOUD_ENDPOINT, OLLAMA_CLOUD_MODEL, OLLAMA_CLOUD_API_MODEL, OllamaCloudVerifier
+from playroom.model_profiles import OLLAMA_CLOUD_ENDPOINT, OLLAMA_CLOUD_MODEL, OLLAMA_CLOUD_API_MODEL, OLLAMA_FREE_CLOUD_MODEL, OLLAMA_FREE_CLOUD_API_MODEL, OllamaCloudVerifier, validate_dispatch
 from playroom.provider import OllamaCloudAdapter, ProviderResult, default_provider_factory
 from playroom.wire_cost import provider_wire
 
@@ -87,3 +87,134 @@ def test_ollama_wire_omits_openrouter_fields():
 def test_ollama_factory_is_narrator_only():
     with pytest.raises(ValueError, match="narrator"):
         default_provider_factory(owner_id="o", stage="context", profile=_profile(), credential="secret")
+
+
+def test_gemma4_free_starter_verifier_uses_real_api_model_id_and_separate_evidence():
+    calls = []
+    def route(request):
+        calls.append(request)
+        return httpx.Response(200, json={"data": [{"id": "gemma4:31b"}, {"id": "gpt-oss:120b"}]})
+    verifier = OllamaCloudVerifier(http_client=httpx.Client(transport=httpx.MockTransport(route)))
+    free = verifier.verify("secret-fixture", OLLAMA_FREE_CLOUD_MODEL, OLLAMA_CLOUD_ENDPOINT)
+    assert free["provider"] == "ollama"
+    assert free["model_label"] == "gemma4:31b-cloud"
+    assert free["model"] == "gemma4:31b"
+    assert free["credential_tier"] == "free"
+    assert free["free_starter_eligible"] is True
+    assert free["starter_eligibility_source"].startswith("https://ollama.com/")
+    assert free["starter_eligibility_checked_at"]
+    assert free["account_free_credits_remaining"] is None
+    assert free["purchased_credit_exposure_unknown"] is True
+    assert free["context_limit"] == 262144
+    assert free["native_structured_output"] is False
+    assert free["pricing"] == {
+        "prompt": "0.00000014", "completion": "0.00000040",
+        "currency": "USD", "unit": "USD/token",
+    }
+    assert len(calls) == 1 and str(calls[0].url) == "https://ollama.com/v1/models"
+    validate_dispatch({**free, "secret_version": "credential-fixture"}, "free_only", None)
+    paid = verifier.verify("secret-fixture", OLLAMA_CLOUD_MODEL, OLLAMA_CLOUD_ENDPOINT)
+    assert paid["model"] == "gpt-oss:120b" and paid["credential_tier"] == "paid"
+    with pytest.raises(ValidationError, match="free_only"):
+        validate_dispatch({**paid, "secret_version": "credential-fixture"}, "free_only", None)
+
+
+def test_free_model_must_be_exact_catalog_id_not_display_alias():
+    verifier = OllamaCloudVerifier(http_client=httpx.Client(transport=httpx.MockTransport(
+        lambda _: httpx.Response(200, json={"data": [{"id": "gemma4:cloud"}, {"id": "gemma4"}]})
+    )))
+    with pytest.raises(ValidationError, match="unavailable"):
+        verifier.verify("secret", OLLAMA_FREE_CLOUD_MODEL, OLLAMA_CLOUD_ENDPOINT)
+
+
+@pytest.mark.parametrize("label", ["gemma4", "gemma4:cloud", "gemma4:31b", "unknown:cloud", "gpt-oss:120b"])
+def test_reject_unverified_model_labels(label):
+    verifier = OllamaCloudVerifier(http_client=httpx.Client(transport=httpx.MockTransport(
+        lambda _: httpx.Response(200, json={"data": [{"id": label}, {"id": OLLAMA_FREE_CLOUD_API_MODEL}]})
+    )))
+    with pytest.raises(ValidationError, match="unavailable"):
+        verifier.verify("secret", label, OLLAMA_CLOUD_ENDPOINT)
+
+
+def test_free_starter_pinned_endpoint_and_credentials_are_mandatory():
+    verifier = OllamaCloudVerifier(http_client=httpx.Client(transport=httpx.MockTransport(
+        lambda _: httpx.Response(200, json={"data": [{"id": OLLAMA_FREE_CLOUD_API_MODEL}]})
+    )))
+    with pytest.raises(ValidationError, match="pinned"):
+        verifier.verify("secret", OLLAMA_FREE_CLOUD_MODEL, "https://example.invalid/v1")
+    with pytest.raises(ValidationError, match="credential"):
+        verifier.verify("", OLLAMA_FREE_CLOUD_MODEL, OLLAMA_CLOUD_ENDPOINT)
+
+
+def test_ollama_profile_endpoint_explicit_free_model_and_no_spoof(monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+    from playroom.app import create_app
+    from playroom.auth import create_owner
+    from playroom.db import connect, migrate
+    from playroom.api import configuration
+
+    file = tmp_path / "model-config.sqlite3"
+    connection = connect(file)
+    migrate(connection)
+    owner = create_owner(connection, "ollama-free@example.test", "local fixture password")
+    connection.close()
+    app = create_app(database_url=f"sqlite:///{file}", allowed_hosts={"testserver"},
+                     secure_cookies=False, credential_root=tmp_path / "secrets")
+    client = TestClient(app, base_url="https://testserver")
+    origin = {"origin": "https://testserver"}
+    assert client.post("/api/auth/login", json={
+        "email": owner.email, "password": "local fixture password",
+    }, headers=origin).status_code == 200
+    credential = client.post("/api/provider/credentials", json={"secret": "synthetic-token"},
+                             headers=origin).json()
+    received = []
+    class StubOllamaVerifier:
+        def verify(self, secret, model, endpoint, *, provider_tag=None):
+            received.append((secret, model, endpoint, provider_tag))
+            return {
+                "provider": "ollama", "endpoint": endpoint,
+                "model": OLLAMA_FREE_CLOUD_API_MODEL, "model_label": model,
+                "context_limit": 262144, "output_limit": 4096,
+                "credential_tier": "free", "pricing_verified": True,
+                "pricing": {"prompt": "0.00000014", "completion": "0.00000040"},
+                "free_starter_eligible": True,
+            }
+    monkeypatch.setattr(configuration, "OllamaCloudVerifier", StubOllamaVerifier)
+    request = {"provider": "ollama", "credential_id": credential["id"],
+               "model": OLLAMA_FREE_CLOUD_MODEL, "endpoint": OLLAMA_CLOUD_ENDPOINT}
+    good = client.post("/api/provider/profiles/verify", json=request, headers=origin)
+    assert good.status_code == 201, good.text
+    assert received == [("synthetic-token", OLLAMA_FREE_CLOUD_MODEL, OLLAMA_CLOUD_ENDPOINT, None)]
+    assert good.json()["credential_tier"] == "free"
+    for bad in [{**request, "endpoint": "https://example.invalid/v1"},
+                {**request, "provider_tag": "fake-route"}]:
+        denied = client.post("/api/provider/profiles/verify", json=bad, headers=origin)
+        assert denied.status_code == 422
+    assert len(received) == 1
+
+
+def test_free_starter_uses_unchanged_ollama_sse_narrator_wire_without_paid_fallback():
+    parsed = []
+    payload = (
+        b'data: {"choices":[{"delta":{"content":"{\\\"segments\\\":[{\\\"kind\\\":\\\"narration\\\",\\\"text\\\":\\\"Dem xuan.\\\"}]"}}]}\n\n'
+        b'data: {"choices":[{"delta":{"content":"}"}}]}\n\n'
+        b'data: {"usage":{"prompt_tokens":5,"completion_tokens":9,"total_tokens":14},"choices":[{"finish_reason":"stop"}]}\n\n'
+        b'data: [DONE]\n\n'
+    )
+    def route(request):
+        parsed.append(json.loads(request.content))
+        assert str(request.url) == f"{OLLAMA_CLOUD_ENDPOINT}/chat/completions"
+        return httpx.Response(200, content=payload, headers={"content-type": "text/event-stream"})
+    profile = _profile(model=OLLAMA_FREE_CLOUD_API_MODEL, model_label=OLLAMA_FREE_CLOUD_MODEL,
+                       credential_tier="free")
+    adapter = default_provider_factory(owner_id="owner", stage="narration", profile=profile,
+                                       credential="fixture-key", http_client=httpx.Client(
+                                           transport=httpx.MockTransport(route)))
+    events = list(adapter.generate_text({"messages": [{"role": "user", "content": "Hello"}],
+                                         "reserved_completion_tokens": 18}))
+    assert len(parsed) == 1
+    assert parsed[0]["model"] == "gemma4:31b"
+    assert "provider" not in parsed[0]
+    assert "".join(part for part in events if isinstance(part, str)).startswith('{"segments"')
+    assert isinstance(events[-1], ProviderResult)
+    assert events[-1].usage["total_tokens"] == 14
