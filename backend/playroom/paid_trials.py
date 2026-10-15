@@ -71,8 +71,9 @@ def create_trial_authorization(
         if (binding.get("id"), binding.get("version")) != (profile_id, profile_version):
             raise ValidationError("Trial narrator must match the selected immutable profile")
         profile = get_model_profile(connection, owner_id, profile_id, profile_version)
-        if profile.get("credential_tier") != "paid" or not profile.get("pricing_verified"):
-            raise ValidationError("Trial narrator must be a verified paid profile")
+        from .model_profiles import requires_spending_authorization
+        if not profile.get("pricing_verified") or not requires_spending_authorization(profile):
+            raise ValidationError("Trial narrator must be a verified charge-exposed profile")
         configured_cap = _usd(str(settings.get("confirmed_usd_cap") or ""), "Configured per-send budget")
         if per_send > configured_cap:
             raise ValidationError("Trial per-send cap exceeds persisted owner spending limit")
