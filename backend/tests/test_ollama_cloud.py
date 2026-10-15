@@ -112,7 +112,10 @@ def test_gemma4_free_starter_verifier_uses_real_api_model_id_and_separate_eviden
         "currency": "USD", "unit": "USD/token",
     }
     assert len(calls) == 1 and str(calls[0].url) == "https://ollama.com/v1/models"
-    validate_dispatch({**free, "secret_version": "credential-fixture"}, "free_only", None)
+    # Starter-model eligibility is not a provider-verified guarantee that
+    # purchased credits cannot be drawn after plan credits run out.
+    with pytest.raises(ValidationError, match="purchased|billing|free_only"):
+        validate_dispatch({**free, "secret_version": "credential-fixture"}, "free_only", None)
     paid = verifier.verify("secret-fixture", OLLAMA_CLOUD_MODEL, OLLAMA_CLOUD_ENDPOINT)
     assert paid["model"] == "gpt-oss:120b" and paid["credential_tier"] == "paid"
     with pytest.raises(ValidationError, match="free_only"):
