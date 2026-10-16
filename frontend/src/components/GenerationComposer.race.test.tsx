@@ -111,7 +111,7 @@ describe("GenerationComposer stale async generation races", () => {
     const intervals: Array<() => void> = [];
     vi.spyOn(window, "setInterval").mockImplementation((callback) => {
       intervals.push(callback as () => void);
-      return 1;
+      return setTimeout(() => undefined, 0);
     });
     const commitRefresh = deferred<CampaignProjection>();
     let refreshSettled = false;
@@ -157,7 +157,7 @@ describe("GenerationComposer stale async generation races", () => {
     const intervals: Array<() => void> = [];
     vi.spyOn(window, "setInterval").mockImplementation((callback) => {
       intervals.push(callback as () => void);
-      return 1;
+      return setTimeout(() => undefined, 0);
     });
     const commitRefresh = deferred<CampaignProjection>();
     const onCommitted = vi.fn(() => commitRefresh.promise);
