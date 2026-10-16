@@ -468,14 +468,15 @@ export function GenerationComposer({
       !["queued", "running", "cancelling"].includes(job.status)
     )
       return;
+    const effectEpoch = operationEpoch.current;
     const timer = window.setInterval(() => {
-      const pollEpoch = operationEpoch.current;
-      if (polling.current === pollEpoch) return;
-      polling.current = pollEpoch;
+      if (!isCurrentEpoch(effectEpoch)) return;
+      if (polling.current === effectEpoch) return;
+      polling.current = effectEpoch;
       void refresh(identity)
         .catch(() => undefined)
         .finally(() => {
-          if (polling.current === pollEpoch) polling.current = null;
+          if (polling.current === effectEpoch) polling.current = null;
         });
     }, 1200);
     return () => window.clearInterval(timer);
