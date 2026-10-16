@@ -108,9 +108,9 @@ describe("GenerationComposer stale async generation races", () => {
       .mockResolvedValueOnce(response(candidate as GenerationJob))
       .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
-    let poll!: () => void;
+    const intervals: Array<() => void> = [];
     vi.spyOn(window, "setInterval").mockImplementation((callback) => {
-      poll = callback as () => void;
+      intervals.push(callback as () => void);
       return 1;
     });
     const commitRefresh = deferred<CampaignProjection>();
@@ -126,8 +126,9 @@ describe("GenerationComposer stale async generation races", () => {
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledTimes(2);
       expect(input).toHaveValue("Same action");
-      expect(poll).toEqual(expect.any(Function));
+      expect(intervals.length).toBeGreaterThan(0);
     });
+    const poll = intervals[intervals.length - 1];
     const user = userEvent.setup();
     await user.clear(input);
     await user.type(input, "Same action");
@@ -140,6 +141,46 @@ describe("GenerationComposer stale async generation races", () => {
     await waitFor(() => expect(refreshSettled).toBe(true));
     expect(input).toHaveValue("Same action");
     expect(localStorage.getItem(durableKey)).toBeNull();
+  });
+
+  it("keeps an exactly retyped fresh-send action through its first candidate poll", async () => {
+    const current = projection("campaign-1", "branch-1", "checkpoint-1");
+    const preview = { id: "preview-fresh", campaign_id: "campaign-1", branch_id: "branch-1", checkpoint_id: "checkpoint-1", action: "Same action", status: "ready", profile_id: "profile-1" };
+    const queued = { id: "job-fresh", campaign_id: "campaign-1", branch_id: "branch-1", checkpoint_id: "checkpoint-1", status: "queued", action: "Same action", draft: "", offset: 0, offset_unit: "utf16_code_units" };
+    const candidate = { ...queued, status: "candidate", draft: "complete" };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(preview), { status: 201 }))
+      .mockResolvedValueOnce(response(queued as GenerationJob))
+      .mockResolvedValueOnce(response(candidate as GenerationJob))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const intervals: Array<() => void> = [];
+    vi.spyOn(window, "setInterval").mockImplementation((callback) => {
+      intervals.push(callback as () => void);
+      return 1;
+    });
+    const commitRefresh = deferred<CampaignProjection>();
+    const onCommitted = vi.fn(() => commitRefresh.promise);
+    render(<GenerationComposer ownerId="owner-1" projection={current} profileId="profile-1" onCommitted={onCommitted} />);
+    const input = await screen.findByLabelText("Hành động tiếp theo");
+    const user = userEvent.setup();
+    await user.type(input, "Same action");
+    await user.click(screen.getByRole("button", { name: "Gửi" }));
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(intervals.length).toBeGreaterThan(0);
+    });
+    await user.clear(input);
+    await user.type(input, "Same action");
+    expect(input).toHaveValue("Same action");
+
+    await act(async () => { for (const callback of intervals) callback(); });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
+    await waitFor(() => expect(onCommitted).toHaveBeenCalledOnce());
+    await act(async () => { commitRefresh.resolve(current); });
+    await waitFor(() => expect(input).toHaveValue("Same action"));
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/generate"))).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/commit"))).toHaveLength(1);
   });
 
   it("ignores a deferred old recovery after switching campaign while preserving both durable identities", async () => {
