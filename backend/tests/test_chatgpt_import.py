@@ -174,6 +174,23 @@ def test_review_http_is_authenticated_owner_scoped_strict_and_stale_safe(tmp_pat
     assert client.post(f"/api/transfers/chatgpt/{imported['campaign_id']}/review", json={**base, "checkpoint_id": str(uuid4())}, headers=headers).status_code == 409
     malformed = client.post(f"/api/transfers/chatgpt/{imported['campaign_id']}/review", json=[], headers=headers)
     assert malformed.status_code == 422
+    for invalid_review in (
+        {**base["review"], "persona": 1},
+        {**base["review"], "persona": "true"},
+        {**base["review"], "unexpected": True},
+    ):
+        response = client.post(
+            f"/api/transfers/chatgpt/{imported['campaign_id']}/review",
+            json={**base, "review": invalid_review},
+            headers=headers,
+        )
+        assert response.status_code == 422
+    extra_outer = client.post(
+        f"/api/transfers/chatgpt/{imported['campaign_id']}/review",
+        json={**base, "unexpected": True},
+        headers=headers,
+    )
+    assert extra_outer.status_code == 422
     assert client.post(f"/api/transfers/chatgpt/{imported['campaign_id']}/review", json=base, headers=headers).status_code == 200
     other_client = TestClient(app, base_url="https://testserver")
     assert other_client.post("/api/auth/login", json={"email": other.email, "password": "synthetic strong password"}, headers=headers).status_code == 200
@@ -207,10 +224,15 @@ def test_preexisting_queued_import_job_fails_closed_during_recovery(tmp_path):
     job = service.generate(owner.id, campaign.id, campaign.initial_branch_id, "*Lan waits.*", idempotency_key=str(uuid4()), expected_checkpoint_id=head.checkpoint_id, execute=False)
     db.execute("INSERT INTO chatgpt_import_sources(id,owner_id,campaign_id,branch_id,import_key,payload_hash,source_conversation_id,selected_source_json,paired_turns,warnings_json,imported_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)", (str(uuid4()), owner.id, campaign.id, campaign.initial_branch_id, str(uuid4()), str(uuid4()), "legacy", "{}", 1, "[]", "2026-01-01T00:00:00Z"))
     db.execute("DELETE FROM import_review_checkpoints WHERE campaign_id=?", (campaign.id,))
-    recovered = GenerationService(db, service.provider).run(job["id"])
+    db.close()
+    reopened = connect(path); migrate(reopened)
+    recovered_service = GenerationService(reopened, service.provider)
+    recovered_service.recover_after_restart()
+    recovered = recovered_service.run_queued()[0]
     assert recovered["status"] == "failed"
     assert not service.provider.calls
-    assert db.execute("SELECT COUNT(*) FROM generation_branch_guards WHERE branch_id=?", (campaign.initial_branch_id,)).fetchone()[0] == 0
+    assert reopened.execute("SELECT COUNT(*) FROM generation_branch_guards WHERE branch_id=?", (campaign.initial_branch_id,)).fetchone()[0] == 0
+    reopened.close()
 
 
 def test_invocation_gate_rechecks_import_review_inside_dispatch_transaction(tmp_path):
