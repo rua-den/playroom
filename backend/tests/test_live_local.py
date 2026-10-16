@@ -223,4 +223,3 @@ def test_fresh_live_start_does_not_invoke_provider_factory(tmp_path, monkeypatch
 def test_production_factory_keeps_secure_cookie_default(tmp_path):
     app = create_app(database_url=str(tmp_path / "production.sqlite3"))
     assert app.state.secure_cookies is True
-
