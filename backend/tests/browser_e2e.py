@@ -19,7 +19,7 @@ from urllib.request import urlopen
 from uuid import uuid4
 
 import uvicorn
-from playwright.sync_api import expect, sync_playwright
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, expect, sync_playwright
 
 from playroom.demo import create_demo_app
 from playroom.provider import ProviderResult
@@ -75,6 +75,19 @@ def _project(page, origin: str, campaign_id: str, branch_id: str) -> dict:
     )
     assert response.ok, f"Projection HTTP {response.status}"
     return response.json()
+
+
+def _print_generation_diagnostics(page, origin: str, campaign_id: str, branch_id: str, campaign_calls: list[dict]) -> None:
+    """Print redacted state only when a browser gate assertion fails."""
+    try:
+        projection = _project(page, origin, campaign_id, branch_id)
+        jobs = [{"id": job.get("id"), "status": job.get("status"), "attempt_counts_by_stage": job.get("attempt_counts_by_stage")} for job in projection.get("jobs", [])]
+    except Exception as cause:
+        jobs = [{"diagnostic_error": type(cause).__name__}]
+    alerts = page.locator("[role=alert]").all_text_contents()
+    compose = page.locator("#generation-action")
+    send = page.get_by_role("button", name="Gửi", exact=True)
+    print(json.dumps({"jobs": jobs, "alerts": alerts, "composer": {"visible": compose.is_visible(), "value_length": len(compose.input_value())}, "send_disabled": send.is_disabled(), "provider_call_count": len(campaign_calls)}, ensure_ascii=False))
 
 
 def _assert_mobile(page, width: int) -> None:
@@ -189,8 +202,7 @@ def browser_synthetic_chat() -> None:
                 expect(page.get_by_role("alert")).to_be_visible(timeout=10000)
                 expect(page.get_by_role("textbox", name="Hành động tiếp theo")).to_have_value(draft)
                 assert len(campaign.calls) == 3
-                page.get_by_role("button", name="Gửi", exact=True).click()
-                expect(page.locator(".story-turn")).to_have_count(4, timeout=25000)
+                _send_and_wait(page, draft, 4)
                 assert len(campaign.calls) == 4
 
                 # A rejected stale checkpoint (409) followed by by-key 404
@@ -202,7 +214,11 @@ def browser_synthetic_chat() -> None:
                 fifth = "Cậu thấy lượt bóng vừa rồi chứ?"
                 compose.fill(fifth)
                 page.get_by_role("button", name="Gửi", exact=True).click()
-                expect(page.get_by_text("Tác vụ đã thay đổi.", exact=False)).to_be_visible(timeout=12000)
+                try:
+                    expect(page.get_by_text("Tác vụ đã thay đổi.", exact=False)).to_be_visible(timeout=12000)
+                except (PlaywrightTimeoutError, AssertionError):
+                    _print_generation_diagnostics(page, origin, campaign_id, branch_id, campaign.calls)
+                    raise
                 expect(compose).to_have_value(fifth)
                 assert len(campaign.calls) == 4
                 _send_and_wait(page, fifth, 5)

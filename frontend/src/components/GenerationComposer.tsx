@@ -23,10 +23,25 @@ export function GenerationComposer({ ownerId, projection, profileId, onCommitted
   const [action, setAction] = useState(""); const [identity, setIdentity] = useState<GenerationIdentity | null>(null); const [preview, setPreview] = useState<ContextPreview | null>(null); const [job, setJob] = useState<GenerationJob | null>(null); const [draft, setDraft] = useState(""); const [error, setError] = useState<string | null>(null); const [economyRetry, setEconomyRetry] = useState(false); const [pending, setPending] = useState(false);
 
   const polling = useRef(false);
+  const operationEpoch = useRef(0);
+  const scopeKeyRef = useRef("");
+  const actionRevision = useRef(0);
   const commitPromises = useRef(new Map<string, Promise<CampaignProjection | void>>());
   const committedJobs = useRef(new Set<string>());
+  const committedRefreshes = useRef(new Set<string>());
   const draftDirty = useRef(false);
+  const latestAction = useRef(action);
+  latestAction.current = action;
   const storageKey = generationIdentityKey(ownerId, projection.campaign.id, projection.branch.id);
+  const scopeKey = `${ownerId}:${projection.campaign.id}:${projection.branch.id}`;
+  if (scopeKeyRef.current !== scopeKey) { scopeKeyRef.current = scopeKey; operationEpoch.current += 1; }
+  useEffect(() => {
+    const field = document.getElementById("generation-action");
+    if (!field) return;
+    const markEdited = () => { actionRevision.current += 1; };
+    field.addEventListener("input", markEdited);
+    return () => field.removeEventListener("input", markEdited);
+  }, []);
   const persist = (value: GenerationIdentity) => { setIdentity(value); localStorage.setItem(storageKey, JSON.stringify(value)); };
   // A definitive pre-reservation rejection may release only its own durable
   // identity. Never clear a newer request or an ambiguous provider dispatch.
@@ -43,21 +58,26 @@ export function GenerationComposer({ ownerId, projection, profileId, onCommitted
     if (committedJobs.current.has(candidate.id)) return Promise.resolve();
     const existing = commitPromises.current.get(candidate.id);
     if (existing) return existing;
+    const candidateEpoch = operationEpoch.current;
+    const actionAtStart = latestAction.current;
+    const actionRevisionAtStart = actionRevision.current;
     const operation = (async () => {
       try {
         await api.commitGeneration(candidate.id);
         const refreshed = await onCommitted();
         if (!refreshed) throw new Error("Committed turn has not been refreshed in the campaign");
+        if (operationEpoch.current !== candidateEpoch) return refreshed;
         committedJobs.current.add(candidate.id);
         localStorage.removeItem(storageKey);
         setIdentity(null);
         setJob(null);
         setDraft("");
-        setAction("");
+        if (actionRevision.current === actionRevisionAtStart && latestAction.current === actionAtStart) setAction("");
         setError(null);
         return refreshed;
       } catch (cause) {
         committedJobs.current.delete(candidate.id);
+        if (operationEpoch.current !== candidateEpoch) throw cause;
         persist({ ...saved, jobId: candidate.id });
         throw cause;
       }
@@ -67,47 +87,63 @@ export function GenerationComposer({ ownerId, projection, profileId, onCommitted
     return operation;
   }
   async function refresh(saved: GenerationIdentity) {
+    const refreshEpoch = operationEpoch.current;
+    const actionAtStart = latestAction.current;
+    const actionRevisionAtStart = actionRevision.current;
     const found = saved.jobId ? await api.getGenerationJob(saved.jobId) : await api.getGenerationByKey(saved.branchId, saved.idempotencyKey);
+    if (operationEpoch.current !== refreshEpoch) return found;
     if (found.status === "candidate" || found.status === "committed") draftDirty.current = false;
     let nextIdentity = { ...saved, jobId: found.id, eventCursor: saved.eventCursor ?? 0 };
     if (found.status === "committed") {
+      if (operationEpoch.current !== refreshEpoch) return found;
+      if (committedRefreshes.current.has(found.id)) return found;
+      committedRefreshes.current.add(found.id);
       setPending(true);
+      let refreshedSuccessfully = false;
       try {
         const refreshed = await onCommitted();
+        if (operationEpoch.current !== refreshEpoch) return found;
         if (!refreshed) throw new Error("Committed turn has not been refreshed in the campaign");
         localStorage.removeItem(storageKey);
         setIdentity(null);
         setJob(null);
         setDraft("");
-        setAction("");
-      } finally { setPending(false); }
+        if (actionRevision.current === actionRevisionAtStart && latestAction.current === actionAtStart) setAction("");
+        refreshedSuccessfully = true;
+      } finally {
+        if (operationEpoch.current === refreshEpoch) setPending(false);
+        if (!refreshedSuccessfully) committedRefreshes.current.delete(found.id);
+      }
       return found;
     }
     if (found.status === "candidate") {
+      if (operationEpoch.current !== refreshEpoch) return found;
       setJob(found);
       if (!draftDirty.current) setDraft(found.draft ?? "");
-      if (saved.action) setAction(saved.action); else if (found.action) setAction(found.action);
+      if (actionRevision.current === actionRevisionAtStart && (saved.action || found.action)) setAction(saved.action || found.action || "");
       setPending(true);
-      try { await commitCandidate(found, nextIdentity); } catch { setError("Không thể lưu lượt kể hoàn chỉnh; hãy thử Gửi lại."); } finally { setPending(false); }
+      try { await commitCandidate(found, nextIdentity); } catch { if (operationEpoch.current === refreshEpoch) setError("Không thể lưu lượt kể hoàn chỉnh; hãy thử Gửi lại."); } finally { if (operationEpoch.current === refreshEpoch) setPending(false); }
       return found;
     }
     if (["queued", "running", "cancelling"].includes(found.status)) {
+      if (operationEpoch.current !== refreshEpoch) return found;
       const stream = await api.getGenerationEvents(found.id, nextIdentity.eventCursor); const lastId = stream.events.reduce((max, event) => Math.max(max, event.id), nextIdentity.eventCursor ?? 0); nextIdentity = { ...nextIdentity, eventCursor: lastId };
+      if (operationEpoch.current !== refreshEpoch) return found;
       const merged = mergeGenerationEvents(found.draft ?? "", found.offset ?? 0, stream.events);
-      if (merged.gap) { const authoritative = await api.getGenerationContent(found.id); setJob(authoritative); if (!draftDirty.current) setDraft(authoritative.draft ?? ""); } else if (merged.text !== (found.draft ?? "")) { setJob({ ...found, draft: merged.text, offset: merged.offset }); if (!draftDirty.current) setDraft(merged.text); } else { setJob(found); if (!draftDirty.current) setDraft(found.draft ?? ""); }
+      if (merged.gap) { const authoritative = await api.getGenerationContent(found.id); if (operationEpoch.current !== refreshEpoch) return found; setJob(authoritative); if (!draftDirty.current) setDraft(authoritative.draft ?? ""); } else if (merged.text !== (found.draft ?? "")) { setJob({ ...found, draft: merged.text, offset: merged.offset }); if (!draftDirty.current) setDraft(merged.text); } else { setJob(found); if (!draftDirty.current) setDraft(found.draft ?? ""); }
     } else { setJob(found); if (!draftDirty.current) setDraft(found.draft ?? ""); }
-    if (saved.action) setAction(saved.action); else if (found.action) setAction(found.action);
+    if (actionRevision.current === actionRevisionAtStart && (saved.action || found.action)) setAction(saved.action || found.action || "");
     if (isQuotaFailure(found.failure)) { setEconomyRetry(true); setError("Nhà cung cấp đã từ chối lượt này. Có thể thử Economy + Free only, nhưng chỉ model được xác minh Free mới được gửi."); }
     if (nextIdentity.idempotencyKey) persist(nextIdentity); else setIdentity(nextIdentity);
     return found;
   }
   useEffect(() => {
     const raw = localStorage.getItem(storageKey);
-    if (raw) { try { const saved = JSON.parse(raw) as GenerationIdentity; setIdentity(saved); if (saved.action) setAction(saved.action); void refresh(saved).catch(() => setError("Chưa thể khôi phục lượt kể; thông tin khôi phục vẫn được giữ lại.")); } catch { setError("Không thể đọc thông tin khôi phục lượt kể."); } return; }
+    if (raw) { try { const saved = JSON.parse(raw) as GenerationIdentity; setIdentity(saved); if (saved.action) setAction(saved.action); const recoveryEpoch = operationEpoch.current; void refresh(saved).catch(() => { if (operationEpoch.current === recoveryEpoch) setError("Chưa thể khôi phục lượt kể; thông tin khôi phục vẫn được giữ lại."); }); } catch { setError("Không thể đọc thông tin khôi phục lượt kể."); } return; }
     const recoverableJob = projection.jobs.find((candidate) => ["queued", "running", "cancelling", "interrupted", "candidate"].includes(candidate.status));
     if (recoverableJob) {
       const saved: GenerationIdentity = { ownerId, campaignId: projection.campaign.id, branchId: projection.branch.id, checkpointId: recoverableJob.checkpoint_id, action: recoverableJob.action ?? "", previewId: "", idempotencyKey: "", jobId: recoverableJob.id, eventCursor: 0, mode: recoverableJob.mode ?? undefined };
-      void refresh(saved).catch(() => setError("Chưa thể khôi phục lượt kể; thông tin chiến dịch vẫn được giữ lại."));
+      const recoveryEpoch = operationEpoch.current; void refresh(saved).catch(() => { if (operationEpoch.current === recoveryEpoch) setError("Chưa thể khôi phục lượt kể; thông tin chiến dịch vẫn được giữ lại."); });
     }
   }, [storageKey]);
   useEffect(() => { if (!identity?.jobId || !job || !["queued", "running", "cancelling"].includes(job.status)) return; const timer = window.setInterval(() => { if (polling.current) return; polling.current = true; void refresh(identity).catch(() => undefined).finally(() => { polling.current = false; }); }, 1200); return () => window.clearInterval(timer); }, [identity?.jobId, identity?.eventCursor, job?.status, storageKey]);
@@ -160,9 +196,9 @@ export function GenerationComposer({ ownerId, projection, profileId, onCommitted
       }
     }
     const complete = { ...saved, jobId: nextJob.id }; persist(complete); draftDirty.current = false; setJob(nextJob); setDraft(nextJob.draft ?? "");
-    if (nextJob.status === "candidate") { try { await commitCandidate(nextJob, complete); } catch (cause) { setError("Không thể lưu lượt kể hoàn chỉnh; hãy thử Gửi lại."); throw cause; } }
+    if (nextJob.status === "candidate") { const candidateEpoch = operationEpoch.current; try { await commitCandidate(nextJob, complete); } catch (cause) { if (operationEpoch.current === candidateEpoch) setError("Không thể lưu lượt kể hoàn chỉnh; hãy thử Gửi lại."); throw cause; } }
   }
-  async function submit(event: FormEvent) { event.preventDefault(); if ((event.nativeEvent as SubmitEvent & { isComposing?: boolean }).isComposing || !action.trim() || pending) return; if (identity?.idempotencyKey && !job) { setError("Lượt kể trước chưa khôi phục được; hãy thử tải lại thay vì tạo lượt mới."); return; } if (job && ["queued", "running", "cancelling"].includes(job.status)) { setError("Lượt kể hiện tại vẫn đang chạy; hãy chờ hoặc hủy trước khi bắt đầu lượt mới."); return; } const retryMode = economyRetry ? "economy" as const : undefined; setPending(true); setError(null); setEconomyRetry(false); try { if (job?.status === "candidate") { await commitCandidate(job, identity ?? { ownerId, campaignId: projection.campaign.id, branchId: projection.branch.id, checkpointId: job.checkpoint_id, action, previewId: "", idempotencyKey: "" }); return; } await startGeneration(projection, retryMode); } catch (cause) { const quota = isQuota(cause); setEconomyRetry(quota); setError(cause instanceof ApiError && cause.status === 409 ? "Tác vụ đã thay đổi. Hãy tải lại chiến dịch." : cause instanceof Error && /Chưa cấu hình/.test(cause.message) ? cause.message : quota ? "Không thể gửi vì quota hoặc khả năng model không đáp ứng. Chỉ model được xác minh Free mới được gửi với Free only; bản nháp được giữ." : "Không thể bắt đầu lượt kể chuyện; bản nháp vẫn được giữ."); } finally { setPending(false); } }
+  async function submit(event: FormEvent) { event.preventDefault(); if ((event.nativeEvent as SubmitEvent & { isComposing?: boolean }).isComposing || !action.trim() || pending) return; if (identity?.idempotencyKey && !job) { setError("Lượt kể trước chưa khôi phục được; hãy thử tải lại thay vì tạo lượt mới."); return; } if (job && ["queued", "running", "cancelling"].includes(job.status)) { setError("Lượt kể hiện tại vẫn đang chạy; hãy chờ hoặc hủy trước khi bắt đầu lượt mới."); return; } operationEpoch.current += 1; const submitEpoch = operationEpoch.current; const retryMode = economyRetry ? "economy" as const : undefined; setPending(true); setError(null); setEconomyRetry(false); try { if (job?.status === "candidate") { await commitCandidate(job, identity ?? { ownerId, campaignId: projection.campaign.id, branchId: projection.branch.id, checkpointId: job.checkpoint_id, action, previewId: "", idempotencyKey: "" }); return; } await startGeneration(projection, retryMode); } catch (cause) { if (operationEpoch.current !== submitEpoch) return; const quota = isQuota(cause); setEconomyRetry(quota); setError(cause instanceof ApiError && cause.status === 409 ? "Tác vụ đã thay đổi. Hãy tải lại chiến dịch." : cause instanceof Error && /Chưa cấu hình/.test(cause.message) ? cause.message : quota ? "Không thể gửi vì quota hoặc khả năng model không đáp ứng. Chỉ model được xác minh Free mới được gửi với Free only; bản nháp được giữ." : "Không thể bắt đầu lượt kể chuyện; bản nháp vẫn được giữ."); } finally { if (operationEpoch.current === submitEpoch) setPending(false); } }
   const stages = job?.cost_ledger?.stages ?? {};
   const active = Boolean(job && ["queued", "running", "cancelling"].includes(job.status));
   const busy = pending || active;

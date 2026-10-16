@@ -1,5 +1,6 @@
 import userEvent from "@testing-library/user-event";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { StrictMode } from "react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GenerationComposer, mergeGenerationEvents, generationIdentityKey } from "./GenerationComposer";
 import type { CampaignProjection } from "../api/types";
@@ -51,6 +52,32 @@ describe("GenerationComposer", () => {
     await waitFor(() => expect(onCommitted).toHaveBeenCalledOnce());
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(localStorage.getItem(generationIdentityKey("owner-1", "campaign-1", "branch-1"))).toBeNull();
+  });
+
+  it("refreshes a recovered committed job only once under StrictMode", async () => {
+    localStorage.setItem(generationIdentityKey("owner-1", "campaign-1", "branch-1"), JSON.stringify({ ownerId: "owner-1", campaignId: "campaign-1", branchId: "branch-1", checkpointId: "checkpoint-1", action: "ÄÃ£ xong", previewId: "preview-old", idempotencyKey: "key-old", jobId: "job-committed" }));
+    const committed = { id: "job-committed", campaign_id: "campaign-1", branch_id: "branch-1", checkpoint_id: "checkpoint-1", status: "committed", draft: "", offset: 0, offset_unit: "utf16_code_units" };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(committed))));
+    const onCommitted = vi.fn().mockResolvedValue(projection);
+    render(<StrictMode><GenerationComposer ownerId="owner-1" projection={projection} profileId="profile-1" onCommitted={onCommitted} /></StrictMode>);
+    await waitFor(() => expect(onCommitted).toHaveBeenCalledTimes(1));
+  });
+
+  it("preserves a new action typed while an old candidate is committing", async () => {
+    localStorage.setItem(generationIdentityKey("owner-1", "campaign-1", "branch-1"), JSON.stringify({ ownerId: "owner-1", campaignId: "campaign-1", branchId: "branch-1", checkpointId: "checkpoint-1", action: "Lượt cũ", previewId: "preview-old", idempotencyKey: "key-old", jobId: "job-candidate" }));
+    const candidate = { id: "job-candidate", campaign_id: "campaign-1", branch_id: "branch-1", checkpoint_id: "checkpoint-1", status: "candidate", action: "Lượt cũ", draft: "Kết quả", offset: 7, offset_unit: "utf16_code_units" };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(candidate))).mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }))));
+    let resolveRefresh: (value: CampaignProjection) => void = () => undefined;
+    const onCommitted = vi.fn().mockReturnValue(new Promise<CampaignProjection>((resolve) => { resolveRefresh = resolve; }));
+    render(<GenerationComposer ownerId="owner-1" projection={projection} profileId="profile-1" onCommitted={onCommitted} />);
+    const actionField = await screen.findByLabelText("Hành động tiếp theo");
+    await waitFor(() => expect(actionField).toHaveValue("Lượt cũ"));
+    await userEvent.setup().clear(actionField);
+    await userEvent.setup().type(actionField, "Lượt cũ");
+    await waitFor(() => expect(onCommitted).toHaveBeenCalledTimes(1));
+    await act(async () => { resolveRefresh(projection); });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Gửi" })).toBeEnabled());
+    expect(actionField).toHaveValue("Lượt cũ");
   });
 
   it("does not commit the same candidate again after delayed recovery", async () => {

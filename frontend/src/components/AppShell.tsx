@@ -49,9 +49,12 @@ function CampaignForm({ onCreated, onCancel, ariaHidden = false }: { onCreated: 
 
 export function AppShell({ owner, onLogout, notice }: AppShellProps) {
   const [campaigns, setCampaigns] = useState<CampaignSummary[]>([]); const [selectedId, setSelectedId] = useState<string | null>(null); const [projection, setProjection] = useState<CampaignProjection | null>(null); const [loading, setLoading] = useState(true); const [error, setError] = useState<string | null>(null); const [demoInfo, setDemoInfo] = useState<import("../api/types").DemoInfo | null>(null); const [createOpen, setCreateOpen] = useState(false); const [importOpen, setImportOpen] = useState(false); const [drawerOpen, setDrawerOpen] = useState(false); const [detailsOpen, setDetailsOpen] = useState(false); const [settingsOpen, setSettingsOpen] = useState(false); const [editorTab, setEditorTab] = useState<"profiles" | "memory" | "scene">("profiles");
+  const selectedIdRef = useRef<string | null>(selectedId); selectedIdRef.current = selectedId;
+  const projectionRequest = useRef(0);
   const drawerTrigger = useRef<HTMLButtonElement>(null); const drawerClose = useRef<HTMLButtonElement>(null); const detailsTrigger = useRef<HTMLButtonElement>(null); const detailsReturn = useRef<HTMLButtonElement | null>(null); const detailsClose = useRef<HTMLButtonElement>(null); const settingsTrigger = useRef<HTMLButtonElement>(null); const settingsClose = useRef<HTMLButtonElement>(null);
   useEffect(() => { let active = true; setLoading(true); if (import.meta.env.PROD) api.getDemoInfo().then((info) => { if (active) setDemoInfo(info); }).catch(() => undefined); api.listCampaigns().then((items) => { if (active) { const safeItems = Array.isArray(items) ? items : []; setCampaigns(safeItems); if (safeItems[0]) setSelectedId(safeItems[0].id); } }).catch(() => { if (active) setError("Không thể tải danh sách chiến dịch."); }).finally(() => { if (active) setLoading(false); }); return () => { active = false; }; }, []);
   useEffect(() => { if (!selectedId) { setProjection(null); return; } let active = true; setProjection(null); setError(null); api.getCampaign(selectedId).then((detail) => api.getCampaignProjection(selectedId, detail.branch_id)).then((next) => { if (active) setProjection(next); }).catch(() => { if (active) setError("Không thể tải chiến dịch này."); }); return () => { active = false; }; }, [selectedId]);
+  useEffect(() => { projectionRequest.current += 1; }, [selectedId]);
   function closeDrawer() { setDrawerOpen(false); drawerTrigger.current?.focus(); }
   function openDetails(trigger: HTMLButtonElement) { detailsReturn.current = trigger; setDetailsOpen(true); }
   function closeDetails() { setDetailsOpen(false); (detailsReturn.current ?? detailsTrigger.current)?.focus(); }
@@ -92,7 +95,7 @@ export function AppShell({ owner, onLogout, notice }: AppShellProps) {
     document.addEventListener("keydown", handleKey); return () => document.removeEventListener("keydown", handleKey);
   }, [settingsOpen]);
   const selected = useMemo(() => campaigns.find((item) => item.id === selectedId) ?? null, [campaigns, selectedId]);
-  async function refreshProjection() { if (!selectedId) return undefined; try { const detail = await api.getCampaign(selectedId); const next = await api.getCampaignProjection(selectedId, detail.branch_id); setProjection(next); return next; } catch { setError("Không thể làm mới chiến dịch."); return undefined; } }
+  async function refreshProjection() { if (!selectedId) return undefined; const targetId = selectedId; const requestId = ++projectionRequest.current; try { const detail = await api.getCampaign(targetId); const next = await api.getCampaignProjection(targetId, detail.branch_id); if (projectionRequest.current !== requestId || selectedIdRef.current !== targetId) return undefined; setProjection(next); return next; } catch { if (projectionRequest.current === requestId && selectedIdRef.current === targetId) setError("Không thể làm mới chiến dịch."); return undefined; } }
   const editorChanged = () => refreshProjection();
   function created(campaign: CampaignSummary) { setCampaigns((current) => [campaign, ...current]); setCreateOpen(false); setImportOpen(false); setSelectedId(campaign.id); }
   if (loading) return <main className="app-shell loading-screen" role="status">Đang tải phòng truyện…</main>;
