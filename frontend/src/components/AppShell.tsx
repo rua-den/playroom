@@ -138,16 +138,57 @@ function ImportReviewPanel({ projection, onApproved }: { projection: CampaignPro
   const [review, setReview] = useState({ persona: false, npc_voice_presence: false, canon_known_by_narrator_only: false, missing_history: false });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => { setReview({ persona: false, npc_voice_presence: false, canon_known_by_narrator_only: false, missing_history: false }); }, [projection.branch.checkpoint_id]);
+  const [memory, setMemory] = useState<import("../api/types").MemoryVersion[] | null>(null);
+  const [scene, setScene] = useState<import("../api/types").SceneResponse | null>(null);
+  const [snapshotError, setSnapshotError] = useState<string | null>(null);
+  const [snapshotLoading, setSnapshotLoading] = useState(true);
+  const checkpointId = projection.branch.checkpoint_id;
+  const checkpointRef = useRef(checkpointId);
+  useEffect(() => { checkpointRef.current = checkpointId; setReview({ persona: false, npc_voice_presence: false, canon_known_by_narrator_only: false, missing_history: false }); setBusy(false); setError(null); }, [checkpointId]);
+  useEffect(() => {
+    let active = true;
+    setSnapshotLoading(true); setSnapshotError(null); setMemory(null); setScene(null);
+    Promise.all([api.listMemory(projection.campaign.id, projection.branch.id), api.getScene(projection.campaign.id, projection.branch.id)])
+      .then(([nextMemory, nextScene]) => { if (active) { setMemory(nextMemory); setScene(nextScene); setSnapshotLoading(false); } })
+      .catch(() => { if (active) { setSnapshotError("Không thể tải đầy đủ ký ức và cảnh hiện tại. Hãy tải lại rồi kiểm tra lại trước khi duyệt."); setSnapshotLoading(false); } });
+    return () => { active = false; };
+  }, [projection.campaign.id, projection.branch.id, checkpointId]);
   const submit = async () => {
+    if (snapshotLoading || snapshotError || !memory || !scene) return;
+    const targetCheckpointId = checkpointId;
+    if (checkpointRef.current !== targetCheckpointId) return;
     setBusy(true); setError(null);
     try {
       await api.approveChatGptImport(projection.campaign.id, { branch_id: projection.branch.id, checkpoint_id: projection.branch.checkpoint_id, review });
-      onApproved();
+      if (checkpointRef.current === targetCheckpointId) onApproved();
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Không thể lưu duyệt checkpoint."); }
     finally { setBusy(false); }
   };
-  return <section className="create-card" aria-labelledby="import-review-title"><p className="eyebrow">CẦN DUYỆT RIÊNG</p><h2 id="import-review-title">Kiểm tra checkpoint nhập</h2><p>Import chỉ lưu lịch sử tạm thời. Hãy xem Hồ sơ, Cảnh và Ký ức trước khi mở Send.</p>{error && <div role="alert" className="form-error">{error}</div>}<label><input type="checkbox" checked={review.persona} onChange={(event) => setReview((current) => ({ ...current, persona: event.target.checked }))} /> Persona đúng.</label><label><input type="checkbox" checked={review.npc_voice_presence} onChange={(event) => setReview((current) => ({ ...current, npc_voice_presence: event.target.checked }))} /> NPC voice/presence đã xem.</label><label><input type="checkbox" checked={review.canon_known_by_narrator_only} onChange={(event) => setReview((current) => ({ ...current, canon_known_by_narrator_only: event.target.checked }))} /> Canon known_by/narrator_only đã xem.</label><label><input type="checkbox" checked={review.missing_history} onChange={(event) => setReview((current) => ({ ...current, missing_history: event.target.checked }))} /> Lịch sử thiếu đã được ghi nhận.</label><button className="primary-button touch-target" type="button" disabled={busy || Object.values(review).some((value) => !value)} onClick={() => void submit()}>{busy ? "Đang lưu…" : "Duyệt checkpoint và bật Send"}</button></section>;
+  const profiles = Object.entries(projection.profiles);
+  const persona = projection.profiles.persona?.data;
+  const characters = profiles.filter(([key, value]) => key.startsWith("character:") || value.kind === "character");
+  const sceneItems = Object.values(scene?.scenes ?? {});
+  const warnings = projection.import_review?.warnings ?? [];
+  const ready = !snapshotLoading && !snapshotError && !!memory && !!scene;
+  return <section className="create-card import-review-panel" aria-labelledby="import-review-title">
+    <p className="eyebrow">CẦN DUYỆT RIÊNG</p><h2 id="import-review-title">Kiểm tra checkpoint nhập</h2>
+    <p>Chiến dịch đang khóa Send. Hãy kiểm tra dữ liệu thực tế bên dưới, sửa trong Hồ sơ / Cảnh / Ký ức nếu cần, rồi xác nhận từng mục.</p>
+    {snapshotLoading && <p role="status">Đang tải snapshot hồ sơ, ký ức và cảnh…</p>}
+    {snapshotError && <div role="alert" className="form-error">{snapshotError}</div>}
+    {error && <div role="alert" className="form-error">{error}</div>}
+    <div className="import-review-snapshot" aria-label="Snapshot checkpoint nhập">
+      <section><h3>Persona người chơi</h3><p><strong>{String(persona?.name ?? "Chưa có tên")}</strong></p><p>{String(persona?.description ?? "Chưa có mô tả.")}</p></section>
+      <section><h3>NPC, giọng nói và hiện diện</h3>{characters.length ? characters.map(([key, profile]) => <p key={key}><strong>{String(profile.data.name ?? key)}</strong>: {String(profile.data.description ?? "Chưa có mô tả giọng nói.")}</p>) : <p>Chưa có NPC trong hồ sơ.</p>}</section>
+      <section><h3>Cảnh hiện tại</h3>{sceneItems.length ? sceneItems.map((item) => <p key={item.id}><strong>{String(item.name ?? "Cảnh chưa đặt tên")}</strong>{item.id === scene?.focus_scene_id ? " · đang diễn ra" : ""} · Có mặt: {item.present_ids.length ? item.present_ids.map((id) => String(projection.profiles[`character:${id}`]?.data.name ?? id)).join(", ") : "chưa ghi nhận"}</p>) : <p>Chưa có cảnh nào được ghi nhận.</p>}</section>
+      <section><h3>Ký ức và phạm vi biết</h3>{memory?.length ? memory.map((item) => <p key={`${item.memory_id}-${item.version}`}><strong>{item.knowledge_scope === "narrator_only" ? "Chỉ người kể" : item.knowledge_scope === "known_by" ? `Nhân vật biết: ${(item.known_by ?? []).join(", ") || "chưa ghi rõ"}` : "Công khai"}</strong>: {item.text}</p>) : <p>Chưa có ký ức đã lưu.</p>}</section>
+      <section><h3>Lịch sử và nguồn</h3><p>{projection.import_review?.paired_turns ?? projection.transcript.length} cặp lượt đã nhập. Mã hội thoại nguồn: {projection.import_review?.source_conversation_id ?? "không có"}.</p><p>{projection.import_review?.skipped_messages == null ? "Chưa xác định số tin nhắn bị bỏ qua." : `${projection.import_review.skipped_messages} tin nhắn bị bỏ qua vì không đủ dữ liệu nhập.`}</p>{warnings.length ? warnings.map((warning) => <p className="form-error" key={warning}>{warning}</p>) : projection.import_review?.skipped_messages ? <p className="form-error">Có khoảng trống trong lịch sử; hãy xem kỹ trước khi coi nội dung là canon.</p> : <p>Không có cảnh báo nguồn.</p>}</section>
+    </div>
+    <label><input type="checkbox" checked={review.persona} disabled={!ready} onChange={(event) => setReview((current) => ({ ...current, persona: event.target.checked }))} /> Persona đúng và người chơi vẫn tự quyết định lời nói, hành động.</label>
+    <label><input type="checkbox" checked={review.npc_voice_presence} disabled={!ready} onChange={(event) => setReview((current) => ({ ...current, npc_voice_presence: event.target.checked }))} /> Hồ sơ, giọng nói và nhân vật đang có mặt đã đúng.</label>
+    <label><input type="checkbox" checked={review.canon_known_by_narrator_only} disabled={!ready} onChange={(event) => setReview((current) => ({ ...current, canon_known_by_narrator_only: event.target.checked }))} /> Ai biết từng thông tin và bí mật của người kể đã được kiểm tra.</label>
+    <label><input type="checkbox" checked={review.missing_history} disabled={!ready} onChange={(event) => setReview((current) => ({ ...current, missing_history: event.target.checked }))} /> Lịch sử thiếu và cảnh báo nguồn đã được ghi nhận, không coi là canon.</label>
+    <button className="primary-button touch-target" type="button" disabled={!ready || busy || Object.values(review).some((value) => !value)} onClick={() => void submit()}>{busy ? "Đang lưu…" : "Duyệt checkpoint và bật Send"}</button>
+  </section>;
 }
 
 function ProfileBlock({ title, profile }: { title: string; profile?: { data: Record<string, unknown> } }) { if (!profile) return null; const name = typeof profile.data.name === "string" ? profile.data.name : title; const description = typeof profile.data.description === "string" ? profile.data.description : ""; return <section className="profile-block"><h3>{name}</h3>{description && <p>{description}</p>}</section>; }

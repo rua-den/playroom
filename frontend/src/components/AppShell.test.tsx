@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { recoverableJobCount, recoverableJobSummary } from "./AppShell";
 import { AppShell } from "./AppShell";
@@ -62,5 +62,29 @@ describe("recoverable job summary", () => {
     expect(screen.getByRole("dialog", { name: "Hồ sơ và ký ức" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Đóng hồ sơ và ký ức" }));
     expect(contextTrigger).toHaveFocus();
+  });
+
+  it("locks imported campaigns until all four review acknowledgements are explicitly approved", async () => {
+    const projection = { campaign: { id: "imported", title: "Imported", created_at: "2026-01-01", updated_at: "2026-01-01", archived_at: null }, branch: { id: "branch", name: "main", state_version: 1, checkpoint_id: "checkpoint" }, checkpoint: { id: "checkpoint", state_version: 1, parent_checkpoint_id: null, selected_revision_ids: [], retrieval_policy: "auto" }, profiles: {}, scene: null, transcript: [], jobs: [], import_review: { required: true, approved: false, review: {} } };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([{ id: "imported", title: "Imported", created_at: "2026-01-01", updated_at: "2026-01-01", archived_at: null }]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "imported", title: "Imported", branch_id: "branch", state_version: 1, checkpoint_id: "checkpoint", profiles: {} }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(projection), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ focus_scene_id: null, scenes: {} }), { status: 200 }))
+      .mockResolvedValue(new Response(JSON.stringify(projection), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AppShell owner={{ id: "owner", email: "owner@example.test" }} onLogout={() => undefined} />);
+    expect(await screen.findByRole("heading", { name: "Kiểm tra checkpoint nhập" })).toBeInTheDocument();
+    expect(screen.queryByTestId("generation-composer")).not.toBeInTheDocument();
+    const checks = screen.getByRole("heading", { name: "Kiểm tra checkpoint nhập" }).closest("section")?.querySelectorAll("input[type=checkbox]");
+    expect(checks).toHaveLength(4);
+    expect(screen.getByRole("button", { name: /Duyệt checkpoint/ })).toBeDisabled();
+    await waitFor(() => expect(checks?.[0]).toBeEnabled());
+    for (const checkbox of Array.from(checks ?? [])) await userEvent.setup().click(checkbox);
+    const approve = screen.getByRole("button", { name: /Duyệt checkpoint/ });
+    expect(approve).toBeEnabled();
+    await userEvent.setup().click(approve);
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/api/transfers/chatgpt/imported/review"), expect.objectContaining({ method: "POST" }));
   });
 });

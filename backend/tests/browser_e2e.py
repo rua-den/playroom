@@ -9,6 +9,7 @@ and cannot invoke real providers. No user data or API credentials are used.
 from __future__ import annotations
 
 import json
+import re
 import socket
 import tempfile
 import threading
@@ -318,6 +319,8 @@ def browser_synthetic_chat() -> None:
                 page.get_by_role("button", name="Nhập và mở chiến dịch").click()
                 expect(page.get_by_role("heading", name="Nhập thử từ ChatGPT")).to_be_visible(timeout=12000)
                 expect(page.locator(".story-turn")).to_have_count(2, timeout=12000)
+                # Imported history remains locked until the separate review checkpoint.
+                expect(page.locator(".generation-composer")).to_have_count(0)
                 campaigns_after_import = page.context.request.get(f"{origin}/api/campaigns").json()
                 imported = next(c for c in campaigns_after_import if c["title"] == "Nhập thử từ ChatGPT")
                 detail_imported = page.context.request.get(f"{origin}/api/campaigns/{imported['id']}").json()
@@ -327,6 +330,25 @@ def browser_synthetic_chat() -> None:
                 assert imported_text[-1]["narrative_text"] == "Vy gật đầu. 💙"
                 assert all("ALT NOT SELECTED" not in t["narrative_text"] for t in imported_text)
                 assert len(campaign.calls) == 7, "Import must never call the model"
+                locked_projection = _project(page, origin, imported["id"], detail_imported["branch_id"])
+                crafted = page.context.request.post(f"{origin}/api/campaigns/{imported['id']}/generate", data=json.dumps({
+                    "branch_id": detail_imported["branch_id"], "action": "*Lan quan sát.*",
+                    "idempotency_key": str(uuid4()), "checkpoint_id": locked_projection["branch"]["checkpoint_id"],
+                }), headers={"content-type": "application/json", "origin": origin})
+                assert crafted.status == 409
+                page.reload(wait_until="domcontentloaded")
+                expect(page.locator(".generation-composer")).to_have_count(0)
+                checks = page.locator(".create-card input[type=checkbox]")
+                expect(checks).to_have_count(4)
+                for index in range(4):
+                    checks.nth(index).check()
+                page.get_by_role("button", name=re.compile("Duy.*Send")).click()
+                expect(page.locator(".generation-composer")).to_be_visible(timeout=12000)
+                _send_and_wait(page, "*Lan mỉm cười.*", 3)
+                expect(page.locator(".story-turn")).to_have_count(3, timeout=12000)
+                assert len(campaign.calls) == 8
+                page.reload(wait_until="domcontentloaded")
+                expect(page.locator(".generation-composer")).to_be_visible(timeout=12000)
                 _assert_mobile(page, 360)
                 browser.close()
                 print("B3 Chromium synthetic: seven committed turns, attributed NPC/version, reload/reconnect, 409/422/refresh recovery, IME and 360/390/430 mobile PASS; selected ChatGPT JSON import PASS")
