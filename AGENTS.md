@@ -1,5 +1,13 @@
 # Playroom agent instructions
 
+## Current execution checkpoint — 2026-10-16 (owner-requested Codex transfer)
+
+**Read `docs/handoff/2026-10-16-codex-astra-transfer.md` FIRST** after fetching latest `origin/main`, then the prior 2026-10-15 handoff and issue/PR history. This supersedes stale “Issue #14 next” and “no live Ollama inference has occurred” language in older docs. **Codex Astra remains the production coding owner.** A real **synthetic Gemma4 three-turn adapter trial already PASSed**, but *full authenticated app/physical phone/deployment B4 has NOT passed*.
+
+Priority: PR #28 for ChatGPT selected JSON import has a green exact PR CI yet a **blocking reviewed-canon checkpoint gap**: do not merge or allow a newly imported campaign's Send until persistent server-side owner review/approval exists and regression tests prove it; see PR review comment. Then [Issue #27](https://github.com/rua-den/playroom/issues/27) ZIP/long import, separate [Issue #29](https://github.com/rua-den/playroom/issues/29) legacy bundle import, [Issue #20](https://github.com/rua-den/playroom/issues/20) browser reconnect flake and [Issue #9](https://github.com/rua-den/playroom/issues/9) full B4 acceptance.
+
+Owner approved **up to USD 5 of synthetic provider-testing financial risk**, but no private Henn transcript export, automatic spend of the entire cap, bypass of persisted trial grants, physical-device access or VPS/Caddy deployment. Follow explicit provider/owner safeguards and separate deployment authorization; never commit secrets or private story files.
+
 ## Active owner routing — Codex Astra (2026-10-15)
 
 The owner explicitly directed on 2026-10-15: **sync all Playroom work to `main`, transfer execution to Codex, and use Astra as the coding model**. This owner instruction **supersedes the historical Luna-only implementation rule below for Playroom work executed in Codex**, starting with [Issue #14](https://github.com/rua-den/playroom/issues/14) and any follow-up development authorized by the owner. Codex **Astra owns production implementation and tests**; reviewing/orchestrating agents may plan, document, check tests, and review PRs. Do not stall or ask to substitute Luna merely because the older default mentions Luna. The single-issue Luna exceptions below are historical, not limits on this newer owner-approved routing.
