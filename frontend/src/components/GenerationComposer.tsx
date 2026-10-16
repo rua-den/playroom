@@ -109,7 +109,7 @@ export function GenerationComposer({
   const [economyRetry, setEconomyRetry] = useState(false);
   const [pending, setPending] = useState(false);
 
-  const polling = useRef(false);
+  const polling = useRef<number | null>(null);
   const operationEpoch = useRef(0);
   const scopeKeyRef = useRef("");
   const actionRevision = useRef(0);
@@ -118,9 +118,17 @@ export function GenerationComposer({
   );
   const committedJobs = useRef(new Set<string>());
   const committedRefreshes = useRef(new Set<string>());
+  const recoveryBaselines = useRef(
+    new Map<string, { action: string; actionRevision: number }>(),
+  );
+  const recoveryStarted = useRef(new Set<string>());
+  const unmountTimer = useRef<number | null>(null);
+  const mountedRef = useRef(false);
   const draftDirty = useRef(false);
   const latestAction = useRef(action);
   latestAction.current = action;
+  const isCurrentEpoch = (epoch: number) =>
+    mountedRef.current && operationEpoch.current === epoch;
   const storageKey = generationIdentityKey(
     ownerId,
     projection.campaign.id,
@@ -134,6 +142,13 @@ export function GenerationComposer({
   const persist = (value: GenerationIdentity) => {
     setIdentity(value);
     localStorage.setItem(storageKey, JSON.stringify(value));
+  };
+  const persistInitial = (
+    value: GenerationIdentity,
+    context: GenerationOperationContext,
+  ) => {
+    localStorage.setItem(context.storageKey, JSON.stringify(value));
+    if (isCurrentEpoch(context.epoch)) setIdentity(value);
   };
   const persistContext = (
     value: GenerationIdentity,
@@ -151,12 +166,16 @@ export function GenerationComposer({
       return;
     }
     localStorage.setItem(context.storageKey, JSON.stringify(value));
-    if (operationEpoch.current === context.epoch) setIdentity(value);
+    if (isCurrentEpoch(context.epoch)) setIdentity(value);
   };
   // A definitive pre-reservation rejection may release only its own durable
   // identity. Never clear a newer request or an ambiguous provider dispatch.
-  const releaseRejected = (saved: GenerationIdentity) => {
-    const raw = localStorage.getItem(storageKey);
+  const releaseRejected = (
+    saved: GenerationIdentity,
+    context?: GenerationOperationContext,
+  ) => {
+    const targetKey = context?.storageKey ?? storageKey;
+    const raw = localStorage.getItem(targetKey);
     if (!raw) return;
     try {
       if (
@@ -167,10 +186,11 @@ export function GenerationComposer({
     } catch {
       return;
     }
-    localStorage.removeItem(storageKey);
-    setIdentity((current) =>
-      current?.idempotencyKey === saved.idempotencyKey ? null : current,
-    );
+    localStorage.removeItem(targetKey);
+    if (!context || isCurrentEpoch(context.epoch))
+      setIdentity((current) =>
+        current?.idempotencyKey === saved.idempotencyKey ? null : current,
+      );
   };
   function commitCandidate(
     candidate: GenerationJob,
@@ -197,7 +217,7 @@ export function GenerationComposer({
           throw new Error(
             "Committed turn has not been refreshed in the campaign",
           );
-        if (operationEpoch.current !== candidateEpoch) return refreshed;
+        if (!isCurrentEpoch(candidateEpoch)) return refreshed;
         committedJobs.current.add(candidate.id);
         const raw = localStorage.getItem(operationContext.storageKey);
         if (raw) {
@@ -223,7 +243,6 @@ export function GenerationComposer({
         return refreshed;
       } catch (cause) {
         committedJobs.current.delete(candidate.id);
-        if (operationEpoch.current !== candidateEpoch) throw cause;
         persistContext({ ...saved, jobId: candidate.id }, operationContext);
         throw cause;
       }
@@ -239,12 +258,24 @@ export function GenerationComposer({
   }
   async function refresh(saved: GenerationIdentity) {
     const refreshEpoch = operationEpoch.current;
-    const actionAtStart = saved.action || latestAction.current;
-    const actionRevisionAtStart = actionRevision.current;
+    const refreshStorageKey = generationIdentityKey(
+      saved.ownerId,
+      saved.campaignId,
+      saved.branchId,
+    );
+    const baselineKey =
+      saved.idempotencyKey || saved.jobId || refreshStorageKey;
+    const baseline = recoveryBaselines.current.get(baselineKey) ?? {
+      action: saved.action || latestAction.current,
+      actionRevision: actionRevision.current,
+    };
+    recoveryBaselines.current.set(baselineKey, baseline);
+    const actionAtStart = baseline.action;
+    const actionRevisionAtStart = baseline.actionRevision;
     const found = saved.jobId
       ? await api.getGenerationJob(saved.jobId)
       : await api.getGenerationByKey(saved.branchId, saved.idempotencyKey);
-    if (operationEpoch.current !== refreshEpoch) return found;
+    if (!isCurrentEpoch(refreshEpoch)) return found;
     if (found.status === "candidate" || found.status === "committed")
       draftDirty.current = false;
     let nextIdentity = {
@@ -253,19 +284,30 @@ export function GenerationComposer({
       eventCursor: saved.eventCursor ?? 0,
     };
     if (found.status === "committed") {
-      if (operationEpoch.current !== refreshEpoch) return found;
+      if (!isCurrentEpoch(refreshEpoch)) return found;
       if (committedRefreshes.current.has(found.id)) return found;
       committedRefreshes.current.add(found.id);
       setPending(true);
       let refreshedSuccessfully = false;
       try {
         const refreshed = await onCommitted();
-        if (operationEpoch.current !== refreshEpoch) return found;
+        if (!isCurrentEpoch(refreshEpoch)) return found;
         if (!refreshed)
           throw new Error(
             "Committed turn has not been refreshed in the campaign",
           );
-        localStorage.removeItem(storageKey);
+        const raw = localStorage.getItem(refreshStorageKey);
+        if (raw) {
+          try {
+            if (
+              (JSON.parse(raw) as GenerationIdentity).idempotencyKey ===
+              nextIdentity.idempotencyKey
+            )
+              localStorage.removeItem(refreshStorageKey);
+          } catch {
+            /* keep the durable receipt */
+          }
+        }
         setIdentity(null);
         setJob(null);
         setDraft("");
@@ -276,13 +318,13 @@ export function GenerationComposer({
           setAction("");
         refreshedSuccessfully = true;
       } finally {
-        if (operationEpoch.current === refreshEpoch) setPending(false);
+        if (isCurrentEpoch(refreshEpoch)) setPending(false);
         if (!refreshedSuccessfully) committedRefreshes.current.delete(found.id);
       }
       return found;
     }
     if (found.status === "candidate") {
-      if (operationEpoch.current !== refreshEpoch) return found;
+      if (!isCurrentEpoch(refreshEpoch)) return found;
       setJob(found);
       if (!draftDirty.current) setDraft(found.draft ?? "");
       if (
@@ -296,18 +338,18 @@ export function GenerationComposer({
           epoch: refreshEpoch,
           action: actionAtStart,
           actionRevision: actionRevisionAtStart,
-          storageKey,
+          storageKey: refreshStorageKey,
         });
       } catch {
-        if (operationEpoch.current === refreshEpoch)
+        if (isCurrentEpoch(refreshEpoch))
           setError("Không thể lưu lượt kể hoàn chỉnh; hãy thử Gửi lại.");
       } finally {
-        if (operationEpoch.current === refreshEpoch) setPending(false);
+        if (isCurrentEpoch(refreshEpoch)) setPending(false);
       }
       return found;
     }
     if (["queued", "running", "cancelling"].includes(found.status)) {
-      if (operationEpoch.current !== refreshEpoch) return found;
+      if (!isCurrentEpoch(refreshEpoch)) return found;
       const stream = await api.getGenerationEvents(
         found.id,
         nextIdentity.eventCursor,
@@ -317,7 +359,7 @@ export function GenerationComposer({
         nextIdentity.eventCursor ?? 0,
       );
       nextIdentity = { ...nextIdentity, eventCursor: lastId };
-      if (operationEpoch.current !== refreshEpoch) return found;
+      if (!isCurrentEpoch(refreshEpoch)) return found;
       const merged = mergeGenerationEvents(
         found.draft ?? "",
         found.offset ?? 0,
@@ -325,7 +367,7 @@ export function GenerationComposer({
       );
       if (merged.gap) {
         const authoritative = await api.getGenerationContent(found.id);
-        if (operationEpoch.current !== refreshEpoch) return found;
+        if (!isCurrentEpoch(refreshEpoch)) return found;
         setJob(authoritative);
         if (!draftDirty.current) setDraft(authoritative.draft ?? "");
       } else if (merged.text !== (found.draft ?? "")) {
@@ -350,20 +392,37 @@ export function GenerationComposer({
         "Nhà cung cấp đã từ chối lượt này. Có thể thử Economy + Free only, nhưng chỉ model được xác minh Free mới được gửi.",
       );
     }
+    if (!isCurrentEpoch(refreshEpoch)) return found;
     if (nextIdentity.idempotencyKey) persist(nextIdentity);
     else setIdentity(nextIdentity);
     return found;
   }
   useEffect(() => {
+    mountedRef.current = true;
+    if (unmountTimer.current !== null) {
+      window.clearTimeout(unmountTimer.current);
+      unmountTimer.current = null;
+    }
+    return () => {
+      mountedRef.current = false;
+      unmountTimer.current = window.setTimeout(() => {
+        operationEpoch.current += 1;
+        unmountTimer.current = null;
+      }, 0);
+    };
+  }, []);
+  useEffect(() => {
     const raw = localStorage.getItem(storageKey);
     if (raw) {
+      if (recoveryStarted.current.has(storageKey)) return;
+      recoveryStarted.current.add(storageKey);
       try {
         const saved = JSON.parse(raw) as GenerationIdentity;
         setIdentity(saved);
         if (saved.action) setAction(saved.action);
         const recoveryEpoch = operationEpoch.current;
         void refresh(saved).catch(() => {
-          if (operationEpoch.current === recoveryEpoch)
+          if (isCurrentEpoch(recoveryEpoch))
             setError(
               "Chưa thể khôi phục lượt kể; thông tin khôi phục vẫn được giữ lại.",
             );
@@ -379,6 +438,8 @@ export function GenerationComposer({
       ),
     );
     if (recoverableJob) {
+      if (recoveryStarted.current.has(storageKey)) return;
+      recoveryStarted.current.add(storageKey);
       const saved: GenerationIdentity = {
         ownerId,
         campaignId: projection.campaign.id,
@@ -393,7 +454,7 @@ export function GenerationComposer({
       };
       const recoveryEpoch = operationEpoch.current;
       void refresh(saved).catch(() => {
-        if (operationEpoch.current === recoveryEpoch)
+        if (isCurrentEpoch(recoveryEpoch))
           setError(
             "Chưa thể khôi phục lượt kể; thông tin chiến dịch vẫn được giữ lại.",
           );
@@ -408,12 +469,13 @@ export function GenerationComposer({
     )
       return;
     const timer = window.setInterval(() => {
-      if (polling.current) return;
-      polling.current = true;
+      const pollEpoch = operationEpoch.current;
+      if (polling.current === pollEpoch) return;
+      polling.current = pollEpoch;
       void refresh(identity)
         .catch(() => undefined)
         .finally(() => {
-          polling.current = false;
+          if (polling.current === pollEpoch) polling.current = null;
         });
     }, 1200);
     return () => window.clearInterval(timer);
@@ -428,7 +490,7 @@ export function GenerationComposer({
       storageKey,
     },
   ) {
-    const nextAction = action;
+    const nextAction = context.action;
     if (!nextAction.trim()) return;
     let selectedProfileId = profileId;
     let selectedMode: string | undefined = retryMode;
@@ -438,6 +500,7 @@ export function GenerationComposer({
     let selectedCap: string | null = retryMode ? null : null;
     if (!selectedProfileId) {
       const settings = await api.getProviderSettings();
+      if (!isCurrentEpoch(context.epoch)) return;
       const quality = !retryMode && settings.mode === "quality";
       selectedProfileId =
         (quality ? settings.roles.context : settings.roles.narrator)?.id ?? "";
@@ -457,6 +520,7 @@ export function GenerationComposer({
         profile_id: selectedProfileId,
       },
     );
+    if (!isCurrentEpoch(context.epoch)) return;
     setPreview(nextPreview);
     const saved: GenerationIdentity = {
       ownerId,
@@ -471,7 +535,11 @@ export function GenerationComposer({
       policy: selectedPolicy,
       cap: selectedCap,
     };
-    persist(saved);
+    recoveryBaselines.current.set(saved.idempotencyKey, {
+      action: context.action,
+      actionRevision: context.actionRevision,
+    });
+    persistInitial(saved, context);
     let nextJob: GenerationJob;
     try {
       nextJob = await api.generate(nextProjection.campaign.id, {
@@ -491,7 +559,7 @@ export function GenerationComposer({
       ) {
         // An acknowledged FastAPI rejection: no generation job was reserved.
         // A 5xx remains uncertain even when its error text mentions quota/schema.
-        releaseRejected(saved);
+        releaseRejected(saved, context);
         throw cause;
       }
       if (cause instanceof ApiError && cause.status === 409) {
@@ -509,18 +577,18 @@ export function GenerationComposer({
             nextJob.checkpoint_id !== saved.checkpointId ||
             nextJob.action !== saved.action
           ) {
-            persist(saved);
+            persistContext(saved, context);
             throw cause;
           }
         } catch (lookupError) {
           if (lookupError instanceof ApiError && lookupError.status === 404) {
             // The explicit conflict and authoritative missing-key response
             // together establish that no job was reserved under this key.
-            releaseRejected(saved);
-            await onCommitted();
+            releaseRejected(saved, context);
+            if (isCurrentEpoch(context.epoch)) await onCommitted();
             throw cause;
           }
-          persist(saved);
+          persistContext(saved, context);
           throw lookupError;
         }
       } else {
@@ -531,22 +599,26 @@ export function GenerationComposer({
             saved.idempotencyKey,
           );
         } catch (lookupError) {
-          persist(saved);
+          persistContext(saved, context);
           throw lookupError;
         }
       }
     }
     const complete = { ...saved, jobId: nextJob.id };
-    persist(complete);
+    persistContext(complete, context);
+    if (!isCurrentEpoch(context.epoch)) {
+      if (nextJob.status === "candidate")
+        await commitCandidate(nextJob, complete, context);
+      return;
+    }
     draftDirty.current = false;
     setJob(nextJob);
     setDraft(nextJob.draft ?? "");
     if (nextJob.status === "candidate") {
-      const candidateEpoch = operationEpoch.current;
       try {
-        await commitCandidate(nextJob, complete);
+        await commitCandidate(nextJob, complete, context);
       } catch (cause) {
-        if (operationEpoch.current === candidateEpoch)
+        if (isCurrentEpoch(context.epoch))
           setError("Không thể lưu lượt kể hoàn chỉnh; hãy thử Gửi lại.");
         throw cause;
       }
@@ -575,6 +647,12 @@ export function GenerationComposer({
     }
     operationEpoch.current += 1;
     const submitEpoch = operationEpoch.current;
+    const submitContext: GenerationOperationContext = {
+      epoch: submitEpoch,
+      action,
+      actionRevision: actionRevision.current,
+      storageKey,
+    };
     const retryMode = economyRetry ? ("economy" as const) : undefined;
     setPending(true);
     setError(null);
@@ -592,12 +670,13 @@ export function GenerationComposer({
             previewId: "",
             idempotencyKey: "",
           },
+          submitContext,
         );
         return;
       }
-      await startGeneration(projection, retryMode);
+      await startGeneration(projection, retryMode, submitContext);
     } catch (cause) {
-      if (operationEpoch.current !== submitEpoch) return;
+      if (!isCurrentEpoch(submitEpoch)) return;
       const quota = isQuota(cause);
       setEconomyRetry(quota);
       setError(
@@ -610,7 +689,7 @@ export function GenerationComposer({
               : "Không thể bắt đầu lượt kể chuyện; bản nháp vẫn được giữ.",
       );
     } finally {
-      if (operationEpoch.current === submitEpoch) setPending(false);
+      if (isCurrentEpoch(submitEpoch)) setPending(false);
     }
   }
   const stages = job?.cost_ledger?.stages ?? {};
