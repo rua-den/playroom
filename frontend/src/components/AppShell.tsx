@@ -138,6 +138,7 @@ function ImportReviewPanel({ projection, onApproved }: { projection: CampaignPro
   const [review, setReview] = useState({ persona: false, npc_voice_presence: false, canon_known_by_narrator_only: false, missing_history: false });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useEffect(() => { setReview({ persona: false, npc_voice_presence: false, canon_known_by_narrator_only: false, missing_history: false }); }, [projection.branch.checkpoint_id]);
   const submit = async () => {
     setBusy(true); setError(null);
     try {

@@ -160,11 +160,18 @@ def test_review_is_owner_scoped_idempotent_and_unlocks_fake_send(tmp_path):
     imported = import_conversation(db, owner.id, fixture_conversation(), config, str(uuid4()))
     head = get_branch_head(db, imported["campaign_id"], imported["branch_id"], owner.id)
     review = {"persona": True, "npc_voice_presence": True, "canon_known_by_narrator_only": True, "missing_history": True}
+    with pytest.raises(ValidationError, match="review"):
+        approve_import_review(db, owner.id, imported["campaign_id"], imported["branch_id"], head.checkpoint_id, {**review, "missing_history": False})
     with pytest.raises(Exception, match="not found|review"):
         approve_import_review(db, other.id, imported["campaign_id"], imported["branch_id"], head.checkpoint_id, review)
     approved = approve_import_review(db, owner.id, imported["campaign_id"], imported["branch_id"], head.checkpoint_id, review)
     assert approved["required"] is False
     assert approve_import_review(db, owner.id, imported["campaign_id"], imported["branch_id"], head.checkpoint_id, review)["approved"] is True
-    job = GenerationService(db, FakeProvider(["Vy khẽ gật đầu."])).generate(owner.id, imported["campaign_id"], imported["branch_id"], "*Lan chờ đợi.*", idempotency_key=str(uuid4()), expected_checkpoint_id=head.checkpoint_id)
+    service = GenerationService(db, FakeProvider(["Vy khẽ gật đầu.", "Vy mỉm cười."]))
+    job = service.generate(owner.id, imported["campaign_id"], imported["branch_id"], "*Lan chờ đợi.*", idempotency_key=str(uuid4()), expected_checkpoint_id=head.checkpoint_id)
     assert job["status"] == "candidate"
+    service.commit_candidate(owner.id, job["id"])
+    next_head = get_branch_head(db, imported["campaign_id"], imported["branch_id"], owner.id)
+    second = service.generate(owner.id, imported["campaign_id"], imported["branch_id"], "*Lan mỉm cười.*", idempotency_key=str(uuid4()), expected_checkpoint_id=next_head.checkpoint_id)
+    assert second["status"] == "candidate"
     assert import_review(db, owner.id, imported["campaign_id"])["approved_checkpoint_id"] == head.checkpoint_id
