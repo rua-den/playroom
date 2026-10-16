@@ -220,4 +220,61 @@ describe("GenerationComposer stale async generation races", () => {
     expect(localStorage.getItem(oldKey)).toBe(oldRaw);
     expect(localStorage.getItem(newKey)).toBe(newRawAfterRecovery);
   });
+
+  it("rejects a retained old poll callback after switching campaign scope", async () => {
+    const oldProjection = projection("campaign-old", "branch-old", "checkpoint-old");
+    const newProjection = projection("campaign-new", "branch-new", "checkpoint-new");
+    const oldSaved = identity("owner-1", "campaign-old", "branch-old", "Old action", "job-old");
+    const newSaved = identity("owner-1", "campaign-new", "branch-new", "New action", "job-new");
+    const oldKey = generationIdentityKey(oldSaved.ownerId, oldSaved.campaignId, oldSaved.branchId);
+    const newKey = generationIdentityKey(newSaved.ownerId, newSaved.campaignId, newSaved.branchId);
+    const oldRaw = JSON.stringify(oldSaved);
+    const newRaw = JSON.stringify(newSaved);
+    localStorage.setItem(oldKey, oldRaw);
+    const oldCandidate = deferred<Response>();
+    let oldJobRequests = 0;
+    const fetchMock = vi.fn((url: string | URL) => {
+      const target = String(url);
+      if (target.includes("job-old")) {
+        oldJobRequests += 1;
+        return oldJobRequests === 1
+          ? Promise.resolve(response({ id: "job-old", campaign_id: "campaign-old", branch_id: "branch-old", checkpoint_id: "checkpoint-old", status: "running", action: "Old action" }))
+          : oldCandidate.promise;
+      }
+      if (target.includes("job-new")) {
+        return Promise.resolve(response({ id: "job-new", campaign_id: "campaign-new", branch_id: "branch-new", checkpoint_id: "checkpoint-new", status: "failed", action: "New action" }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ events: [] }), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const intervals: Array<() => void> = [];
+    vi.spyOn(window, "setInterval").mockImplementation((callback) => {
+      intervals.push(callback as () => void);
+      return setTimeout(() => undefined, 0);
+    });
+    const onCommitted = vi.fn();
+    const { rerender } = render(<GenerationComposer ownerId="owner-1" projection={oldProjection} profileId="profile-1" onCommitted={onCommitted} />);
+    await waitFor(() => {
+      expect(oldJobRequests).toBe(1);
+      expect(intervals.length).toBeGreaterThan(0);
+    });
+    const stalePoll = intervals[intervals.length - 1];
+
+    localStorage.setItem(newKey, newRaw);
+    rerender(<GenerationComposer ownerId="owner-1" projection={newProjection} profileId="profile-1" onCommitted={onCommitted} />);
+    const input = await screen.findByLabelText("Hành động tiếp theo");
+    await waitFor(() => expect(input).toHaveValue("New action"));
+    await act(async () => {
+      stalePoll();
+      await Promise.resolve();
+    });
+    if (oldJobRequests > 1) oldCandidate.resolve(response({ id: "job-old", campaign_id: "campaign-old", branch_id: "branch-old", checkpoint_id: "checkpoint-old", status: "candidate", action: "Old action", draft: "stale" }));
+    await act(async () => { await Promise.resolve(); });
+
+    expect(oldJobRequests).toBe(1);
+    expect(input).toHaveValue("New action");
+    expect(localStorage.getItem(oldKey)).toBe(oldRaw);
+    expect(localStorage.getItem(newKey)).toBe(newRaw);
+    expect(onCommitted).not.toHaveBeenCalled();
+  });
 });
