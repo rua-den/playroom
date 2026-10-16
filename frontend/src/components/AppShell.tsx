@@ -147,7 +147,10 @@ export function ImportReviewPanel({ projection, onApproved }: { projection: Camp
   const identityRef = useRef(`${projection.campaign.id}:${projection.branch.id}:${checkpointId}`);
   const mountedRef = useRef(true);
   identityRef.current = `${projection.campaign.id}:${projection.branch.id}:${checkpointId}`;
-  useEffect(() => () => { mountedRef.current = false; }, []);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
   useEffect(() => { checkpointRef.current = checkpointId; setReview({ persona: false, npc_voice_presence: false, canon_known_by_narrator_only: false, missing_history: false }); setBusy(false); setError(null); }, [checkpointId]);
   useEffect(() => {
     let active = true;
@@ -166,8 +169,12 @@ export function ImportReviewPanel({ projection, onApproved }: { projection: Camp
     try {
       await api.approveChatGptImport(projection.campaign.id, { branch_id: projection.branch.id, checkpoint_id: projection.branch.checkpoint_id, review });
       if (mountedRef.current && checkpointRef.current === targetCheckpointId && identityRef.current === targetIdentity) onApproved();
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Không thể lưu duyệt checkpoint."); }
-    finally { setBusy(false); }
+    } catch (cause) {
+      if (mountedRef.current && identityRef.current === targetIdentity) setError(cause instanceof Error ? cause.message : "Không thể lưu duyệt checkpoint.");
+    }
+    finally {
+      if (mountedRef.current && identityRef.current === targetIdentity) setBusy(false);
+    }
   };
   const profiles = Object.entries(projection.profiles);
   const persona = projection.profiles.persona?.data;

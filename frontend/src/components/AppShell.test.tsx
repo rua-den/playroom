@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { StrictMode } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { recoverableJobCount, recoverableJobSummary } from "./AppShell";
@@ -133,5 +134,33 @@ describe("recoverable job summary", () => {
     resolveApproval({ required: false, approved: true });
     await waitFor(() => expect(screen.getByRole("button", { name: /Duyệt checkpoint/ })).toBeDisabled());
     expect(onApproved).not.toHaveBeenCalled();
+  });
+
+  it("refreshes after successful approval under StrictMode", async () => {
+    mockReviewSnapshot();
+    vi.spyOn(api, "approveChatGptImport").mockResolvedValue({ required: false, approved: true });
+    const onApproved = vi.fn();
+    render(<StrictMode><ImportReviewPanel projection={reviewProjection() as never} onApproved={onApproved} /></StrictMode>);
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getAllByRole("checkbox")[0]).toBeEnabled());
+    for (const checkbox of screen.getAllByRole("checkbox")) await user.click(checkbox);
+    await user.click(screen.getByRole("button", { name: /Duyệt checkpoint/ }));
+    await waitFor(() => expect(onApproved).toHaveBeenCalledTimes(1));
+  });
+
+  it("does not surface a stale approval error after the campaign changes", async () => {
+    mockReviewSnapshot();
+    let rejectApproval: (reason?: unknown) => void = () => undefined;
+    vi.spyOn(api, "approveChatGptImport").mockReturnValue(new Promise((_resolve, reject) => { rejectApproval = reject; }));
+    const onApproved = vi.fn();
+    const { rerender } = render(<ImportReviewPanel projection={reviewProjection("checkpoint-a", "campaign-a") as never} onApproved={onApproved} />);
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getAllByRole("checkbox")[0]).toBeEnabled());
+    for (const checkbox of screen.getAllByRole("checkbox")) await user.click(checkbox);
+    await user.click(screen.getByRole("button", { name: /Duyệt checkpoint/ }));
+    rerender(<ImportReviewPanel projection={reviewProjection("checkpoint-b", "campaign-b") as never} onApproved={onApproved} />);
+    rejectApproval(new Error("stale approval"));
+    await waitFor(() => expect(screen.getByRole("button", { name: /Duyệt checkpoint/ })).toBeDisabled());
+    expect(screen.queryByText("stale approval")).not.toBeInTheDocument();
   });
 });
