@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import stat
 import sys
 import types
 from pathlib import Path
@@ -54,6 +56,28 @@ def test_live_rejects_symlinked_index_and_asset(tmp_path):
         pytest.skip("symlinks unavailable")
     with pytest.raises(ValueError, match="frontend"):
         create_live_local_app(tmp_path / "data", frontend_dist=dist)
+
+
+def test_live_rejects_index_symlink_created_after_startup(tmp_path):
+    dist = _dist(tmp_path)
+    app = create_live_local_app(tmp_path / "data", frontend_dist=dist)
+    outside = tmp_path / "outside.html"
+    outside.write_text("secret outside", encoding="utf-8")
+    try:
+        (dist / "index.html").unlink()
+        (dist / "index.html").symlink_to(outside)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks unavailable")
+    response = TestClient(app, base_url="http://127.0.0.1").get("/")
+    assert response.status_code == 404
+    assert "secret outside" not in response.text
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX mode bits are not portable to Windows")
+def test_new_live_data_root_is_private(tmp_path):
+    data = tmp_path / "data"
+    create_live_local_app(data, frontend_dist=_dist(tmp_path))
+    assert stat.S_IMODE(data.stat().st_mode) == 0o700
 
 
 def test_live_rejects_data_database_or_secret_alias_into_frontend(tmp_path):

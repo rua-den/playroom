@@ -64,7 +64,15 @@ def create_live_local_app(data_dir: str | Path, *, frontend_dist: str | Path | N
         except ValueError:
             continue
         raise ValueError("live local data paths must be outside frontend directory")
-    root.mkdir(parents=True, exist_ok=True)
+    root_preexisted = root.exists()
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    # Do not alter permissions on an explicitly reused data directory.
+    # A newly created root is private by default on POSIX filesystems.
+    if not root_preexisted:
+        try:
+            root.chmod(0o700)
+        except OSError:
+            pass
     secrets_path.mkdir(parents=True, exist_ok=True)
 
     app = create_app(
@@ -90,7 +98,10 @@ def create_live_local_app(data_dir: str | Path, *, frontend_dist: str | Path | N
             return FileResponse(candidate)
         if Path(request.url.path).suffix:
             return JSONResponse(status_code=404, content={"detail": "Not Found"})
-        return FileResponse(dist / "index.html")
+        fallback = _safe_file(dist, "/index.html")
+        if fallback is None:
+            return JSONResponse(status_code=404, content={"detail": "Not Found"})
+        return FileResponse(fallback)
 
     return app
 
