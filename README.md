@@ -17,7 +17,7 @@ Trọng tâm là quản lý context qua nhiều chương: lưu hồ sơ, cảnh,
 
 **Cập nhật review gate:** [PR #28](https://github.com/rua-den/playroom/pull/28) đã merge với bước duyệt checkpoint riêng, khóa Send bền trong SQLite và kiểm tra lại ngay trước provider dispatch, kể cả job cũ sau restart. Giao diện hiển thị hồ sơ/cảnh/ký ức, phạm vi biết và phần nguồn bị bỏ qua trước khi duyệt. Kiểm chứng độc lập local: **320 backend, 94 frontend PASS / 3 skipped, typecheck/build/Chromium PASS**. Main CI chỉ xanh sau rerun Chromium do [#20](https://github.com/rua-den/playroom/issues/20), nên vẫn giữ #20 trong release checklist. [Handoff kiểm chứng](docs/handoff/2026-10-16-import-review-gate.md) ghi RED/GREEN và giới hạn của slice JSON.
 
-**Ưu tiên tiếp theo:** hoàn thiện import ZIP/lịch sử dài của #27 và legacy bundle #29 → xử lý #20 và #9 → phê duyệt riêng cho triển khai điện thoại. [Handoff 16/10](docs/handoff/2026-10-16-codex-astra-transfer.md) giữ các giới hạn dữ liệu, chi phí và VPS; không coi slice JSON là hoàn thành toàn bộ import.
+**Ưu tiên tiếp theo:** sửa race reconnect #20 → runner chơi local thật #30 → legacy bundle #29 → ZIP/lịch sử dài #27 → nghiệm thu app thật #9 và phê duyệt riêng cho triển khai điện thoại. [Handoff 16/10](docs/handoff/2026-10-16-codex-astra-transfer.md) giữ các giới hạn dữ liệu, chi phí và VPS; [checkpoint reconnect](docs/handoff/2026-10-16-reconnect-race.md) ghi regression và bằng chứng kiểm chứng mới.
 
 ## Đọc theo thứ tự
 
