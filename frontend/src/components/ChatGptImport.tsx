@@ -121,7 +121,7 @@ export function ChatGptImport({ onImported, onCancel }: Props) {
         <label htmlFor="import-persona">Persona người chơi</label><input id="import-persona" required value={persona} onChange={(event) => setPersona(event.target.value)} />
         <label htmlFor="import-cast">Nhân vật đã xác nhận (cách nhau dấu phẩy)</label><input id="import-cast" value={cast} onChange={(event) => setCast(event.target.value)} placeholder="Yuna, Gi A, Yoongi" />
         <p>Import giữ nguyên lời người chơi và AI cũ; chưa tự tạo trí nhớ/canon, chưa tự xác định NPC nào đang có mặt. Kiểm tra Hồ sơ / Cảnh trước khi chơi tiếp, nhất là quy tắc không tự điều khiển Henn.</p>
-        <label><input type="checkbox" checked={approved} onChange={(event) => setApproved(event.target.checked)} /> Tôi đã xem đúng thread, hiểu phần bị bỏ qua và muốn tạo chiến dịch mới.</label>
+        <label><input type="checkbox" checked={approved} onChange={(event) => setApproved(event.target.checked)} /> Tôi đã xem đúng thread, hiểu phần bị bỏ qua và muốn tạo chiến dịch tạm khóa để duyệt riêng.</label>
         <button className="primary-button touch-target" type="submit" disabled={!approved || busy}>{busy ? "Đang nhập…" : "Nhập và mở chiến dịch"}</button>
       </form>}
     </div>

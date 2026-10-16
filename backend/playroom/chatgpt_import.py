@@ -15,10 +15,66 @@ from .campaigns import create_campaign
 from .db import transaction
 from .domain import ValidationError
 from .timeline import _create_committed_revision_in_transaction
+from .timeline import get_branch_head
 
 MAX_SOURCE_BYTES = 20 * 1024 * 1024
 MAX_NODES = 6000
 MAX_TURNS = 1500
+
+
+def import_review(connection: sqlite3.Connection, owner_id: str, campaign_id: str, current_checkpoint_id: str | None = None) -> dict:
+    source = connection.execute("SELECT 1 FROM chatgpt_import_sources WHERE owner_id=? AND campaign_id=?", (owner_id, campaign_id)).fetchone()
+    row = connection.execute("SELECT source_checkpoint_id, approved_checkpoint_id, review_json, approved_at FROM import_review_checkpoints WHERE owner_id=? AND campaign_id=?", (owner_id, campaign_id)).fetchone()
+    if row is None:
+        return {"required": source is not None, "approved": source is None, "approved_checkpoint_id": None, "review": {}}
+    approved = row["approved_checkpoint_id"] is not None
+    if approved and current_checkpoint_id:
+        cursor = current_checkpoint_id
+        approved = False
+        while cursor:
+            if cursor == row["approved_checkpoint_id"]:
+                approved = True
+                break
+            parent = connection.execute("SELECT parent_checkpoint_id FROM state_checkpoints WHERE id=?", (cursor,)).fetchone()
+            cursor = parent[0] if parent else None
+    return {"required": not approved, "approved": approved, "source_checkpoint_id": row["source_checkpoint_id"], "approved_checkpoint_id": row["approved_checkpoint_id"], "approved_at": row["approved_at"], "review": json.loads(row["review_json"] or "{}")}
+
+
+def assert_import_review_approved(connection: sqlite3.Connection, owner_id: str, campaign_id: str, checkpoint_id: str) -> None:
+    row = connection.execute("SELECT approved_checkpoint_id FROM import_review_checkpoints WHERE owner_id=? AND campaign_id=?", (owner_id, campaign_id)).fetchone()
+    source = connection.execute("SELECT 1 FROM chatgpt_import_sources WHERE owner_id=? AND campaign_id=?", (owner_id, campaign_id)).fetchone()
+    if source is None:
+        return
+    if row is None or row["approved_checkpoint_id"] is None:
+        from .domain import StateConflict
+        raise StateConflict("Imported campaign requires owner review approval for this checkpoint")
+    cursor = checkpoint_id
+    while cursor:
+        if cursor == row["approved_checkpoint_id"]:
+            return
+        parent = connection.execute("SELECT parent_checkpoint_id FROM state_checkpoints WHERE id=?", (cursor,)).fetchone()
+        cursor = parent[0] if parent else None
+    from .domain import StateConflict
+    raise StateConflict("Imported campaign requires owner review approval for this checkpoint")
+
+
+def approve_import_review(connection: sqlite3.Connection, owner_id: str, campaign_id: str, branch_id: str, expected_checkpoint_id: str, review: dict) -> dict:
+    from .domain import NotFound, StateConflict
+    required = {"persona", "npc_voice_presence", "canon_known_by_narrator_only", "missing_history"}
+    if not isinstance(review, dict) or not required.issubset(review) or any(review[key] is not True for key in required):
+        raise ValidationError("Import review must cover persona, NPC presence, canon visibility and missing history")
+    head = get_branch_head(connection, campaign_id, branch_id, owner_id)
+    if head.checkpoint_id != expected_checkpoint_id:
+        raise StateConflict("Import review checkpoint is stale")
+    with transaction(connection):
+        row = connection.execute("SELECT 1 FROM import_review_checkpoints WHERE owner_id=? AND campaign_id=?", (owner_id, campaign_id)).fetchone()
+        if row is None:
+            raise NotFound("Import review checkpoint not found")
+        locked = get_branch_head(connection, campaign_id, branch_id, owner_id)
+        if locked.checkpoint_id != expected_checkpoint_id:
+            raise StateConflict("Import review checkpoint is stale")
+        connection.execute("UPDATE import_review_checkpoints SET approved_checkpoint_id=?, review_json=?, approved_at=strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE owner_id=? AND campaign_id=?", (expected_checkpoint_id, json.dumps(review, ensure_ascii=False, sort_keys=True), owner_id, campaign_id))
+    return import_review(connection, owner_id, campaign_id)
 
 
 def _serialized_source(source: dict) -> str:
@@ -188,6 +244,11 @@ def import_conversation(connection: sqlite3.Connection, owner_id: str, source: d
             (str(uuid4()), owner_id, created.id, created.initial_branch_id, key, digest,
              parsed["conversation_id"], original, len(parsed["turns"]),
              json.dumps(parsed["warnings"], ensure_ascii=False)),
+        )
+        checkpoint = connection.execute("SELECT head_checkpoint_id FROM branches WHERE id=?", (created.initial_branch_id,)).fetchone()[0]
+        connection.execute(
+            "INSERT INTO import_review_checkpoints(campaign_id,owner_id,source_checkpoint_id,review_json,created_at) VALUES(?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+            (created.id, owner_id, checkpoint, "{}"),
         )
     return {"campaign_id": created.id, "branch_id": created.initial_branch_id,
             "turn_count": len(parsed["turns"]), "already_imported": False,

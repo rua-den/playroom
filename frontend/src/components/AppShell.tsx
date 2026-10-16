@@ -124,7 +124,7 @@ export function AppShell({ owner, onLogout, notice }: AppShellProps) {
         <section className="story-column conversation-column">
           {error && <div role="alert" className="form-error">{error}</div>}
           {projection ? <><h1>{projection.campaign.title}</h1>{projection.transcript.length ? <div className="transcript">{projection.transcript.map((turn) => <article className="story-turn" key={turn.revision_id}>{turn.input_segments?.length ? <div className="input-segments">{turn.input_segments.map((segment, index) => <p className={`input-segment ${segment.kind}`} key={`${turn.revision_id}-input-${index}`}>{segment.text}</p>)}</div> : <p className="turn-action">{turn.action_text}</p>}{turn.output_segments?.length ? <div className="roleplay-segments">{turn.output_segments.map((segment, index) => <div className={`roleplay-segment ${segment.kind}`} key={`${turn.revision_id}-${index}`}>{segment.character_id ? <strong>{projection.profiles[`character:${segment.character_id}`]?.data.name as string ?? segment.character_id}: </strong> : null}<Markdown source={segment.text} /></div>)}</div> : <Markdown source={turn.narrative_text} />}</article>)}</div> : <div className="story-empty"><h2>Chương đầu tiên đang chờ bạn.</h2><p>Thế giới đã sẵn sàng. Bạn có thể tiếp tục thiết lập hồ sơ và ký ức.</p></div>}</> : <div className="loading-story" role="status">Đang mở chiến dịch…</div>}
-          {projection && <GenerationComposer ownerId={owner.id} projection={projection} profileId="" onCommitted={editorChanged} />}
+          {projection && (projection.import_review?.required ? <ImportReviewPanel projection={projection} onApproved={editorChanged} /> : <GenerationComposer ownerId={owner.id} projection={projection} profileId="" onCommitted={editorChanged} />)}
         </section>
       </div>
     </>}
@@ -132,6 +132,21 @@ export function AppShell({ owner, onLogout, notice }: AppShellProps) {
     {detailsOpen && <div className="mobile-overlay context-overlay"><section className="mobile-sheet context-panel" role="dialog" aria-modal="true" aria-labelledby="details-sheet-title"><div className="section-heading"><h2 id="details-sheet-title">Hồ sơ và ký ức</h2><button type="button" className="quiet-button touch-target" onClick={closeDetails} ref={detailsClose}>Đóng hồ sơ và ký ức</button></div>{contextPanel}</section></div>}
     {settingsOpen && <div className="mobile-overlay"><section className="mobile-sheet" role="dialog" aria-modal="true" aria-labelledby="settings-title"><div className="section-heading"><h2 id="settings-title">Cài đặt</h2><button type="button" className="quiet-button touch-target" onClick={closeSettings} ref={settingsClose}>Đóng cài đặt</button></div><ThemeSelector /><SettingsPanel /></section></div>}
   </main>;
+}
+
+function ImportReviewPanel({ projection, onApproved }: { projection: CampaignProjection; onApproved: () => void }) {
+  const [review, setReview] = useState({ persona: false, npc_voice_presence: false, canon_known_by_narrator_only: false, missing_history: false });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const submit = async () => {
+    setBusy(true); setError(null);
+    try {
+      await api.approveChatGptImport(projection.campaign.id, { branch_id: projection.branch.id, checkpoint_id: projection.branch.checkpoint_id, review });
+      onApproved();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Không thể lưu duyệt checkpoint."); }
+    finally { setBusy(false); }
+  };
+  return <section className="create-card" aria-labelledby="import-review-title"><p className="eyebrow">CẦN DUYỆT RIÊNG</p><h2 id="import-review-title">Kiểm tra checkpoint nhập</h2><p>Import chỉ lưu lịch sử tạm thời. Hãy xem Hồ sơ, Cảnh và Ký ức trước khi mở Send.</p>{error && <div role="alert" className="form-error">{error}</div>}<label><input type="checkbox" checked={review.persona} onChange={(event) => setReview((current) => ({ ...current, persona: event.target.checked }))} /> Persona đúng.</label><label><input type="checkbox" checked={review.npc_voice_presence} onChange={(event) => setReview((current) => ({ ...current, npc_voice_presence: event.target.checked }))} /> NPC voice/presence đã xem.</label><label><input type="checkbox" checked={review.canon_known_by_narrator_only} onChange={(event) => setReview((current) => ({ ...current, canon_known_by_narrator_only: event.target.checked }))} /> Canon known_by/narrator_only đã xem.</label><label><input type="checkbox" checked={review.missing_history} onChange={(event) => setReview((current) => ({ ...current, missing_history: event.target.checked }))} /> Lịch sử thiếu đã được ghi nhận.</label><button className="primary-button touch-target" type="button" disabled={busy || Object.values(review).some((value) => !value)} onClick={() => void submit()}>{busy ? "Đang lưu…" : "Duyệt checkpoint và bật Send"}</button></section>;
 }
 
 function ProfileBlock({ title, profile }: { title: string; profile?: { data: Record<string, unknown> } }) { if (!profile) return null; const name = typeof profile.data.name === "string" ? profile.data.name : title; const description = typeof profile.data.description === "string" ? profile.data.description : ""; return <section className="profile-block"><h3>{name}</h3>{description && <p>{description}</p>}</section>; }

@@ -11,7 +11,7 @@ import sqlite3
 
 from fastapi import APIRouter, Depends, Request
 
-from ..chatgpt_import import MAX_SOURCE_BYTES, import_conversation, preview_conversation
+from ..chatgpt_import import MAX_SOURCE_BYTES, approve_import_review, import_conversation, import_review, preview_conversation
 from ..db import request_connection
 from ..domain import Owner, ValidationError
 from .auth import require_owner
@@ -52,7 +52,16 @@ async def import_chatgpt(
     owner: Owner = Depends(require_owner),
 ):
     payload = await _payload(request)
-    return import_conversation(
+    result = import_conversation(
         connection, owner.id, payload["conversation"],
         payload.get("config"), payload.get("import_key"),
     )
+    result["review_required"] = import_review(connection, owner.id, result["campaign_id"])["required"]
+    result["checkpoint_id"] = connection.execute("SELECT head_checkpoint_id FROM branches WHERE id=?", (result["branch_id"],)).fetchone()[0]
+    return result
+
+
+@router.post("/chatgpt/{campaign_id}/review")
+async def review_chatgpt(campaign_id: str, request: Request, connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
+    payload = await request.json()
+    return approve_import_review(connection, owner.id, campaign_id, payload.get("branch_id"), payload.get("checkpoint_id"), payload.get("review"))

@@ -28,6 +28,7 @@ from .settings import get_owner_settings, ROLE_BUDGET_DEFAULTS
 from .provider import ProviderAdapter, ProviderFailure, ProviderResult
 from .context_director import deterministic_selection, validate_director_plan
 from .timeline import _create_committed_revision_in_transaction, get_branch_head, load_state_checkpoint
+from .chatgpt_import import assert_import_review_approved
 from .roleplay_segments import parse_narrator_payload, validate_narrator_segments
 from .attempt_runtime import PhysicalAttemptRegistry
 from .wire_cost import (
@@ -288,6 +289,7 @@ class GenerationService:
             locked_head = get_branch_head(self.connection, campaign_id, branch_id, owner_id)
             if locked_head.checkpoint_id != expected_checkpoint_id:
                 raise StateConflict("Generation checkpoint is stale")
+            assert_import_review_approved(self.connection, owner_id, campaign_id, locked_head.checkpoint_id)
             if self.connection.execute("SELECT 1 FROM generation_branch_guards WHERE branch_id=?", (branch_id,)).fetchone():
                 raise StateConflict("A generation is already active on this branch")
             # A persistent count prevents multiple application workers from

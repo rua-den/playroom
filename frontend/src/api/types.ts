@@ -76,7 +76,8 @@ export interface CampaignProjection {
   profiles: Record<string, CampaignProjectionProfile>;
   scene: { id: string; version: number; data: Record<string, unknown> } | null;
   transcript: CampaignTranscriptEntry[];
-  jobs: GenerationJobSummary[];
+    jobs: GenerationJobSummary[];
+    import_review?: { required: boolean; approved: boolean; approved_checkpoint_id?: string | null; review: Record<string, boolean> };
 }
 
 export interface ProfileUpdateResult { state_version: number; checkpoint_id: string; previous_state_version?: number; }

@@ -65,8 +65,9 @@ export const api = {
     title: string; world: { name: string }; persona: { name: string };
     characters: Array<{ id: string; name: string; aliases: string[] }>;
   }, importKey: string) => request<{
-    campaign_id: string; branch_id: string; turn_count: number; already_imported: boolean;
+    campaign_id: string; branch_id: string; checkpoint_id: string; turn_count: number; already_imported: boolean;
   }>("/api/transfers/chatgpt/import", { method: "POST", body: JSON.stringify({ conversation, config, import_key: importKey }) }),
+  approveChatGptImport: (campaignId: string, payload: { branch_id: string; checkpoint_id: string; review: { persona: boolean; npc_voice_presence: boolean; canon_known_by_narrator_only: boolean; missing_history: boolean } }) => request<{ required: boolean; approved: boolean }>(`/api/transfers/chatgpt/${encodeURIComponent(campaignId)}/review`, { method: "POST", body: JSON.stringify(payload) }),
   getCampaignProjection: (campaignId: string, branchId: string) => request<CampaignProjection>(`/api/campaigns/${encodeURIComponent(campaignId)}/projection?branch_id=${encodeURIComponent(branchId)}`),
   getGenerationJobs: (campaignId: string, branchId: string, limit = 20) => request<{ jobs: GenerationJobSummary[] }>(`/api/campaigns/${encodeURIComponent(campaignId)}/generation-jobs?branch_id=${encodeURIComponent(branchId)}&limit=${limit}`),
   updateProfile: (campaignId: string, profileKey: string, payload: { branch_id: string; expected_state_version: number; data: Record<string, unknown> }) => request<ProfileUpdateResult>(`/api/campaigns/${encodeURIComponent(campaignId)}/profiles/${encodeURIComponent(profileKey)}`, { method: "PATCH", body: JSON.stringify(payload) }),

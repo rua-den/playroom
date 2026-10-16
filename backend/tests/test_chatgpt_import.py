@@ -109,3 +109,62 @@ def test_http_preview_and_import_require_auth_and_reject_empty_story(tmp_path):
     incomplete["current_node"] = "user1"
     with pytest.raises(ValidationError, match="complete|pair|no usable"):
         preview_conversation(incomplete)
+
+
+def test_import_requires_separate_durable_review_before_generation_even_after_restart(tmp_path):
+    from playroom.app import create_app
+    path = tmp_path / "review-gate.sqlite3"
+    db = connect(path); migrate(db)
+    owner = create_owner(db, "gate@example.test", "synthetic strong password")
+    db.close()
+    app = create_app(database_url=f"sqlite:///{path}", allowed_hosts={"testserver"}, secure_cookies=False,
+                     credential_root=tmp_path / "secrets")
+    client = TestClient(app, base_url="https://testserver")
+    headers = {"origin": "https://testserver"}
+    assert client.post("/api/auth/login", json={"email": owner.email, "password": "synthetic strong password"}, headers=headers).status_code == 200
+    imported = client.post("/api/transfers/chatgpt/import", json={
+        "conversation": fixture_conversation(),
+        "config": {"title": "Imported gate", "world": {"name": "Synthetic"}, "persona": {"name": "Lan"}, "characters": []},
+        "import_key": str(uuid4()),
+    }, headers=headers)
+    assert imported.status_code == 201, imported.text
+    campaign_id = imported.json()["campaign_id"]
+    branch_id = imported.json()["branch_id"]
+    projection = client.get(f"/api/campaigns/{campaign_id}/projection?branch_id={branch_id}", headers=headers)
+    assert projection.status_code == 200
+    assert projection.json()["import_review"]["required"] is True
+    payload = {"branch_id": branch_id, "action": "*Lan nhìn quanh.*", "idempotency_key": str(uuid4()), "checkpoint_id": projection.json()["branch"]["checkpoint_id"]}
+    blocked = client.post(f"/api/campaigns/{campaign_id}/generate", json=payload, headers=headers)
+    assert blocked.status_code == 409, blocked.text
+    assert "review" in blocked.text.lower()
+
+    # A process restart must retain the fail-closed checkpoint.
+    app = create_app(database_url=f"sqlite:///{path}", allowed_hosts={"testserver"}, secure_cookies=False,
+                     credential_root=tmp_path / "secrets")
+    client = TestClient(app, base_url="https://testserver")
+    assert client.post("/api/auth/login", json={"email": owner.email, "password": "synthetic strong password"}, headers=headers).status_code == 200
+    blocked_again = client.post(f"/api/campaigns/{campaign_id}/generate", json=payload, headers=headers)
+    assert blocked_again.status_code == 409
+
+
+def test_review_is_owner_scoped_idempotent_and_unlocks_fake_send(tmp_path):
+    from playroom.chatgpt_import import approve_import_review, import_conversation, import_review
+    from playroom.generation import GenerationService
+    from playroom.provider import FakeProvider
+    from playroom.timeline import get_branch_head
+    path = tmp_path / "review-approval.sqlite3"
+    db = connect(path); migrate(db)
+    owner = create_owner(db, "approve@example.test", "synthetic strong password")
+    other = create_owner(db, "other-approve@example.test", "synthetic strong password")
+    config = {"title": "Approved gate", "world": {"name": "Synthetic"}, "persona": {"name": "Lan"}, "characters": []}
+    imported = import_conversation(db, owner.id, fixture_conversation(), config, str(uuid4()))
+    head = get_branch_head(db, imported["campaign_id"], imported["branch_id"], owner.id)
+    review = {"persona": True, "npc_voice_presence": True, "canon_known_by_narrator_only": True, "missing_history": True}
+    with pytest.raises(Exception, match="not found|review"):
+        approve_import_review(db, other.id, imported["campaign_id"], imported["branch_id"], head.checkpoint_id, review)
+    approved = approve_import_review(db, owner.id, imported["campaign_id"], imported["branch_id"], head.checkpoint_id, review)
+    assert approved["required"] is False
+    assert approve_import_review(db, owner.id, imported["campaign_id"], imported["branch_id"], head.checkpoint_id, review)["approved"] is True
+    job = GenerationService(db, FakeProvider(["Vy khẽ gật đầu."])).generate(owner.id, imported["campaign_id"], imported["branch_id"], "*Lan chờ đợi.*", idempotency_key=str(uuid4()), expected_checkpoint_id=head.checkpoint_id)
+    assert job["status"] == "candidate"
+    assert import_review(db, owner.id, imported["campaign_id"])["approved_checkpoint_id"] == head.checkpoint_id
