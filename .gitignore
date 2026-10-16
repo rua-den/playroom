@@ -7,3 +7,4 @@ data/
 .env
 /.playroom-demo/
 /frontend/dist/
+.playroom-live/
