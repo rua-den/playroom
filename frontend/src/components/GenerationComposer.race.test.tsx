@@ -95,6 +95,53 @@ describe("GenerationComposer stale async generation races", () => {
     await waitFor(() => expect(input).toHaveValue("User draft"));
   });
 
+  it("keeps an exactly retyped action through a later running-job poll and commit", async () => {
+    const current = projection("campaign-1", "branch-1", "checkpoint-1");
+    const saved = identity("owner-1", "campaign-1", "branch-1", "Same action", "job-running");
+    const durableKey = generationIdentityKey(saved.ownerId, saved.campaignId, saved.branchId);
+    localStorage.setItem(durableKey, JSON.stringify(saved));
+    const running = { id: saved.jobId, campaign_id: saved.campaignId, branch_id: saved.branchId, checkpoint_id: saved.checkpointId, status: "running", action: saved.action, draft: "partial", offset: 7, offset_unit: "utf16_code_units" };
+    const candidate = { ...running, status: "candidate", draft: "complete" };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(running as GenerationJob))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ events: [] }), { status: 200 }))
+      .mockResolvedValueOnce(response(candidate as GenerationJob))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    let poll!: () => void;
+    vi.spyOn(window, "setInterval").mockImplementation((callback) => {
+      poll = callback as () => void;
+      return 1;
+    });
+    const commitRefresh = deferred<CampaignProjection>();
+    let refreshSettled = false;
+    const onCommitted = vi.fn(async () => {
+      const result = await commitRefresh.promise;
+      refreshSettled = true;
+      return result;
+    });
+    render(<GenerationComposer ownerId="owner-1" projection={current} profileId="profile-1" onCommitted={onCommitted} />);
+
+    const input = await screen.findByLabelText("Hành động tiếp theo");
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(input).toHaveValue("Same action");
+      expect(poll).toEqual(expect.any(Function));
+    });
+    const user = userEvent.setup();
+    await user.clear(input);
+    await user.type(input, "Same action");
+    expect(input).toHaveValue("Same action");
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/generate")).length).toBe(0);
+
+    await act(async () => { poll(); });
+    await waitFor(() => expect(onCommitted).toHaveBeenCalledOnce());
+    await act(async () => { commitRefresh.resolve(current); });
+    await waitFor(() => expect(refreshSettled).toBe(true));
+    expect(input).toHaveValue("Same action");
+    expect(localStorage.getItem(durableKey)).toBeNull();
+  });
+
   it("ignores a deferred old recovery after switching campaign while preserving both durable identities", async () => {
     const oldProjection = projection("campaign-old", "branch-old", "checkpoint-old");
     const newProjection = projection("campaign-new", "branch-new", "checkpoint-new");
