@@ -465,12 +465,20 @@ export function GenerationComposer({
     if (
       !identity?.jobId ||
       !job ||
+      identity.ownerId !== ownerId ||
+      identity.campaignId !== projection.campaign.id ||
+      identity.branchId !== projection.branch.id ||
       !["queued", "running", "cancelling"].includes(job.status)
     )
       return;
     const effectEpoch = operationEpoch.current;
+    const effectScopeKey = scopeKey;
     const timer = window.setInterval(() => {
-      if (!isCurrentEpoch(effectEpoch)) return;
+      if (
+        !isCurrentEpoch(effectEpoch) ||
+        scopeKeyRef.current !== effectScopeKey
+      )
+        return;
       if (polling.current === effectEpoch) return;
       polling.current = effectEpoch;
       void refresh(identity)
