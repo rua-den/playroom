@@ -56,7 +56,7 @@ def test_missing_frontend_fails_before_creating_data(tmp_path):
 - [x] Document Windows setup: build frontend with locked dependencies, create `.playroom-live` once, use existing `playroom-owner create-owner --database-url .playroom-live/playroom.sqlite3 --email <owner email>` (getpass, no password argument), then `rtk proxy uv run --locked playroom-live-local --data-dir .playroom-live` and open `http://127.0.0.1:8000`. Explain provider setup, review approval, explicit small capped grant and manual Send.
 - [x] State startup recovery may resume an already-authorized durable queued job; this is not a new automatic inference/probe. Keep live authenticated Gemma4 acceptance and private data approval separately tracked under #9.
 - [x] Independent Sol review checks containment, runtime/default-provider wiring, loopback-only cookies/Host/Origin, persistence and test validity. Parent inspects diff and independently runs locked sync, full backend/frontend, typecheck/build, compileall, browser and whitespace checks.
-- [ ] Push feature branch, create and attach PR, require full CI on exact PR head, merge with expected head and verify exact merged-main CI. Record first attempts separately from reruns. Preserve old dirty worktrees and user data.
+- [x] Push feature branch, create and attach PR, require full CI on exact PR head, merge with expected head and verify exact merged-main CI. PR #32 head `2423856` and merged main `4f22646` both passed on attempt 1; exact URLs are in the runtime handoff. Preserve old dirty worktrees and user data.
 
 ## Self-review
 

@@ -49,6 +49,14 @@ Implementation on `feat/issue30-live-local` is locally verified. Runtime code is
 - Parent Chromium at final production code: existing seven-turn reconnect/409/422/refresh/IME/mobile plus selected ChatGPT import/review **PASS**; new live-local assembly login/create/manual fake Send/commit/reload scenario **PASS** with exactly one fake dispatch.
 - Existing owner/campaign/provider-settings/masked credentials persist across app recreation/restart. Fresh startup does not call the provider factory, API Host/Origin checks remain active, production secure cookies remain true, missing build fails before data creation, and public host/invalid port cannot reach Uvicorn.
 
-Exact PR-head and merged-main CI remain the remote release gates; record their URLs and attempts when observed. Chromium acceptance uses a test-only fake provider override through the real local-runner assembly; it is not real Gemma4 acceptance. No owner credential was created by this work and no real inference, private content transmission, physical device or infrastructure change occurred.
+### Remote release evidence
+
+[PR #32](https://github.com/rua-den/playroom/pull/32) merged as `4f22646c3ea2a9d2efa410921c0eedfb836fbcb7`. Exact PR head `24238565377379ae597c536d8040efb39d67b7a6` passed [CI #38879140287](https://github.com/rua-den/playroom/actions/runs/38879140287) on **attempt 1**, all backend/frontend/Chromium jobs. Its Linux backend log confirms **334 passed** (the POSIX mode test ran).
+
+Exact merged-main [CI #38879429397](https://github.com/rua-den/playroom/actions/runs/38879429397) passed on **attempt 1**, all backend/frontend/Chromium jobs, at `4f22646c3ea2a9d2efa410921c0eedfb836fbcb7`. Subsequent release-evidence documentation changes do not claim a separate code-test run at their own SHA.
+
+Chromium acceptance uses a test-only fake provider override through the real local-runner assembly; it is not real Gemma4 acceptance. No owner credential was created by this work and no real inference, private content transmission, physical device or infrastructure change occurred.
 
 Remaining work follows the latest handoff: #29 legacy bundle, remaining #27 ZIP/long source and #9 full authenticated live Gemma4/device/deployment acceptance. Real app inference needs the existing explicit grant/preflight discipline and synthetic content; physical phone and VPS/Caddy/DNS changes retain their separate authorization boundaries.
+
+The private legacy bundle's full nested schema is not in this repository. The current chat requested its local path so the importer can be designed from the actual structure without publishing private content. Until that is available, do not manufacture a schema from the public top-level field list, historical turns from summaries, or an automatic next chapter.

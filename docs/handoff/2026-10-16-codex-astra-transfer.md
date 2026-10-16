@@ -4,6 +4,8 @@
 
 **Recovery follow-up:** [Reconnect race diagnosis and verification](2026-10-16-reconnect-race.md) records the subsequent #20 work, deterministic regressions and exact release evidence. Historical sections below remain evidence for their stated SHAs; use the later execution order at the end of this document.
 
+**Latest runtime checkpoint:** [Owner-local live runtime](2026-10-16-owner-local-live.md) records merged PR #32, the persistent real-provider local runner, exact verification and Windows setup. PR #31's demonstrated reconnect races are fixed; #20's older lost-POST timeout remains open. Next importer work is #29, requiring the actual bundle's private schema to be read locally, then the remaining #27 ZIP/long-history work.
+
 **Date:** 2026-10-16 (Asia/Ho_Chi_Minh)  
 **Repository:** https://github.com/rua-den/playroom  
 **Verified base `main` before documentation update:** `722bf369a9a3da6fe83b94eaac75dc18438573af`. **ALWAYS re-fetch latest origin/main first.**  
