@@ -86,7 +86,7 @@ def _print_generation_diagnostics(page, origin: str, campaign_id: str, branch_id
         jobs = [{"diagnostic_error": type(cause).__name__}]
     alerts = page.locator("[role=alert]").all_text_contents()
     compose = page.locator("#generation-action")
-    send = page.get_by_role("button", name="Gửi", exact=True)
+    send = page.locator(".generation-composer button[type=submit]")
     print(json.dumps({"jobs": jobs, "alerts": alerts, "composer": {"visible": compose.is_visible(), "value_length": len(compose.input_value())}, "send_disabled": send.is_disabled(), "provider_call_count": len(campaign_calls)}, ensure_ascii=False))
 
 
