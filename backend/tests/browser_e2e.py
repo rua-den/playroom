@@ -60,6 +60,49 @@ def _start_demo(data_dir: Path):
     raise RuntimeError("Demo server failed its loopback health check")
 
 
+def _start_live_local(data_dir: Path):
+    """Start the real local assembly with a test-only provider override."""
+    dist = REPO / "frontend" / "dist"
+    if not (dist / "index.html").is_file():
+        raise RuntimeError("Build frontend first: npm ci && npm run build")
+
+    # Keep this import lazy so importing this legacy browser script does not
+    # require the new assembly while its backend module is being assembled.
+    from playroom.live_local import create_live_local_app
+    from playroom.provider import default_provider_factory
+
+    app = create_live_local_app(data_dir, frontend_dist=dist)
+    assert app.state.generation_provider is None
+    assert app.state.generation_provider_factory is default_provider_factory
+
+    # Install only the synthetic owner/profile used by this browser gate. The
+    # real local assembly remains the code under test; the fake is injected
+    # before Uvicorn enters the app lifespan and never reaches production code.
+    from playroom.demo import DemoFakeProvider, _ensure_install
+
+    _ensure_install(data_dir, EMAIL, PASSWORD)
+    campaign_provider = DemoFakeProvider()
+    app.state.generation_provider = campaign_provider
+    app.state.generation_provider_factory = None
+
+    port = _free_loopback_port()
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    origin = f"http://127.0.0.1:{port}"
+    deadline = time.monotonic() + 12
+    while time.monotonic() < deadline:
+        if not thread.is_alive():
+            raise RuntimeError("Live local server exited unexpectedly")
+        try:
+            with urlopen(f"{origin}/health", timeout=1) as response:
+                if response.status == 200:
+                    return app, campaign_provider, server, thread, origin
+        except Exception:
+            time.sleep(0.1)
+    raise RuntimeError("Live local server failed its loopback health check")
+
+
 def _send_and_wait(page, action: str, expected_turns: int) -> None:
     compose = page.get_by_role("textbox", name="Hành động tiếp theo")
     compose.fill(action)
@@ -381,5 +424,64 @@ def browser_synthetic_chat() -> None:
                 raise RuntimeError("Demo server failed to shut down")
 
 
+def browser_live_local_chat() -> None:
+    """Exercise the real local assembly through a built React frontend."""
+    with tempfile.TemporaryDirectory(prefix="playroom-live-local-") as tmp:
+        app, campaign, server, thread, origin = _start_live_local(Path(tmp))
+        try:
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(headless=True, args=["--no-sandbox"])
+                context = browser.new_context(
+                    viewport={"width": 1280, "height": 900},
+                    reduced_motion="reduce",
+                    locale="vi-VN",
+                )
+                page = context.new_page()
+                page.goto(origin, wait_until="domcontentloaded")
+                expect(page.get_by_role("heading", name="Đăng nhập Playroom")).to_be_visible()
+                page.get_by_label("Email").fill(EMAIL)
+                page.get_by_label("Mật khẩu").fill(PASSWORD)
+                page.get_by_role("button", name="Đăng nhập").click()
+                page.get_by_role("button", name="Tạo chiến dịch đầu tiên").click()
+                page.get_by_label("Tên chiến dịch").fill("Lan Vy Binh local")
+                page.get_by_label("Tên thế giới").fill("Thế giới tổng hợp")
+                page.get_by_label("Tên persona").fill("Bình")
+                page.get_by_role("button", name="Thêm nhân vật").click()
+                page.get_by_label("Tên nhân vật 1").fill("Lan")
+                page.get_by_role("button", name="Lưu chiến dịch").click()
+
+                expect(page.get_by_role("heading", name="Lan Vy Binh local")).to_be_visible(timeout=15000)
+                send = page.locator(".generation-composer button[type=submit]")
+                expect(send).to_have_count(1)
+                campaigns = page.context.request.get(f"{origin}/api/campaigns")
+                assert campaigns.ok
+                campaign_id = campaigns.json()[0]["id"]
+                detail = page.context.request.get(f"{origin}/api/campaigns/{campaign_id}").json()
+                branch_id = detail["branch_id"]
+
+                compose = page.locator("#generation-action")
+                compose.fill("Lan, Vy v\u00e0 B\u00ecnh c\u00f9ng quan s\u00e1t.")
+                send.click()
+                expect(page.locator(".story-turn")).to_have_count(1, timeout=25000)
+                expect(compose).to_have_value("", timeout=12000)
+                projection = _project(page, origin, campaign_id, branch_id)
+                assert len(projection["transcript"]) == 1
+                assert projection["transcript"][0]["narrative_text"] == NARRATION
+                assert len(campaign.calls) == 1
+
+                page.reload(wait_until="domcontentloaded")
+                expect(page.locator(".story-turn")).to_have_count(1)
+                assert len(campaign.calls) == 1
+                assert _project(page, origin, campaign_id, branch_id)["transcript"]
+                browser.close()
+                print("Live local Chromium: real assembly, one manual fake Send, committed projection and reload persistence PASS")
+        finally:
+            server.should_exit = True
+            thread.join(timeout=10)
+            if thread.is_alive():
+                raise RuntimeError("Live local server failed to shut down")
+
+
 if __name__ == "__main__":
     browser_synthetic_chat()
+    browser_live_local_chat()
