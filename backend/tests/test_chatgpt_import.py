@@ -137,6 +137,8 @@ def test_import_requires_separate_durable_review_before_generation_even_after_re
     blocked = client.post(f"/api/campaigns/{campaign_id}/generate", json=payload, headers=headers)
     assert blocked.status_code == 409, blocked.text
     assert "review" in blocked.text.lower()
+    for table in ("generation_jobs", "provider_attempts", "generation_branch_guards", "paid_trial_reservations"):
+        assert db_count(path, table) == 0
 
     # A process restart must retain the fail-closed checkpoint.
     app = create_app(database_url=f"sqlite:///{path}", allowed_hosts={"testserver"}, secure_cookies=False,
@@ -145,6 +147,50 @@ def test_import_requires_separate_durable_review_before_generation_even_after_re
     assert client.post("/api/auth/login", json={"email": owner.email, "password": "synthetic strong password"}, headers=headers).status_code == 200
     blocked_again = client.post(f"/api/campaigns/{campaign_id}/generate", json=payload, headers=headers)
     assert blocked_again.status_code == 409
+
+
+def db_count(path, table):
+    db = connect(path)
+    try:
+        return db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+    finally:
+        db.close()
+
+
+def test_review_http_is_authenticated_owner_scoped_strict_and_stale_safe(tmp_path):
+    from playroom.app import create_app
+    path = tmp_path / "review-http.sqlite3"
+    db = connect(path); migrate(db)
+    owner = create_owner(db, "http-review@example.test", "synthetic strong password")
+    other = create_owner(db, "http-other@example.test", "synthetic strong password")
+    db.close()
+    app = create_app(database_url=f"sqlite:///{path}", allowed_hosts={"testserver"}, secure_cookies=False, credential_root=tmp_path / "secrets")
+    client = TestClient(app, base_url="https://testserver")
+    headers = {"origin": "https://testserver"}
+    assert client.post("/api/auth/login", json={"email": owner.email, "password": "synthetic strong password"}, headers=headers).status_code == 200
+    imported = client.post("/api/transfers/chatgpt/import", json={"conversation": fixture_conversation(), "config": {"title": "HTTP gate", "world": {"name": "Synthetic"}, "persona": {"name": "Lan"}, "characters": []}, "import_key": str(uuid4())}, headers=headers).json()
+    base = {"branch_id": imported["branch_id"], "checkpoint_id": imported["checkpoint_id"], "review": {"persona": True, "npc_voice_presence": True, "canon_known_by_narrator_only": True, "missing_history": True}}
+    assert client.post(f"/api/transfers/chatgpt/{imported['campaign_id']}/review", json={**base, "review": {**base["review"], "missing_history": False}}, headers=headers).status_code == 422
+    assert client.post(f"/api/transfers/chatgpt/{imported['campaign_id']}/review", json={**base, "checkpoint_id": str(uuid4())}, headers=headers).status_code == 409
+    malformed = client.post(f"/api/transfers/chatgpt/{imported['campaign_id']}/review", json=[], headers=headers)
+    assert malformed.status_code == 422
+    assert client.post(f"/api/transfers/chatgpt/{imported['campaign_id']}/review", json=base, headers=headers).status_code == 200
+    other_client = TestClient(app, base_url="https://testserver")
+    assert other_client.post("/api/auth/login", json={"email": other.email, "password": "synthetic strong password"}, headers=headers).status_code == 200
+    assert other_client.post(f"/api/transfers/chatgpt/{imported['campaign_id']}/review", json=base, headers=headers).status_code == 404
+
+
+def test_migration_backfills_missing_import_review_and_stays_locked(tmp_path):
+    from playroom.chatgpt_import import assert_import_review_approved
+    path = tmp_path / "review-backfill.sqlite3"
+    db = connect(path); migrate(db)
+    owner = create_owner(db, "backfill@example.test", "synthetic strong password")
+    imported = __import__("playroom.chatgpt_import", fromlist=["import_conversation"]).import_conversation(db, owner.id, fixture_conversation(), {"title": "Backfill", "world": {"name": "Synthetic"}, "persona": {"name": "Lan"}, "characters": []}, str(uuid4()))
+    db.execute("DELETE FROM import_review_checkpoints WHERE campaign_id=?", (imported["campaign_id"],))
+    migrate(db)
+    checkpoint = db.execute("SELECT head_checkpoint_id FROM branches WHERE id=?", (imported["branch_id"],)).fetchone()[0]
+    with pytest.raises(Exception, match="review"):
+        assert_import_review_approved(db, owner.id, imported["campaign_id"], checkpoint)
 
 
 def test_review_is_owner_scoped_idempotent_and_unlocks_fake_send(tmp_path):
