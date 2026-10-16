@@ -10,7 +10,7 @@ import json
 import sqlite3
 
 from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, StrictBool
 
 from ..chatgpt_import import MAX_SOURCE_BYTES, approve_import_review, import_conversation, import_review, preview_conversation
 from ..db import request_connection
@@ -20,10 +20,19 @@ from .auth import require_owner
 router = APIRouter(prefix="/api/transfers", tags=["transfers"])
 
 
+class ImportReview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    persona: StrictBool
+    npc_voice_presence: StrictBool
+    canon_known_by_narrator_only: StrictBool
+    missing_history: StrictBool
+
+
 class ImportReviewPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     branch_id: str
     checkpoint_id: str
-    review: dict[str, bool]
+    review: ImportReview
 MAX_REQUEST_BYTES = MAX_SOURCE_BYTES + 128 * 1024
 
 
@@ -70,4 +79,4 @@ async def import_chatgpt(
 
 @router.post("/chatgpt/{campaign_id}/review")
 async def review_chatgpt(campaign_id: str, payload: ImportReviewPayload, connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
-    return approve_import_review(connection, owner.id, campaign_id, payload.branch_id, payload.checkpoint_id, payload.review)
+    return approve_import_review(connection, owner.id, campaign_id, payload.branch_id, payload.checkpoint_id, payload.review.model_dump())

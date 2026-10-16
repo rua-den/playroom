@@ -634,6 +634,9 @@ class GenerationService:
         return packed, request, metadata
 
     def _execute(self, job) -> None:
+        # Recovery can encounter jobs reserved before the import review gate
+        # existed; re-check immediately before any provider dispatch.
+        assert_import_review_approved(self.connection, job["owner_id"], job["campaign_id"], job["checkpoint_id"])
         profiles, settings = json.loads(job["profile_snapshot_json"]), json.loads(job["settings_snapshot_json"])
         narrator, context = profiles["narrator"], profiles["context"]
         saved_preview = job["preview_snapshot_json"] if "preview_snapshot_json" in job.keys() else None
@@ -1081,6 +1084,14 @@ class GenerationService:
                     return False
                 job = self.connection.execute("SELECT * FROM generation_jobs WHERE id=?", (job_id,)).fetchone()
                 if job is None:
+                    return False
+                # The approval boundary is checked again in the same
+                # transaction that flips claimed -> dispatched. This closes
+                # the race where an imported campaign is revoked after the
+                # recovery precheck but before provider I/O.
+                try:
+                    assert_import_review_approved(self.connection, job["owner_id"], job["campaign_id"], job["checkpoint_id"])
+                except (ValidationError, StateConflict):
                     return False
                 if job["policy"] in {"capped_paid", "free_only"}:
                     try:

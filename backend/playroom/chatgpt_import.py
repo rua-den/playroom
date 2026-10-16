@@ -23,10 +23,11 @@ MAX_TURNS = 1500
 
 
 def import_review(connection: sqlite3.Connection, owner_id: str, campaign_id: str, current_checkpoint_id: str | None = None) -> dict:
-    source = connection.execute("SELECT 1 FROM chatgpt_import_sources WHERE owner_id=? AND campaign_id=?", (owner_id, campaign_id)).fetchone()
+    source = connection.execute("SELECT source_conversation_id, paired_turns, warnings_json FROM chatgpt_import_sources WHERE owner_id=? AND campaign_id=?", (owner_id, campaign_id)).fetchone()
+    source_meta = {"source_conversation_id": source["source_conversation_id"], "paired_turns": source["paired_turns"], "warnings": json.loads(source["warnings_json"] or "[]")} if source else {}
     row = connection.execute("SELECT source_checkpoint_id, approved_checkpoint_id, review_json, approved_at FROM import_review_checkpoints WHERE owner_id=? AND campaign_id=?", (owner_id, campaign_id)).fetchone()
     if row is None:
-        return {"required": source is not None, "approved": source is None, "approved_checkpoint_id": None, "review": {}}
+        return {"required": source is not None, "approved": source is None, "approved_checkpoint_id": None, "review": {}, **source_meta}
     approved = row["approved_checkpoint_id"] is not None
     if approved and current_checkpoint_id:
         cursor = current_checkpoint_id
@@ -37,7 +38,7 @@ def import_review(connection: sqlite3.Connection, owner_id: str, campaign_id: st
                 break
             parent = connection.execute("SELECT parent_checkpoint_id FROM state_checkpoints WHERE id=?", (cursor,)).fetchone()
             cursor = parent[0] if parent else None
-    return {"required": not approved, "approved": approved, "source_checkpoint_id": row["source_checkpoint_id"], "approved_checkpoint_id": row["approved_checkpoint_id"], "approved_at": row["approved_at"], "review": json.loads(row["review_json"] or "{}")}
+    return {"required": not approved, "approved": approved, "source_checkpoint_id": row["source_checkpoint_id"], "approved_checkpoint_id": row["approved_checkpoint_id"], "approved_at": row["approved_at"], "review": json.loads(row["review_json"] or "{}"), **source_meta}
 
 
 def assert_import_review_approved(connection: sqlite3.Connection, owner_id: str, campaign_id: str, checkpoint_id: str) -> None:

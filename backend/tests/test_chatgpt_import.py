@@ -193,6 +193,49 @@ def test_migration_backfills_missing_import_review_and_stays_locked(tmp_path):
         assert_import_review_approved(db, owner.id, imported["campaign_id"], checkpoint)
 
 
+def test_preexisting_queued_import_job_fails_closed_during_recovery(tmp_path):
+    from playroom.campaigns import create_campaign
+    from playroom.generation import GenerationService
+    from playroom.provider import FakeProvider
+    from playroom.timeline import get_branch_head
+    path = tmp_path / "queued-import.sqlite3"
+    db = connect(path); migrate(db)
+    owner = create_owner(db, "queued-import@example.test", "synthetic strong password")
+    campaign = create_campaign(db, owner.id, "Queued imported", {"name": "Synthetic"}, [], {"name": "Lan"})
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id, owner.id)
+    service = GenerationService(db, FakeProvider(["must not be called"]))
+    job = service.generate(owner.id, campaign.id, campaign.initial_branch_id, "*Lan waits.*", idempotency_key=str(uuid4()), expected_checkpoint_id=head.checkpoint_id, execute=False)
+    db.execute("INSERT INTO chatgpt_import_sources(id,owner_id,campaign_id,branch_id,import_key,payload_hash,source_conversation_id,selected_source_json,paired_turns,warnings_json,imported_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)", (str(uuid4()), owner.id, campaign.id, campaign.initial_branch_id, str(uuid4()), str(uuid4()), "legacy", "{}", 1, "[]", "2026-01-01T00:00:00Z"))
+    db.execute("DELETE FROM import_review_checkpoints WHERE campaign_id=?", (campaign.id,))
+    recovered = GenerationService(db, service.provider).run(job["id"])
+    assert recovered["status"] == "failed"
+    assert not service.provider.calls
+    assert db.execute("SELECT COUNT(*) FROM generation_branch_guards WHERE branch_id=?", (campaign.initial_branch_id,)).fetchone()[0] == 0
+
+
+def test_invocation_gate_rechecks_import_review_inside_dispatch_transaction(tmp_path):
+    from playroom.campaigns import create_campaign
+    from playroom.generation import GenerationService
+    from playroom.provider import FakeProvider
+    from playroom.timeline import get_branch_head
+    path = tmp_path / "dispatch-import.sqlite3"
+    db = connect(path); migrate(db)
+    owner = create_owner(db, "dispatch-import@example.test", "synthetic strong password")
+    campaign = create_campaign(db, owner.id, "Dispatch imported", {"name": "Synthetic"}, [], {"name": "Lan"})
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id, owner.id)
+    db.execute("INSERT INTO chatgpt_import_sources(id,owner_id,campaign_id,branch_id,import_key,payload_hash,source_conversation_id,selected_source_json,paired_turns,warnings_json,imported_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)", (str(uuid4()), owner.id, campaign.id, campaign.initial_branch_id, str(uuid4()), str(uuid4()), "legacy", "{}", 1, "[]", "2026-01-01T00:00:00Z"))
+    db.execute("INSERT INTO import_review_checkpoints(campaign_id,owner_id,source_checkpoint_id,approved_checkpoint_id,review_json,approved_at,created_at) VALUES(?,?,?,?,?,?,?)", (campaign.id, owner.id, head.checkpoint_id, head.checkpoint_id, '{"persona":true}', "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"))
+    service = GenerationService(db, FakeProvider(["must not be called"]))
+    job = service.generate(owner.id, campaign.id, campaign.initial_branch_id, "*Lan waits.*", idempotency_key=str(uuid4()), expected_checkpoint_id=head.checkpoint_id, execute=False)
+    db.execute("UPDATE generation_jobs SET status='running' WHERE id=?", (job["id"],))
+    key = f"{job['id']}:narration"
+    db.execute("UPDATE provider_attempts SET status='claimed',claim_epoch=? WHERE stage_key=?", (service._epoch(), key))
+    db.execute("DELETE FROM import_review_checkpoints WHERE campaign_id=?", (campaign.id,))
+    assert service._invocation_gate(job["id"], key) is False
+    assert db.execute("SELECT status FROM provider_attempts WHERE stage_key=?", (key,)).fetchone()[0] == "claimed"
+    assert not service.provider.calls
+
+
 def test_review_is_owner_scoped_idempotent_and_unlocks_fake_send(tmp_path):
     from playroom.chatgpt_import import approve_import_review, import_conversation, import_review
     from playroom.generation import GenerationService
