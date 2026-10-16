@@ -236,6 +236,7 @@ def browser_synthetic_chat() -> None:
                 page.reload(wait_until="domcontentloaded")
                 expect(page.locator(".story-turn")).to_have_count(6)
                 assert len(campaign.calls) == 6
+                default_generate_text = campaign.generate_text
                 assert not any(k.startswith("playroom:generation:") for k in page.evaluate("Object.keys(localStorage)"))
                 # The live frontend should also render *attributed* NPC
                 # dialogue. Seed a scene through the authenticated fake-only
@@ -293,6 +294,11 @@ def browser_synthetic_chat() -> None:
                 page.reload(wait_until="domcontentloaded")
                 expect(page.locator(".story-turn")).to_have_count(7)
                 assert len(campaign.calls) == 7
+
+                # The imported Lan/Vy campaign has a different cast. Restore
+                # the generic synthetic narrator before exercising its Send;
+                # the Yuna-specific fixture above must not leak across campaigns.
+                campaign.generate_text = default_generate_text
 
                 # Task 7A: import ONLY a chosen synthetic ChatGPT thread,
                 # with an alternate assistant branch excluded from the active path.

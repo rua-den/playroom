@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { recoverableJobCount, recoverableJobSummary } from "./AppShell";
-import { AppShell } from "./AppShell";
+import { AppShell, ImportReviewPanel } from "./AppShell";
+import { api } from "../api/client";
 
 vi.mock("./GenerationComposer", () => ({ GenerationComposer: () => <div data-testid="generation-composer" /> }));
 vi.mock("./ProfileEditor", () => ({ ProfileEditor: () => <div data-testid="profile-editor" /> }));
@@ -13,6 +14,15 @@ vi.mock("./SettingsPanel", () => ({ SettingsPanel: () => <div data-testid="setti
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("recoverable job summary", () => {
+  function reviewProjection(checkpoint = "checkpoint", campaign = "imported") {
+    return { campaign: { id: campaign, title: campaign, created_at: "2026-01-01", updated_at: "2026-01-01", archived_at: null }, branch: { id: "branch", name: "main", state_version: 1, checkpoint_id: checkpoint }, checkpoint: { id: checkpoint, state_version: 1, parent_checkpoint_id: null, selected_revision_ids: [], retrieval_policy: "auto" as const }, profiles: {}, scene: null, transcript: [], jobs: [], import_review: { required: true, approved: false, review: {} } };
+  }
+
+  function mockReviewSnapshot() {
+    vi.spyOn(api, "listMemory").mockResolvedValue([]);
+    vi.spyOn(api, "getScene").mockResolvedValue({ focus_scene_id: null, scenes: {} });
+  }
+
   it("renders structured player turns and attributed NPC dialogue", async () => {
     vi.stubGlobal("fetch", vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify([{ id: "campaign-structured", title: "Structured", created_at: "2026-01-01", updated_at: "2026-01-01", archived_at: null }]), { status: 200 }))
@@ -86,5 +96,42 @@ describe("recoverable job summary", () => {
     expect(approve).toBeEnabled();
     await userEvent.setup().click(approve);
     expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/api/transfers/chatgpt/imported/review"), expect.objectContaining({ method: "POST" }));
+  });
+
+  it("keeps approval disabled when the actual snapshot cannot be loaded", async () => {
+    vi.spyOn(api, "listMemory").mockRejectedValue(new Error("offline"));
+    vi.spyOn(api, "getScene").mockResolvedValue({ focus_scene_id: null, scenes: {} });
+    render(<ImportReviewPanel projection={reviewProjection() as never} onApproved={() => undefined} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Không thể tải đầy đủ");
+    expect(screen.getByRole("button", { name: /Duyệt checkpoint/ })).toBeDisabled();
+    expect(screen.getAllByRole("checkbox").every((checkbox) => (checkbox as HTMLInputElement).disabled)).toBe(true);
+  });
+
+  it("resets every acknowledgement when the checkpoint changes", async () => {
+    mockReviewSnapshot();
+    const { rerender } = render(<ImportReviewPanel projection={reviewProjection("checkpoint-a") as never} onApproved={() => undefined} />);
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getAllByRole("checkbox")[0]).toBeEnabled());
+    for (const checkbox of screen.getAllByRole("checkbox")) await user.click(checkbox);
+    expect(screen.getByRole("button", { name: /Duyệt checkpoint/ })).toBeEnabled();
+    rerender(<ImportReviewPanel projection={reviewProjection("checkpoint-b") as never} onApproved={() => undefined} />);
+    await waitFor(() => expect(screen.getAllByRole("checkbox").every((checkbox) => !(checkbox as HTMLInputElement).checked)).toBe(true));
+    expect(screen.getByRole("button", { name: /Duyệt checkpoint/ })).toBeDisabled();
+  });
+
+  it("ignores a delayed approval after the campaign identity changes", async () => {
+    mockReviewSnapshot();
+    let resolveApproval: (value: { required: boolean; approved: boolean }) => void = () => undefined;
+    vi.spyOn(api, "approveChatGptImport").mockReturnValue(new Promise((resolve) => { resolveApproval = resolve; }));
+    const onApproved = vi.fn();
+    const { rerender } = render(<ImportReviewPanel projection={reviewProjection("checkpoint-a", "campaign-a") as never} onApproved={onApproved} />);
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getAllByRole("checkbox")[0]).toBeEnabled());
+    for (const checkbox of screen.getAllByRole("checkbox")) await user.click(checkbox);
+    await user.click(screen.getByRole("button", { name: /Duyệt checkpoint/ }));
+    rerender(<ImportReviewPanel projection={reviewProjection("checkpoint-b", "campaign-b") as never} onApproved={onApproved} />);
+    resolveApproval({ required: false, approved: true });
+    await waitFor(() => expect(screen.getByRole("button", { name: /Duyệt checkpoint/ })).toBeDisabled());
+    expect(onApproved).not.toHaveBeenCalled();
   });
 });
