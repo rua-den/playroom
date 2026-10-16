@@ -6,7 +6,7 @@
 
 **Architecture:** A dedicated `playroom.live_local` assembly calls the existing real `create_app` factory, then serves the built frontend through a contained static/SPA router. The CLI forces `127.0.0.1`; only this assembly uses HTTP cookies. Existing demo, production defaults, provider verification, budget grants, import review and runtime recovery remain intact.
 
-**Tech Stack:** Python 3.12+, FastAPI/Starlette StaticFiles, Uvicorn, SQLite, existing React build, pytest and Playwright Chromium. No new runtime dependency.
+**Tech Stack:** Python 3.12+, FastAPI/Starlette FileResponse with a contained path resolver, Uvicorn, SQLite, existing React build, pytest and Playwright Chromium. No new runtime dependency.
 
 **Spec:** [Issue #30](https://github.com/rua-den/playroom/issues/30), authorized continuation order in `docs/handoff/2026-10-16-codex-astra-transfer.md`.
 
@@ -25,7 +25,7 @@
 
 **Interface:** `create_live_local_app(data_dir: str | Path, *, frontend_dist: str | Path | None = None)` returns a FastAPI app. Default dist is repository `frontend/dist`; root contains `playroom.sqlite3` and `secrets/`. `main()` parses `--data-dir` (default `.playroom-live`), `--frontend-dist`, `--host` (default and only accepted value `127.0.0.1`), `--port` (default 8000). Entrypoint: `playroom-live-local = "playroom.live_local:main"`.
 
-- [ ] Add failing tests before creating the module, including this first contract:
+- [x] Add failing tests before creating the module, including this first contract:
 
 ```python
 def test_missing_frontend_fails_before_creating_data(tmp_path):
@@ -34,28 +34,28 @@ def test_missing_frontend_fails_before_creating_data(tmp_path):
     assert not (tmp_path / "data").exists()
 ```
 
-- [ ] Run `rtk proxy uv run --locked --extra test pytest backend/tests/test_live_local.py -q` and record actual RED.
-- [ ] Implement the minimal assembly: resolve/validate built index first, create persistent root, call existing `create_app` with DB/root, explicit `allowed_hosts={"127.0.0.1", "localhost"}` and `secure_cookies=False`. Omit provider/factory overrides so production's real default applies. Keep real create_app defaults untouched.
-- [ ] Serve assets safely using StaticFiles containment and no symlink following. Unknown `/api` paths remain JSON 404; existing API/health routes take precedence. Valid client routes get index; traversal, absolute/encoded/backslash escapes and files outside dist never return outside contents. Missing build fails clearly before the worker starts.
-- [ ] Test CLI rejects alternate/public host and invalid port without Uvicorn; accepted call receives `host="127.0.0.1"`. Test real factory identity by default, no new provider invocation on a fresh startup, auth cookie on local HTTP, Host/Origin protection, API 404, safe static fallback, login/campaign/settings/credential persistence across restart and masked credentials. Reuse existing auth, credential and runtime tests/patterns rather than altering policy.
-- [ ] Run focused suite, full backend suite and compileall, then commit only owned files. Preserve any concurrent browser/docs work.
+- [x] Run `rtk proxy uv run --locked --extra test pytest backend/tests/test_live_local.py -q` and record actual RED.
+- [x] Implement the minimal assembly: resolve/validate built index first, create persistent root, call existing `create_app` with DB/root, explicit `allowed_hosts={"127.0.0.1", "localhost"}` and `secure_cookies=False`. Omit provider/factory overrides so production's real default applies. Keep real create_app defaults untouched.
+- [x] Serve assets safely using contained resolved paths and explicit symlink rejection (the final implementation uses FileResponse rather than StaticFiles). Unknown `/api` paths remain JSON 404; existing API/health routes take precedence. Valid client routes get index; traversal, absolute/encoded/backslash escapes and files outside dist never return outside contents. Missing build fails clearly before the worker starts.
+- [x] Test CLI rejects alternate/public host and invalid port without Uvicorn; accepted call receives `host="127.0.0.1"`. Test real factory identity by default, no new provider invocation on a fresh startup, auth cookie on local HTTP, Host/Origin protection, API 404, safe static fallback, login/campaign/settings/credential persistence across restart and masked credentials. Reuse existing auth, credential and runtime tests/patterns rather than altering policy.
+- [x] Run focused suite, full backend suite and compileall, then commit only owned files. Preserve any concurrent browser/docs work.
 
 ## Task 2: Chromium through the local-runner assembly
 
 **Files:** Modify `backend/tests/browser_e2e.py` only. Consume the factory signature from Task 1; preserve existing seven-turn and import/review scenario.
 
-- [ ] Add a distinct browser scenario that calls the local factory, injects fake provider state strictly inside the test before lifespan, creates a synthetic owner/profile using existing helpers, and starts its real Uvicorn server. A missing local factory is the initial RED; record it before Task 1 implementation lands if timing permits.
-- [ ] In actual Chromium: load served React, authenticate, manually create a synthetic campaign, enter one action and Send through API/runtime, wait for one committed projected turn, reload and assert it persists. Assert one physical fake narration dispatch and no new automatic dispatch from reload/startup. Verify the real factory is the assembly default before test-only override.
-- [ ] Call this scenario from the existing script entrypoint so exact-SHA CI executes it automatically. No real credentials or provider network requests.
-- [ ] Run `rtk proxy uv run --locked --with playwright==1.56.0 python backend/tests/browser_e2e.py`, commit only browser changes, and report first RED/final result.
+- [x] Add a distinct browser scenario that calls the local factory, injects fake provider state strictly inside the test before lifespan, creates a synthetic owner/profile using existing helpers, and starts its real Uvicorn server. Task 1 captured the actual missing-module RED; browser development failures were selectors, as recorded honestly in the handoff.
+- [x] In actual Chromium: load served React, authenticate, manually create a synthetic campaign, enter one action and Send through API/runtime, wait for one committed projected turn, reload and assert it persists. Assert one physical fake narration dispatch and no new automatic dispatch from reload/startup. Verify the real factory is the assembly default before test-only override.
+- [x] Call this scenario from the existing script entrypoint so exact-SHA CI executes it automatically. No real credentials or provider network requests.
+- [x] Run `rtk proxy uv run --locked --with playwright==1.56.0 python backend/tests/browser_e2e.py`, commit browser changes, and report first RED/final result. The final test commit also contains runtime test additions after a shared-checkout amend; final tree was independently reviewed with no lost code.
 
 ## Task 3: Owner instructions, independent review and release
 
 **Files:** Parent owns README and `docs/handoff/2026-10-16-owner-local-live.md`, plus previous checkpoint evidence updates.
 
-- [ ] Document Windows setup: build frontend with locked dependencies, create `.playroom-live` once, use existing `playroom-owner create-owner --database-url .playroom-live/playroom.sqlite3 --email <owner email>` (getpass, no password argument), then `rtk proxy uv run --locked playroom-live-local --data-dir .playroom-live` and open `http://127.0.0.1:8000`. Explain provider setup, review approval, explicit small capped grant and manual Send.
-- [ ] State startup recovery may resume an already-authorized durable queued job; this is not a new automatic inference/probe. Keep live authenticated Gemma4 acceptance and private data approval separately tracked under #9.
-- [ ] Independent Sol review checks containment, runtime/default-provider wiring, loopback-only cookies/Host/Origin, persistence and test validity. Parent inspects diff and independently runs locked sync, full backend/frontend, typecheck/build, compileall, browser and whitespace checks.
+- [x] Document Windows setup: build frontend with locked dependencies, create `.playroom-live` once, use existing `playroom-owner create-owner --database-url .playroom-live/playroom.sqlite3 --email <owner email>` (getpass, no password argument), then `rtk proxy uv run --locked playroom-live-local --data-dir .playroom-live` and open `http://127.0.0.1:8000`. Explain provider setup, review approval, explicit small capped grant and manual Send.
+- [x] State startup recovery may resume an already-authorized durable queued job; this is not a new automatic inference/probe. Keep live authenticated Gemma4 acceptance and private data approval separately tracked under #9.
+- [x] Independent Sol review checks containment, runtime/default-provider wiring, loopback-only cookies/Host/Origin, persistence and test validity. Parent inspects diff and independently runs locked sync, full backend/frontend, typecheck/build, compileall, browser and whitespace checks.
 - [ ] Push feature branch, create and attach PR, require full CI on exact PR head, merge with expected head and verify exact merged-main CI. Record first attempts separately from reruns. Preserve old dirty worktrees and user data.
 
 ## Self-review

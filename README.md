@@ -19,6 +19,8 @@ Trọng tâm là quản lý context qua nhiều chương: lưu hồ sơ, cảnh,
 
 **Ưu tiên tiếp theo:** sửa race reconnect #20 → runner chơi local thật #30 → legacy bundle #29 → ZIP/lịch sử dài #27 → nghiệm thu app thật #9 và phê duyệt riêng cho triển khai điện thoại. [Handoff 16/10](docs/handoff/2026-10-16-codex-astra-transfer.md) giữ các giới hạn dữ liệu, chi phí và VPS; [checkpoint reconnect](docs/handoff/2026-10-16-reconnect-race.md) ghi regression và bằng chứng kiểm chứng mới.
 
+**Cập nhật reconnect:** [PR #31](https://github.com/rua-den/playroom/pull/31) đã merge tại `3e9d23a711b59f379e1728e94900175102a4dad2`: giữ bản nháp khi phản hồi commit/poll/recovery đến muộn và chặn cập nhật nhầm chiến dịch. Exact PR và merged-main CI đều xanh ngay attempt 1. Local: **320 backend, 102 frontend PASS / 3 skipped**, typecheck/build/Chromium PASS. #20 vẫn mở cho timeout lost-POST cũ chưa được tái hiện cùng nguyên nhân; bước thực thi kế tiếp là #30.
+
 ## Đọc theo thứ tự
 
 1. [Thiết kế sản phẩm và context](docs/superpowers/specs/2026-10-12-personal-playroom-design.md).
@@ -68,3 +70,29 @@ rtk proxy uv run playroom-demo --data-dir .playroom-demo
 Mở `http://127.0.0.1:8000`. Lần chạy đầu tạo owner password ngẫu nhiên an toàn và in password đúng một lần. Có thể tự đặt password tối thiểu 12 ký tự bằng `--password`; thư mục `.playroom-demo/` giữ SQLite và secrets để dữ liệu còn sau khi khởi động lại. Giao diện hiển thị nhãn synthetic/demo và narrative xác định để thử nhiều lượt.
 
 Thêm `--email demo@example.test` nếu cần email khác. Không dùng thư mục demo hoặc `secure_cookies=False` cho production; production factory vẫn yêu cầu cấu hình provider/credential thật và cookie bảo mật.
+
+## Chạy app thật trên máy cá nhân
+
+`playroom-live-local` dùng runtime/provider thật và lưu SQLite cùng credentials trong `.playroom-live/`. Runner ép bind `127.0.0.1`; chỉ chế độ local HTTP này dùng cookie không có cờ Secure. Production vẫn giữ mặc định cookie bảo mật. Build frontend trước:
+
+```powershell
+rtk proxy uv sync --locked --extra test
+rtk proxy npm --prefix frontend ci
+rtk proxy npm --prefix frontend run build
+```
+
+Tạo tài khoản một lần bằng email muốn dùng; CLI hỏi mật khẩu qua input ẩn:
+
+```powershell
+rtk proxy uv run --locked playroom-owner create-owner --database-url .playroom-live/playroom.sqlite3 --email owner@example.test
+```
+
+Mỗi lần chơi, chạy một lệnh và mở `http://127.0.0.1:8000`:
+
+```powershell
+rtk proxy uv run --locked playroom-live-local --data-dir .playroom-live
+```
+
+Đăng nhập, cấu hình/verify provider, chọn model và cấp grant nhỏ tường minh nếu cần; tạo chiến dịch giả lập hoặc import rồi duyệt checkpoint trước khi tự nhấn Gửi. Runner không tự tạo tài khoản, probe model hay gửi lượt mới khi khởi động. Job đã được bạn cho phép và còn queued có thể tiếp tục theo cơ chế recovery hiện có. Giữ kín thư mục dữ liệu và dùng lại nó khi khởi động sau. Thiếu frontend build hoặc chọn host khác sẽ báo lỗi.
+
+[Hướng dẫn và bằng chứng local live](docs/handoff/2026-10-16-owner-local-live.md) phân biệt kiểm chứng Chromium dùng fake override với nghiệm thu Gemma4 thật còn ở #9. Dữ liệu BANGTAN/Henn riêng tư, điện thoại thật và VPS vẫn có ranh giới phê duyệt riêng.

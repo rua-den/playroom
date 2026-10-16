@@ -36,6 +36,12 @@ Final independent code review at `ce51d34` + `9020052`: no remaining production 
 
 ## Release status
 
-Local implementation, independent review and verification are complete; remote exact-SHA CI is the next release gate. Final Chromium at `ce51d34` + `9020052` passed the entire seven-turn and selected JSON import/review script; two earlier complete runs at `d789737` also passed. `git diff --check` and compileall passed. No follow-up PR has been merged yet. Issue #20 stays open: this fixes demonstrated draft/ownership races and adds diagnostics, while the older lost-POST first-attempt timeout has not been independently reproduced as the same defect. Record exact PR and merged-main CI URLs after release.
+Local implementation, independent review and verification are complete. Final Chromium at `ce51d34` + `9020052` passed the entire seven-turn and selected JSON import/review script; two earlier complete runs at `d789737` also passed. `git diff --check` and compileall passed. Issue #20 stays open: this fixes demonstrated draft/ownership races and adds diagnostics, while the older lost-POST first-attempt timeout has not been independently reproduced as the same defect.
+
+### Released checkpoint
+
+[PR #31](https://github.com/rua-den/playroom/pull/31) merged as `3e9d23a711b59f379e1728e94900175102a4dad2`. Exact PR head `7b6f89b60f38c80059a98d32df7d221cc5ee3bd0` passed [CI #38877304945](https://github.com/rua-den/playroom/actions/runs/38877304945) on **attempt 1**. Exact merged main passed [CI #38877460660](https://github.com/rua-den/playroom/actions/runs/38877460660) on **attempt 1**, all backend/frontend/Chromium jobs. The separately recorded PR #28 main attempt-1 failure remains visible above.
+
+Next execution checkpoint: #30 owner-local live runner, from the verified `3e9d23a` main. #20 remains open for the distinct older lost-POST failure. Neither this PR nor synthetic CI supplies real authenticated Gemma4, private-story, physical-phone or deployment acceptance.
 
 No real model calls, private story transmission, phone operation or VPS/Caddy changes are part of this checkpoint. ZIP/long import (#27), private legacy bundle (#29), and full live/phone/deployment acceptance (#9) remain separate unfinished work.
