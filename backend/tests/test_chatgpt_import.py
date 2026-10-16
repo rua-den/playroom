@@ -78,12 +78,32 @@ def test_import_preserves_selected_story_and_is_idempotent_and_owner_scoped(tmp_
     ]
     record = db.execute("SELECT selected_source_json FROM chatgpt_import_sources WHERE campaign_id=?", (first["campaign_id"],)).fetchone()
     assert record is not None and "ALT SHOULD NOT IMPORT" in record[0]
+    stored_source = db.execute("SELECT skipped_messages FROM chatgpt_import_sources WHERE campaign_id=?", (first["campaign_id"],)).fetchone()
+    assert stored_source[0] == 1
+    from playroom.chatgpt_import import import_review
+    assert import_review(db, owner.id, first["campaign_id"])["skipped_messages"] == 1
     # User isolation: second owner cannot acquire the first owner's import ID/key.
     second = import_conversation(db, other.id, source, config, key)
     assert second["campaign_id"] != first["campaign_id"]
     with pytest.raises(ValidationError, match="key|payload|different"):
         import_conversation(db, owner.id, {**source, "title": "changed"}, config, key)
     db.close()
+
+
+def test_legacy_import_skip_count_is_explicitly_unknown_after_reload(tmp_path):
+    from playroom.chatgpt_import import import_conversation, import_review
+    path = tmp_path / "legacy-source.sqlite3"
+    db = connect(path); migrate(db)
+    owner = create_owner(db, "legacy-source@example.test", "synthetic strong password")
+    imported = import_conversation(db, owner.id, fixture_conversation(), {"title": "Legacy", "world": {"name": "Synthetic"}, "persona": {"name": "Lan"}, "characters": []}, str(uuid4()))
+    db.execute("UPDATE chatgpt_import_sources SET skipped_messages=NULL WHERE campaign_id=?", (imported["campaign_id"],))
+    db.close()
+    reopened = connect(path); migrate(reopened)
+    metadata = import_review(reopened, owner.id, imported["campaign_id"])
+    assert metadata["skipped_messages"] is None
+    assert metadata["skipped_messages_known"] is False
+    assert any("unavailable" in warning for warning in metadata["warnings"])
+    reopened.close()
 
 
 def test_http_preview_and_import_require_auth_and_reject_empty_story(tmp_path):

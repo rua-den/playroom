@@ -23,8 +23,19 @@ MAX_TURNS = 1500
 
 
 def import_review(connection: sqlite3.Connection, owner_id: str, campaign_id: str, current_checkpoint_id: str | None = None) -> dict:
-    source = connection.execute("SELECT source_conversation_id, paired_turns, warnings_json FROM chatgpt_import_sources WHERE owner_id=? AND campaign_id=?", (owner_id, campaign_id)).fetchone()
-    source_meta = {"source_conversation_id": source["source_conversation_id"], "paired_turns": source["paired_turns"], "warnings": json.loads(source["warnings_json"] or "[]")} if source else {}
+    source = connection.execute("SELECT source_conversation_id, paired_turns, warnings_json, skipped_messages FROM chatgpt_import_sources WHERE owner_id=? AND campaign_id=?", (owner_id, campaign_id)).fetchone()
+    source_meta = {}
+    if source:
+        try:
+            warnings = json.loads(source["warnings_json"] or "[]")
+            if not isinstance(warnings, list):
+                warnings = []
+        except (TypeError, ValueError):
+            warnings = []
+        skipped = source["skipped_messages"]
+        if skipped is None:
+            warnings = [*warnings, "Skipped-message count unavailable for this legacy import"]
+        source_meta = {"source_conversation_id": source["source_conversation_id"], "paired_turns": source["paired_turns"], "skipped_messages": skipped, "skipped_messages_known": skipped is not None, "warnings": sorted(set(warnings))}
     row = connection.execute("SELECT source_checkpoint_id, approved_checkpoint_id, review_json, approved_at FROM import_review_checkpoints WHERE owner_id=? AND campaign_id=?", (owner_id, campaign_id)).fetchone()
     if row is None:
         return {"required": source is not None, "approved": source is None, "approved_checkpoint_id": None, "review": {}, **source_meta}
@@ -241,10 +252,10 @@ def import_conversation(connection: sqlite3.Connection, owner_id: str, source: d
             )
             version += 1
         connection.execute(
-            "INSERT INTO chatgpt_import_sources(id,owner_id,campaign_id,branch_id,import_key,payload_hash,source_conversation_id,selected_source_json,paired_turns,warnings_json,imported_at) VALUES(?,?,?,?,?,?,?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+            "INSERT INTO chatgpt_import_sources(id,owner_id,campaign_id,branch_id,import_key,payload_hash,source_conversation_id,selected_source_json,paired_turns,warnings_json,imported_at,skipped_messages) VALUES(?,?,?,?,?,?,?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),?)",
             (str(uuid4()), owner_id, created.id, created.initial_branch_id, key, digest,
              parsed["conversation_id"], original, len(parsed["turns"]),
-             json.dumps(parsed["warnings"], ensure_ascii=False)),
+             json.dumps(parsed["warnings"], ensure_ascii=False), parsed["skipped_messages"]),
         )
         checkpoint = connection.execute("SELECT head_checkpoint_id FROM branches WHERE id=?", (created.initial_branch_id,)).fetchone()[0]
         connection.execute(

@@ -50,6 +50,10 @@ def migrate(connection: sqlite3.Connection) -> None:
     connection.executescript(source_imports.read_text(encoding="utf-8"))
     import_review = Path(__file__).parent / "migrations" / "004_import_review.sql"
     connection.executescript(import_review.read_text(encoding="utf-8"))
+    source_skip_count = Path(__file__).parent / "migrations" / "005_import_source_skip_count.sql"
+    source_columns = {row[1] for row in connection.execute("PRAGMA table_info(chatgpt_import_sources)")}
+    if "skipped_messages" not in source_columns:
+        connection.executescript(source_skip_count.read_text(encoding="utf-8"))
     columns = {row[1] for row in connection.execute("PRAGMA table_info(campaigns)")}
     if "archived_at" not in columns:
         connection.execute("ALTER TABLE campaigns ADD COLUMN archived_at TEXT")
