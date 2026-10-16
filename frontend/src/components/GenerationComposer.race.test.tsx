@@ -109,7 +109,9 @@ describe("GenerationComposer stale async generation races", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const intervals: Array<() => void> = [];
-    vi.spyOn(window, "setInterval").mockImplementation((callback) => {
+    const originalSetInterval = window.setInterval;
+    vi.spyOn(window, "setInterval").mockImplementation((callback, delay) => {
+      if (delay !== 1200) return originalSetInterval.call(window, callback, delay);
       intervals.push(callback as () => void);
       return setTimeout(() => undefined, 0);
     });
@@ -155,7 +157,9 @@ describe("GenerationComposer stale async generation races", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const intervals: Array<() => void> = [];
-    vi.spyOn(window, "setInterval").mockImplementation((callback) => {
+    const originalSetInterval = window.setInterval;
+    vi.spyOn(window, "setInterval").mockImplementation((callback, delay) => {
+      if (delay !== 1200) return originalSetInterval.call(window, callback, delay);
       intervals.push(callback as () => void);
       return setTimeout(() => undefined, 0);
     });
@@ -235,6 +239,7 @@ describe("GenerationComposer stale async generation races", () => {
     let oldJobRequests = 0;
     const fetchMock = vi.fn((url: string | URL) => {
       const target = String(url);
+      if (target.includes("/events")) return Promise.resolve(new Response(JSON.stringify({ events: [] }), { status: 200 }));
       if (target.includes("job-old")) {
         oldJobRequests += 1;
         return oldJobRequests === 1
@@ -248,7 +253,9 @@ describe("GenerationComposer stale async generation races", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     const intervals: Array<() => void> = [];
-    vi.spyOn(window, "setInterval").mockImplementation((callback) => {
+    const originalSetInterval = window.setInterval;
+    vi.spyOn(window, "setInterval").mockImplementation((callback, delay) => {
+      if (delay !== 1200) return originalSetInterval.call(window, callback, delay);
       intervals.push(callback as () => void);
       return setTimeout(() => undefined, 0);
     });
@@ -259,11 +266,13 @@ describe("GenerationComposer stale async generation races", () => {
       expect(intervals.length).toBeGreaterThan(0);
     });
     const stalePoll = intervals[intervals.length - 1];
+    const oldRawAfterRecovery = localStorage.getItem(oldKey);
 
     localStorage.setItem(newKey, newRaw);
     rerender(<GenerationComposer ownerId="owner-1" projection={newProjection} profileId="profile-1" onCommitted={onCommitted} />);
     const input = await screen.findByLabelText("Hành động tiếp theo");
     await waitFor(() => expect(input).toHaveValue("New action"));
+    const newRawAfterRecovery = localStorage.getItem(newKey);
     await act(async () => {
       stalePoll();
       await Promise.resolve();
@@ -273,8 +282,8 @@ describe("GenerationComposer stale async generation races", () => {
 
     expect(oldJobRequests).toBe(1);
     expect(input).toHaveValue("New action");
-    expect(localStorage.getItem(oldKey)).toBe(oldRaw);
-    expect(localStorage.getItem(newKey)).toBe(newRaw);
+    expect(localStorage.getItem(oldKey)).toBe(oldRawAfterRecovery);
+    expect(localStorage.getItem(newKey)).toBe(newRawAfterRecovery);
     expect(onCommitted).not.toHaveBeenCalled();
   });
 });
