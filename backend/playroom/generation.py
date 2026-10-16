@@ -28,6 +28,7 @@ from .settings import get_owner_settings, ROLE_BUDGET_DEFAULTS
 from .provider import ProviderAdapter, ProviderFailure, ProviderResult
 from .context_director import deterministic_selection, validate_director_plan
 from .timeline import _create_committed_revision_in_transaction, get_branch_head, load_state_checkpoint
+from .chatgpt_import import assert_import_review_approved
 from .roleplay_segments import parse_narrator_payload, validate_narrator_segments
 from .attempt_runtime import PhysicalAttemptRegistry
 from .wire_cost import (
@@ -288,6 +289,7 @@ class GenerationService:
             locked_head = get_branch_head(self.connection, campaign_id, branch_id, owner_id)
             if locked_head.checkpoint_id != expected_checkpoint_id:
                 raise StateConflict("Generation checkpoint is stale")
+            assert_import_review_approved(self.connection, owner_id, campaign_id, locked_head.checkpoint_id)
             if self.connection.execute("SELECT 1 FROM generation_branch_guards WHERE branch_id=?", (branch_id,)).fetchone():
                 raise StateConflict("A generation is already active on this branch")
             # A persistent count prevents multiple application workers from
@@ -632,6 +634,9 @@ class GenerationService:
         return packed, request, metadata
 
     def _execute(self, job) -> None:
+        # Recovery can encounter jobs reserved before the import review gate
+        # existed; re-check immediately before any provider dispatch.
+        assert_import_review_approved(self.connection, job["owner_id"], job["campaign_id"], job["checkpoint_id"])
         profiles, settings = json.loads(job["profile_snapshot_json"]), json.loads(job["settings_snapshot_json"])
         narrator, context = profiles["narrator"], profiles["context"]
         saved_preview = job["preview_snapshot_json"] if "preview_snapshot_json" in job.keys() else None
@@ -1079,6 +1084,14 @@ class GenerationService:
                     return False
                 job = self.connection.execute("SELECT * FROM generation_jobs WHERE id=?", (job_id,)).fetchone()
                 if job is None:
+                    return False
+                # The approval boundary is checked again in the same
+                # transaction that flips claimed -> dispatched. This closes
+                # the race where an imported campaign is revoked after the
+                # recovery precheck but before provider I/O.
+                try:
+                    assert_import_review_approved(self.connection, job["owner_id"], job["campaign_id"], job["checkpoint_id"])
+                except (ValidationError, StateConflict):
                     return False
                 if job["policy"] in {"capped_paid", "free_only"}:
                     try:

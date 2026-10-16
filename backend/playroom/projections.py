@@ -5,6 +5,7 @@ import sqlite3
 
 from .domain import NotFound, require_uuid
 from .timeline import load_state_checkpoint
+from .chatgpt_import import import_review
 
 
 _JOB_STATUSES = ("queued", "running", "cancelling", "interrupted", "candidate", "committed", "failed", "cancelled")
@@ -125,4 +126,5 @@ def get_campaign_projection(connection: sqlite3.Connection, owner_id: str, campa
         "scene": scene,
         "transcript": _transcript_projection(connection, campaign_id, snapshot.get("selected_revision_ids", [])),
         "jobs": list_owned_generation_jobs(connection, owner_id, campaign_id, branch_id),
+        "import_review": import_review(connection, owner_id, campaign_id, branch["head_checkpoint_id"]),
     }

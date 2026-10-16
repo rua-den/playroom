@@ -8,6 +8,7 @@ import { SceneEditor } from "./SceneEditor";
 import { SettingsPanel } from "./SettingsPanel";
 import { GenerationComposer } from "./GenerationComposer";
 import { ThemeSelector } from "./ThemeSelector";
+import { ChatGptImport } from "./ChatGptImport";
 
 const RECOVERABLE_JOB_STATUSES = new Set(["queued", "running", "cancelling", "interrupted", "candidate"]);
 export function recoverableJobCount(jobs: Array<{ status?: string }>) { return jobs.filter((job) => RECOVERABLE_JOB_STATUSES.has(job.status ?? "")).length; }
@@ -47,7 +48,7 @@ function CampaignForm({ onCreated, onCancel, ariaHidden = false }: { onCreated: 
 }
 
 export function AppShell({ owner, onLogout, notice }: AppShellProps) {
-  const [campaigns, setCampaigns] = useState<CampaignSummary[]>([]); const [selectedId, setSelectedId] = useState<string | null>(null); const [projection, setProjection] = useState<CampaignProjection | null>(null); const [loading, setLoading] = useState(true); const [error, setError] = useState<string | null>(null); const [demoInfo, setDemoInfo] = useState<import("../api/types").DemoInfo | null>(null); const [createOpen, setCreateOpen] = useState(false); const [drawerOpen, setDrawerOpen] = useState(false); const [detailsOpen, setDetailsOpen] = useState(false); const [settingsOpen, setSettingsOpen] = useState(false); const [editorTab, setEditorTab] = useState<"profiles" | "memory" | "scene">("profiles");
+  const [campaigns, setCampaigns] = useState<CampaignSummary[]>([]); const [selectedId, setSelectedId] = useState<string | null>(null); const [projection, setProjection] = useState<CampaignProjection | null>(null); const [loading, setLoading] = useState(true); const [error, setError] = useState<string | null>(null); const [demoInfo, setDemoInfo] = useState<import("../api/types").DemoInfo | null>(null); const [createOpen, setCreateOpen] = useState(false); const [importOpen, setImportOpen] = useState(false); const [drawerOpen, setDrawerOpen] = useState(false); const [detailsOpen, setDetailsOpen] = useState(false); const [settingsOpen, setSettingsOpen] = useState(false); const [editorTab, setEditorTab] = useState<"profiles" | "memory" | "scene">("profiles");
   const drawerTrigger = useRef<HTMLButtonElement>(null); const drawerClose = useRef<HTMLButtonElement>(null); const detailsTrigger = useRef<HTMLButtonElement>(null); const detailsReturn = useRef<HTMLButtonElement | null>(null); const detailsClose = useRef<HTMLButtonElement>(null); const settingsTrigger = useRef<HTMLButtonElement>(null); const settingsClose = useRef<HTMLButtonElement>(null);
   useEffect(() => { let active = true; setLoading(true); if (import.meta.env.PROD) api.getDemoInfo().then((info) => { if (active) setDemoInfo(info); }).catch(() => undefined); api.listCampaigns().then((items) => { if (active) { const safeItems = Array.isArray(items) ? items : []; setCampaigns(safeItems); if (safeItems[0]) setSelectedId(safeItems[0].id); } }).catch(() => { if (active) setError("Không thể tải danh sách chiến dịch."); }).finally(() => { if (active) setLoading(false); }); return () => { active = false; }; }, []);
   useEffect(() => { if (!selectedId) { setProjection(null); return; } let active = true; setProjection(null); setError(null); api.getCampaign(selectedId).then((detail) => api.getCampaignProjection(selectedId, detail.branch_id)).then((next) => { if (active) setProjection(next); }).catch(() => { if (active) setError("Không thể tải chiến dịch này."); }); return () => { active = false; }; }, [selectedId]);
@@ -93,7 +94,7 @@ export function AppShell({ owner, onLogout, notice }: AppShellProps) {
   const selected = useMemo(() => campaigns.find((item) => item.id === selectedId) ?? null, [campaigns, selectedId]);
   async function refreshProjection() { if (!selectedId) return undefined; try { const detail = await api.getCampaign(selectedId); const next = await api.getCampaignProjection(selectedId, detail.branch_id); setProjection(next); return next; } catch { setError("Không thể làm mới chiến dịch."); return undefined; } }
   const editorChanged = () => refreshProjection();
-  function created(campaign: CampaignSummary) { setCampaigns((current) => [campaign, ...current]); setCreateOpen(false); setSelectedId(campaign.id); }
+  function created(campaign: CampaignSummary) { setCampaigns((current) => [campaign, ...current]); setCreateOpen(false); setImportOpen(false); setSelectedId(campaign.id); }
   if (loading) return <main className="app-shell loading-screen" role="status">Đang tải phòng truyện…</main>;
   const contextPanel = projection && <ContextPanel projection={projection} editorTab={editorTab} setEditorTab={setEditorTab} editorChanged={editorChanged} />;
   return <main className="app-shell story-app">
@@ -103,6 +104,7 @@ export function AppShell({ owner, onLogout, notice }: AppShellProps) {
         <label htmlFor="campaign-select">Chiến dịch</label>
         <select id="campaign-select" aria-label="Chiến dịch hiện tại" value={selectedId ?? ""} onChange={(event) => setSelectedId(event.target.value)}>{campaigns.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select>
         <button type="button" className="quiet-button touch-target" onClick={() => setCreateOpen(true)}>Mới</button>
+        <button type="button" className="quiet-button touch-target" onClick={() => { setCreateOpen(false); setImportOpen(true); }}>Nhập ChatGPT</button>
         {campaigns.length > 1 && <div className="campaign-quick-list" aria-label="Chiến dịch gần đây">{campaigns.map((item) => <button type="button" className="campaign-item" key={`quick-${item.id}`} onClick={() => setSelectedId(item.id)} aria-pressed={item.id === selectedId}>{item.title}</button>)}</div>}
       </div>}
       <div className="account-menu">
@@ -113,7 +115,7 @@ export function AppShell({ owner, onLogout, notice }: AppShellProps) {
       </div>
     </header>
     {notice && <div role="alert" className="form-error shell-notice" aria-hidden={settingsOpen}> {notice}</div>}
-    {!campaigns.length && !createOpen && error ? <section className="empty-campaign" aria-hidden={settingsOpen}><h1>Chào mừng trở lại</h1><div role="alert" className="form-error">{error}</div></section> : !campaigns.length && !createOpen ? <section className="empty-campaign" aria-labelledby="empty-campaign-title" aria-hidden={settingsOpen}><p className="eyebrow">PHÒNG VIẾT RIÊNG</p><h1 id="empty-campaign-title">Chào mừng trở lại</h1><p>Thiết lập thế giới và persona trước khi mở chương đầu tiên.</p><button type="button" className="primary-button touch-target" onClick={() => setCreateOpen(true)}>Tạo chiến dịch đầu tiên</button></section> : createOpen ? <CampaignForm onCreated={created} onCancel={() => setCreateOpen(false)} ariaHidden={settingsOpen} /> : <>
+    {importOpen ? <ChatGptImport onImported={created} onCancel={() => setImportOpen(false)} /> : !campaigns.length && !createOpen && error ? <section className="empty-campaign" aria-hidden={settingsOpen}><h1>Chào mừng trở lại</h1><div role="alert" className="form-error">{error}</div></section> : !campaigns.length && !createOpen ? <section className="empty-campaign" aria-labelledby="empty-campaign-title" aria-hidden={settingsOpen}><p className="eyebrow">PHÒNG VIẾT RIÊNG</p><h1 id="empty-campaign-title">Chào mừng trở lại</h1><p>Thiết lập thế giới và persona trước khi mở chương đầu tiên.</p><button type="button" className="primary-button touch-target" onClick={() => setCreateOpen(true)}>Tạo chiến dịch đầu tiên</button><button type="button" className="quiet-button touch-target" onClick={() => setImportOpen(true)}>Nhập hội thoại ChatGPT</button></section> : createOpen ? <CampaignForm onCreated={created} onCancel={() => setCreateOpen(false)} ariaHidden={settingsOpen} /> : <>
       <div className="mobile-actions" aria-hidden={drawerOpen || detailsOpen || settingsOpen}>
         <button type="button" className="quiet-button touch-target mobile-campaign-trigger" onClick={() => setDrawerOpen(true)} ref={drawerTrigger}>Chiến dịch</button>
         <button type="button" className="quiet-button touch-target" onClick={(event) => openDetails(event.currentTarget)} ref={detailsTrigger}>AI đang nhớ gì</button>
@@ -122,7 +124,7 @@ export function AppShell({ owner, onLogout, notice }: AppShellProps) {
         <section className="story-column conversation-column">
           {error && <div role="alert" className="form-error">{error}</div>}
           {projection ? <><h1>{projection.campaign.title}</h1>{projection.transcript.length ? <div className="transcript">{projection.transcript.map((turn) => <article className="story-turn" key={turn.revision_id}>{turn.input_segments?.length ? <div className="input-segments">{turn.input_segments.map((segment, index) => <p className={`input-segment ${segment.kind}`} key={`${turn.revision_id}-input-${index}`}>{segment.text}</p>)}</div> : <p className="turn-action">{turn.action_text}</p>}{turn.output_segments?.length ? <div className="roleplay-segments">{turn.output_segments.map((segment, index) => <div className={`roleplay-segment ${segment.kind}`} key={`${turn.revision_id}-${index}`}>{segment.character_id ? <strong>{projection.profiles[`character:${segment.character_id}`]?.data.name as string ?? segment.character_id}: </strong> : null}<Markdown source={segment.text} /></div>)}</div> : <Markdown source={turn.narrative_text} />}</article>)}</div> : <div className="story-empty"><h2>Chương đầu tiên đang chờ bạn.</h2><p>Thế giới đã sẵn sàng. Bạn có thể tiếp tục thiết lập hồ sơ và ký ức.</p></div>}</> : <div className="loading-story" role="status">Đang mở chiến dịch…</div>}
-          {projection && <GenerationComposer ownerId={owner.id} projection={projection} profileId="" onCommitted={editorChanged} />}
+          {projection && (projection.import_review?.required ? <ImportReviewPanel projection={projection} onApproved={editorChanged} /> : <GenerationComposer ownerId={owner.id} projection={projection} profileId="" onCommitted={editorChanged} />)}
         </section>
       </div>
     </>}
@@ -130,6 +132,75 @@ export function AppShell({ owner, onLogout, notice }: AppShellProps) {
     {detailsOpen && <div className="mobile-overlay context-overlay"><section className="mobile-sheet context-panel" role="dialog" aria-modal="true" aria-labelledby="details-sheet-title"><div className="section-heading"><h2 id="details-sheet-title">Hồ sơ và ký ức</h2><button type="button" className="quiet-button touch-target" onClick={closeDetails} ref={detailsClose}>Đóng hồ sơ và ký ức</button></div>{contextPanel}</section></div>}
     {settingsOpen && <div className="mobile-overlay"><section className="mobile-sheet" role="dialog" aria-modal="true" aria-labelledby="settings-title"><div className="section-heading"><h2 id="settings-title">Cài đặt</h2><button type="button" className="quiet-button touch-target" onClick={closeSettings} ref={settingsClose}>Đóng cài đặt</button></div><ThemeSelector /><SettingsPanel /></section></div>}
   </main>;
+}
+
+export function ImportReviewPanel({ projection, onApproved }: { projection: CampaignProjection; onApproved: () => void }) {
+  const [review, setReview] = useState({ persona: false, npc_voice_presence: false, canon_known_by_narrator_only: false, missing_history: false });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [memory, setMemory] = useState<import("../api/types").MemoryVersion[] | null>(null);
+  const [scene, setScene] = useState<import("../api/types").SceneResponse | null>(null);
+  const [snapshotError, setSnapshotError] = useState<string | null>(null);
+  const [snapshotLoading, setSnapshotLoading] = useState(true);
+  const checkpointId = projection.branch.checkpoint_id;
+  const checkpointRef = useRef(checkpointId);
+  const identityRef = useRef(`${projection.campaign.id}:${projection.branch.id}:${checkpointId}`);
+  const mountedRef = useRef(true);
+  identityRef.current = `${projection.campaign.id}:${projection.branch.id}:${checkpointId}`;
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+  useEffect(() => { checkpointRef.current = checkpointId; setReview({ persona: false, npc_voice_presence: false, canon_known_by_narrator_only: false, missing_history: false }); setBusy(false); setError(null); }, [checkpointId]);
+  useEffect(() => {
+    let active = true;
+    setSnapshotLoading(true); setSnapshotError(null); setMemory(null); setScene(null);
+    Promise.all([api.listMemory(projection.campaign.id, projection.branch.id), api.getScene(projection.campaign.id, projection.branch.id)])
+      .then(([nextMemory, nextScene]) => { if (active) { setMemory(nextMemory); setScene(nextScene); setSnapshotLoading(false); } })
+      .catch(() => { if (active) { setSnapshotError("Không thể tải đầy đủ ký ức và cảnh hiện tại. Hãy tải lại rồi kiểm tra lại trước khi duyệt."); setSnapshotLoading(false); } });
+    return () => { active = false; };
+  }, [projection.campaign.id, projection.branch.id, checkpointId]);
+  const submit = async () => {
+    if (snapshotLoading || snapshotError || !memory || !scene) return;
+    const targetCheckpointId = checkpointId;
+    const targetIdentity = `${projection.campaign.id}:${projection.branch.id}:${targetCheckpointId}`;
+    if (checkpointRef.current !== targetCheckpointId) return;
+    setBusy(true); setError(null);
+    try {
+      await api.approveChatGptImport(projection.campaign.id, { branch_id: projection.branch.id, checkpoint_id: projection.branch.checkpoint_id, review });
+      if (mountedRef.current && checkpointRef.current === targetCheckpointId && identityRef.current === targetIdentity) onApproved();
+    } catch (cause) {
+      if (mountedRef.current && identityRef.current === targetIdentity) setError(cause instanceof Error ? cause.message : "Không thể lưu duyệt checkpoint.");
+    }
+    finally {
+      if (mountedRef.current && identityRef.current === targetIdentity) setBusy(false);
+    }
+  };
+  const profiles = Object.entries(projection.profiles);
+  const persona = projection.profiles.persona?.data;
+  const characters = profiles.filter(([key, value]) => key.startsWith("character:") || value.kind === "character");
+  const sceneItems = Object.values(scene?.scenes ?? {});
+  const warnings = projection.import_review?.warnings ?? [];
+  const ready = !snapshotLoading && !snapshotError && !!memory && !!scene;
+  return <section className="create-card import-review-panel" aria-labelledby="import-review-title">
+    <p className="eyebrow">CẦN DUYỆT RIÊNG</p><h2 id="import-review-title">Kiểm tra checkpoint nhập</h2>
+    <p>Chiến dịch đang khóa Send. Hãy kiểm tra dữ liệu thực tế bên dưới, sửa trong Hồ sơ / Cảnh / Ký ức nếu cần, rồi xác nhận từng mục.</p>
+    {snapshotLoading && <p role="status">Đang tải snapshot hồ sơ, ký ức và cảnh…</p>}
+    {snapshotError && <div role="alert" className="form-error">{snapshotError}</div>}
+    {error && <div role="alert" className="form-error">{error}</div>}
+    <div className="import-review-snapshot" aria-label="Snapshot checkpoint nhập">
+      <section><h3>Persona người chơi</h3><p><strong>{String(persona?.name ?? "Chưa có tên")}</strong></p><p>{String(persona?.description ?? "Chưa có mô tả.")}</p></section>
+      <section><h3>NPC, giọng nói và hiện diện</h3>{characters.length ? characters.map(([key, profile]) => <p key={key}><strong>{String(profile.data.name ?? key)}</strong>: {String(profile.data.description ?? "Chưa có mô tả giọng nói.")}</p>) : <p>Chưa có NPC trong hồ sơ.</p>}</section>
+      <section><h3>Cảnh hiện tại</h3>{sceneItems.length ? sceneItems.map((item) => <p key={item.id}><strong>{String(item.name ?? "Cảnh chưa đặt tên")}</strong>{item.id === scene?.focus_scene_id ? " · đang diễn ra" : ""} · Có mặt: {item.present_ids.length ? item.present_ids.map((id) => String(projection.profiles[`character:${id}`]?.data.name ?? id)).join(", ") : "chưa ghi nhận"}</p>) : <p>Chưa có cảnh nào được ghi nhận.</p>}</section>
+      <section><h3>Ký ức và phạm vi biết</h3>{memory?.length ? memory.map((item) => <p key={`${item.memory_id}-${item.version}`}><strong>{item.knowledge_scope === "narrator_only" ? "Chỉ người kể" : item.knowledge_scope === "known_by" ? `Nhân vật biết: ${(item.known_by ?? []).join(", ") || "chưa ghi rõ"}` : "Công khai"}</strong>: {item.text}</p>) : <p>Chưa có ký ức đã lưu.</p>}</section>
+      <section><h3>Lịch sử và nguồn</h3><p>{projection.import_review?.paired_turns ?? projection.transcript.length} cặp lượt đã nhập. Mã hội thoại nguồn: {projection.import_review?.source_conversation_id ?? "không có"}.</p><p>{projection.import_review?.skipped_messages == null ? "Chưa xác định số tin nhắn bị bỏ qua." : `${projection.import_review.skipped_messages} tin nhắn bị bỏ qua vì không đủ dữ liệu nhập.`}</p>{warnings.length ? warnings.map((warning) => <p className="form-error" key={warning}>{warning}</p>) : projection.import_review?.skipped_messages ? <p className="form-error">Có khoảng trống trong lịch sử; hãy xem kỹ trước khi coi nội dung là canon.</p> : <p>Không có cảnh báo nguồn.</p>}</section>
+    </div>
+    <label><input type="checkbox" checked={review.persona} disabled={!ready} onChange={(event) => setReview((current) => ({ ...current, persona: event.target.checked }))} /> Persona đúng và người chơi vẫn tự quyết định lời nói, hành động.</label>
+    <label><input type="checkbox" checked={review.npc_voice_presence} disabled={!ready} onChange={(event) => setReview((current) => ({ ...current, npc_voice_presence: event.target.checked }))} /> Hồ sơ, giọng nói và nhân vật đang có mặt đã đúng.</label>
+    <label><input type="checkbox" checked={review.canon_known_by_narrator_only} disabled={!ready} onChange={(event) => setReview((current) => ({ ...current, canon_known_by_narrator_only: event.target.checked }))} /> Ai biết từng thông tin và bí mật của người kể đã được kiểm tra.</label>
+    <label><input type="checkbox" checked={review.missing_history} disabled={!ready} onChange={(event) => setReview((current) => ({ ...current, missing_history: event.target.checked }))} /> Lịch sử thiếu và cảnh báo nguồn đã được ghi nhận, không coi là canon.</label>
+    <button className="primary-button touch-target" type="button" disabled={!ready || busy || Object.values(review).some((value) => !value)} onClick={() => void submit()}>{busy ? "Đang lưu…" : "Duyệt checkpoint và bật Send"}</button>
+  </section>;
 }
 
 function ProfileBlock({ title, profile }: { title: string; profile?: { data: Record<string, unknown> } }) { if (!profile) return null; const name = typeof profile.data.name === "string" ? profile.data.name : title; const description = typeof profile.data.description === "string" ? profile.data.description : ""; return <section className="profile-block"><h3>{name}</h3>{description && <p>{description}</p>}</section>; }

@@ -1,5 +1,7 @@
 # Playroom — Codex Astra transfer / source-of-truth consolidation
 
+**Later checkpoint:** [Import review gate implementation and verification](2026-10-16-import-review-gate.md) supersedes the missing-gate blocker below. Selected JSON remains a partial #27 delivery; verify current PR #28 and exact merged-main CI before treating the checkpoint as released.
+
 **Date:** 2026-10-16 (Asia/Ho_Chi_Minh)  
 **Repository:** https://github.com/rua-den/playroom  
 **Verified base `main` before documentation update:** `722bf369a9a3da6fe83b94eaac75dc18438573af`. **ALWAYS re-fetch latest origin/main first.**  

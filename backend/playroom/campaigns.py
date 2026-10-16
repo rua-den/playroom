@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import nullcontext
 from uuid import uuid4
 
 from .db import assert_branch_mutable, transaction
@@ -42,7 +43,7 @@ def _validate_character(data: dict, expected_id: str | None = None) -> dict:
     return {**data, "id": character_id, "aliases": aliases}
 
 
-def create_campaign(connection: sqlite3.Connection, owner_id: str, title: str, world: dict, characters: list[dict], persona: dict, *, style: dict | None = None) -> Campaign:
+def create_campaign(connection: sqlite3.Connection, owner_id: str, title: str, world: dict, characters: list[dict], persona: dict, *, style: dict | None = None, _within_transaction: bool = False) -> Campaign:
     owner_id = require_uuid(owner_id, "owner_id")
     if not title.strip():
         raise ValidationError("Campaign title is required")
@@ -62,7 +63,8 @@ def create_campaign(connection: sqlite3.Connection, owner_id: str, title: str, w
     profile_versions: dict[str, str] = {}
     profile_values = [("world", "world", world), ("persona", "persona", persona), ("style", "style", style or DEFAULT_STYLE)]
     profile_values.extend((f"character:{character['id']}", "character", character) for character in characters)
-    with transaction(connection):
+    # Import uses one outer BEGIN IMMEDIATE across campaign and all selected turns.
+    with (nullcontext() if _within_transaction else transaction(connection)):
         if connection.execute("SELECT 1 FROM owners WHERE id = ?", (owner_id,)).fetchone() is None:
             raise NotFound("Owner not found")
         connection.execute("INSERT INTO campaigns(id, owner_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)", (campaign_id, owner_id, title.strip(), now, now))
