@@ -75,12 +75,12 @@ def assert_import_review_approved(connection: sqlite3.Connection, owner_id: str,
     ).fetchone()
     if source is None and legacy is None:
         return
-    if legacy and (row is None or json.loads(row["review_json"] or "{}").get("provider_data") is not True):
-        from .domain import StateConflict
-        raise StateConflict("Legacy provider-data consent is required before Send")
     if row is None or row["approved_checkpoint_id"] is None:
         from .domain import StateConflict
         raise StateConflict("Imported campaign requires owner review approval for this checkpoint")
+    if legacy and json.loads(row["review_json"] or "{}").get("provider_data") is not True:
+        from .domain import StateConflict
+        raise StateConflict("Legacy provider-data consent is required before Send")
     cursor = checkpoint_id
     while cursor:
         if cursor == row["approved_checkpoint_id"]:
