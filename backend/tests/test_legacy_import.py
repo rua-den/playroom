@@ -118,3 +118,105 @@ def test_legacy_preview_http_requires_owner_and_creates_no_campaign(tmp_path):
     assert connection.execute("SELECT COUNT(*) FROM campaigns").fetchone()[0] == 0
     wrong = client.post("/api/transfers/legacy/preview", json={"conversation": synthetic_bundle()}, headers=headers)
     assert wrong.status_code == 422
+
+
+def test_legacy_staging_is_atomic_durable_nonreplayable_and_review_locked(tmp_path):
+    from uuid import uuid4
+    from playroom.auth import create_owner
+    from playroom.chatgpt_import import import_review, assert_import_review_approved, approve_import_review
+    from playroom.db import connect, migrate
+    from playroom.domain import StateConflict
+    from playroom.legacy_import import import_legacy_bundle
+    from playroom.memory import get_effective_scene, list_memory_library, list_memory_proposals
+    from playroom.timeline import get_branch_head
+
+    path = tmp_path / "import.sqlite3"
+    conn = connect(path); migrate(conn)
+    owner = create_owner(conn, "owner-legacy@example.test", "synthetic long password")
+    second_owner = create_owner(conn, "second-legacy@example.test", "synthetic long password")
+    source = synthetic_bundle()
+    key = str(uuid4())
+    saved = import_legacy_bundle(conn, owner.id, source, key)
+    assert saved["turn_count"] == 0 and saved["review_required"] is True
+    assert saved["pending_memories"] == 3
+    again = import_legacy_bundle(conn, owner.id, source, key)
+    assert again["campaign_id"] == saved["campaign_id"]
+    assert conn.execute("SELECT COUNT(*) FROM turns WHERE campaign_id=?", (saved["campaign_id"],)).fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM legacy_import_sources WHERE campaign_id=?", (saved["campaign_id"],)).fetchone()[0] == 1
+    head = get_branch_head(conn, saved["campaign_id"], saved["branch_id"], owner.id)
+    assert head.checkpoint_id == saved["checkpoint_id"]
+    assert import_review(conn, owner.id, saved["campaign_id"])["required"]
+    assert len(list_memory_library(conn, saved["campaign_id"], saved["branch_id"], None, owner_id=owner.id)) == 0
+    proposals = list_memory_proposals(conn, saved["campaign_id"], saved["branch_id"], None, owner_id=owner.id)
+    assert len(proposals) == 3 and all(x.status == "pending" for x in proposals)
+    scene = get_effective_scene(conn, saved["campaign_id"], saved["branch_id"], None, owner_id=owner.id)
+    assert scene["scenes"][scene["focus_scene_id"]]["present_ids"] == [source["campaign_create_payload"]["persona"]["id"], source["campaign_create_payload"]["characters"][0]["id"]]
+    with pytest.raises(StateConflict, match="review"):
+        assert_import_review_approved(conn, owner.id, saved["campaign_id"], head.checkpoint_id)
+    with pytest.raises(Exception, match="not found|review"):
+        approve_import_review(conn, second_owner.id, saved["campaign_id"], saved["branch_id"], head.checkpoint_id, dict(persona=True, npc_voice_presence=True, canon_known_by_narrator_only=True, missing_history=True))
+
+    # Reopened database remains locked until a separate user review approval.
+    conn.close()
+    reopened = connect(path); migrate(reopened)
+    with pytest.raises(StateConflict, match="review"):
+        assert_import_review_approved(reopened, owner.id, saved["campaign_id"], head.checkpoint_id)
+    approved = approve_import_review(reopened, owner.id, saved["campaign_id"], saved["branch_id"], head.checkpoint_id, dict(persona=True, npc_voice_presence=True, canon_known_by_narrator_only=True, missing_history=True))
+    assert approved["approved"]
+    new_head = get_branch_head(reopened, saved["campaign_id"], saved["branch_id"], owner.id)
+    assert_import_review_approved(reopened, owner.id, saved["campaign_id"], new_head.checkpoint_id)
+    assert len(list_memory_proposals(reopened, saved["campaign_id"], saved["branch_id"], None, owner_id=owner.id)) == 0
+    memories = list_memory_library(reopened, saved["campaign_id"], saved["branch_id"], None, owner_id=owner.id)
+    assert len(memories) == 3 and all(x.status == "approved" and x.origin == "import" for x in memories)
+    assert [m for m in memories if m.knowledge_scope == "known_by"][0].known_by == (source["campaign_create_payload"]["characters"][0]["id"],)
+    assert reopened.execute("SELECT COUNT(*) FROM turns WHERE campaign_id=?", (saved["campaign_id"],)).fetchone()[0] == 0
+
+
+def test_legacy_import_invalid_payload_and_idempotency_do_not_duplicate_campaign(tmp_path):
+    from uuid import uuid4
+    from playroom.auth import create_owner
+    from playroom.db import connect, migrate
+    from playroom.legacy_import import import_legacy_bundle
+
+    conn = connect(tmp_path / "atomic.sqlite3"); migrate(conn)
+    owner = create_owner(conn, "atomic-legacy@example.test", "synthetic long password")
+    source = synthetic_bundle()
+    key = str(uuid4())
+    invalid = synthetic_bundle()
+    invalid["canon_facts"][0]["known_by_entity_ids"] = ["unknown"]
+    with pytest.raises(ValidationError):
+        import_legacy_bundle(conn, owner.id, invalid, key)
+    assert conn.execute("SELECT COUNT(*) FROM campaigns").fetchone()[0] == 0
+    created = import_legacy_bundle(conn, owner.id, source, key)
+    assert import_legacy_bundle(conn, owner.id, source, str(uuid4()))["campaign_id"] == created["campaign_id"]
+    changed = synthetic_bundle()
+    changed["canon_facts"][0]["text"] = "Different invented text"
+    with pytest.raises(ValidationError, match="key"):
+        import_legacy_bundle(conn, owner.id, changed, key)
+    assert conn.execute("SELECT COUNT(*) FROM campaigns").fetchone()[0] == 1
+
+
+def test_legacy_http_import_is_owner_only_and_returns_locked_checkpoint(tmp_path):
+    from uuid import uuid4
+    from fastapi.testclient import TestClient
+    from playroom.app import create_app
+    from playroom.auth import create_owner
+    from playroom.db import connect, migrate
+
+    path = tmp_path / "legacy-routes.sqlite3"
+    db = connect(path); migrate(db)
+    owner = create_owner(db, "routes-legacy@example.test", "synthetic long password")
+    app = create_app(database_url=str(path), allowed_hosts={"testserver"}, secure_cookies=False, credential_root=str(tmp_path / "credential-root"))
+    client = TestClient(app); headers = {"origin": "http://testserver"}
+    payload = {"bundle": synthetic_bundle(), "import_key": str(uuid4())}
+    assert client.post("/api/transfers/legacy/import", json=payload, headers=headers).status_code == 401
+    assert client.post("/api/auth/login", json={"email": owner.email, "password": "synthetic long password"}, headers=headers).status_code == 200
+    first = client.post("/api/transfers/legacy/import", json=payload, headers=headers)
+    assert first.status_code == 201, first.text
+    assert first.json()["review_required"] is True
+    again = client.post("/api/transfers/legacy/import", json=payload, headers=headers)
+    assert again.status_code == 201 and again.json()["campaign_id"] == first.json()["campaign_id"]
+    projection = client.get(f"/api/campaigns/{first.json()['campaign_id']}/projection", params={"branch_id": first.json()["branch_id"]})
+    assert projection.status_code == 200, projection.text
+    assert projection.json()["import_review"]["required"] is True
+    assert projection.json()["transcript"] == []
