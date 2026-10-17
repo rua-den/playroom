@@ -75,6 +75,9 @@ def assert_import_review_approved(connection: sqlite3.Connection, owner_id: str,
     ).fetchone()
     if source is None and legacy is None:
         return
+    if legacy and (row is None or json.loads(row["review_json"] or "{}").get("provider_data") is not True):
+        from .domain import StateConflict
+        raise StateConflict("Legacy provider-data consent is required before Send")
     if row is None or row["approved_checkpoint_id"] is None:
         from .domain import StateConflict
         raise StateConflict("Imported campaign requires owner review approval for this checkpoint")
@@ -109,6 +112,8 @@ def approve_import_review(connection: sqlite3.Connection, owner_id: str, campaig
             (owner_id, campaign_id),
         ).fetchone()
         if legacy:
+            if review.get("provider_data") is not True:
+                raise ValidationError("Legacy provider-data consent must be explicit before unlocking Send")
             # No imported summary/fact becomes approved until these exact source
             # proposals were displayed and the owner approved the checkpoint.
             from .memory import _append_memory_in_transaction
