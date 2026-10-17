@@ -223,3 +223,38 @@ def test_legacy_http_import_is_owner_only_and_returns_locked_checkpoint(tmp_path
     assert projection.status_code == 200, projection.text
     assert projection.json()["import_review"]["required"] is True
     assert projection.json()["transcript"] == []
+
+
+def test_legacy_rejects_invalid_optional_metadata_without_server_500():
+    from playroom.legacy_import import preview_legacy_bundle
+    source = synthetic_bundle()
+    source["canon_facts"][0]["related_event_keys"] = [["non-hashable"]]
+    with pytest.raises(ValidationError):
+        preview_legacy_bundle(source)
+    source = synthetic_bundle()
+    source["resume_checkpoint"]["focus_scene"]["narrator_must_not_assume"] = [{"unexpected": "object"}]
+    with pytest.raises(ValidationError):
+        preview_legacy_bundle(source)
+    source = synthetic_bundle()
+    source["campaign_create_payload"]["characters"][0]["id"] = source["campaign_create_payload"]["characters"][0]["id"].upper()
+    with pytest.raises(ValidationError, match="canonical"):
+        preview_legacy_bundle(source)
+
+
+def test_group_only_event_is_not_automatically_public_after_owner_review(tmp_path):
+    from uuid import uuid4
+    from playroom.auth import create_owner
+    from playroom.db import connect, migrate
+    from playroom.legacy_import import import_legacy_bundle
+    from playroom.memory import list_memory_proposals
+
+    source = synthetic_bundle()
+    source["timeline_events"][0]["publicity"] = "generally_known_within_relevant_group"
+    db = connect(tmp_path / "groups.sqlite3")
+    migrate(db)
+    owner = create_owner(db, "group-legacy@example.test", "synthetic long password")
+    saved = import_legacy_bundle(db, owner.id, source, str(uuid4()))
+    proposals = list_memory_proposals(db, saved["campaign_id"], saved["branch_id"], None, owner_id=owner.id)
+    event = next(memory for memory in proposals if memory.kind == "event")
+    assert event.knowledge_scope == "narrator_only"
+    assert event.text.startswith("[legacy event market]")
