@@ -24,7 +24,21 @@ MAX_TURNS = 1500
 
 def import_review(connection: sqlite3.Connection, owner_id: str, campaign_id: str, current_checkpoint_id: str | None = None) -> dict:
     source = connection.execute("SELECT source_conversation_id, paired_turns, warnings_json, skipped_messages FROM chatgpt_import_sources WHERE owner_id=? AND campaign_id=?", (owner_id, campaign_id)).fetchone()
+    legacy = connection.execute(
+        "SELECT canon_count, event_count, excerpt_count, warnings_json FROM legacy_import_sources WHERE owner_id=? AND campaign_id=?",
+        (owner_id, campaign_id),
+    ).fetchone()
     source_meta = {}
+    if legacy:
+        try:
+            legacy_warnings = json.loads(legacy["warnings_json"])
+        except (TypeError, ValueError):
+            legacy_warnings = ["Legacy history is incomplete"]
+        source_meta = {
+            "source_kind": "legacy_bundle", "source_conversation_id": None, "paired_turns": 0,
+            "skipped_messages": None, "warnings": legacy_warnings,
+            "legacy_counts": {"canon_facts": legacy["canon_count"], "timeline_events": legacy["event_count"], "player_excerpts": legacy["excerpt_count"]},
+        }
     if source:
         try:
             warnings = json.loads(source["warnings_json"] or "[]")
@@ -38,7 +52,7 @@ def import_review(connection: sqlite3.Connection, owner_id: str, campaign_id: st
         source_meta = {"source_conversation_id": source["source_conversation_id"], "paired_turns": source["paired_turns"], "skipped_messages": skipped, "skipped_messages_known": skipped is not None, "warnings": sorted(set(warnings))}
     row = connection.execute("SELECT source_checkpoint_id, approved_checkpoint_id, review_json, approved_at FROM import_review_checkpoints WHERE owner_id=? AND campaign_id=?", (owner_id, campaign_id)).fetchone()
     if row is None:
-        return {"required": source is not None, "approved": source is None, "approved_checkpoint_id": None, "review": {}, **source_meta}
+        return {"required": source is not None or legacy is not None, "approved": source is None and legacy is None, "approved_checkpoint_id": None, "review": {}, **source_meta}
     approved = row["approved_checkpoint_id"] is not None
     if approved and current_checkpoint_id:
         cursor = current_checkpoint_id
@@ -55,7 +69,11 @@ def import_review(connection: sqlite3.Connection, owner_id: str, campaign_id: st
 def assert_import_review_approved(connection: sqlite3.Connection, owner_id: str, campaign_id: str, checkpoint_id: str) -> None:
     row = connection.execute("SELECT approved_checkpoint_id FROM import_review_checkpoints WHERE owner_id=? AND campaign_id=?", (owner_id, campaign_id)).fetchone()
     source = connection.execute("SELECT 1 FROM chatgpt_import_sources WHERE owner_id=? AND campaign_id=?", (owner_id, campaign_id)).fetchone()
-    if source is None:
+    legacy = connection.execute(
+        "SELECT 1 FROM legacy_import_sources WHERE owner_id=? AND campaign_id=?",
+        (owner_id, campaign_id),
+    ).fetchone()
+    if source is None and legacy is None:
         return
     if row is None or row["approved_checkpoint_id"] is None:
         from .domain import StateConflict
@@ -85,7 +103,35 @@ def approve_import_review(connection: sqlite3.Connection, owner_id: str, campaig
         locked = get_branch_head(connection, campaign_id, branch_id, owner_id)
         if locked.checkpoint_id != expected_checkpoint_id:
             raise StateConflict("Import review checkpoint is stale")
-        connection.execute("UPDATE import_review_checkpoints SET approved_checkpoint_id=?, review_json=?, approved_at=strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE owner_id=? AND campaign_id=?", (expected_checkpoint_id, json.dumps(review, ensure_ascii=False, sort_keys=True), owner_id, campaign_id))
+        approved_checkpoint = expected_checkpoint_id
+        legacy = connection.execute(
+            "SELECT 1 FROM legacy_import_sources WHERE owner_id=? AND campaign_id=?",
+            (owner_id, campaign_id),
+        ).fetchone()
+        if legacy:
+            # No imported summary/fact becomes approved until these exact source
+            # proposals were displayed and the owner approved the checkpoint.
+            from .memory import _append_memory_in_transaction
+            from .timeline import load_state_checkpoint
+            snapshot = load_state_checkpoint(connection, campaign_id, branch_id, None).snapshot
+            for memory_id, version_id in list(snapshot.get("pending_memory_versions", {}).items()):
+                proposal = connection.execute(
+                    "SELECT * FROM memory_versions WHERE id=? AND memory_id=? AND campaign_id=? AND branch_id=?",
+                    (version_id, memory_id, campaign_id, branch_id),
+                ).fetchone()
+                if proposal is None or proposal["origin"] != "import" or proposal["status"] != "pending":
+                    continue
+                head = get_branch_head(connection, campaign_id, branch_id, owner_id)
+                _append_memory_in_transaction(
+                    connection, campaign_id, branch_id, proposal["kind"], proposal["text"],
+                    origin="import", status="approved", allow_ai_approval=True,
+                    expected_state_version=head.state_version, source_revision_ids=[],
+                    memory_id=memory_id, entity_ids=json.loads(proposal["entity_ids_json"]),
+                    knowledge_scope=proposal["knowledge_scope"], known_by=json.loads(proposal["known_by_json"]),
+                    pinned=bool(proposal["pinned"]), mandatory=bool(proposal["mandatory"]),
+                )
+            approved_checkpoint = get_branch_head(connection, campaign_id, branch_id, owner_id).checkpoint_id
+        connection.execute("UPDATE import_review_checkpoints SET approved_checkpoint_id=?, review_json=?, approved_at=strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE owner_id=? AND campaign_id=?", (approved_checkpoint, json.dumps(review, ensure_ascii=False, sort_keys=True), owner_id, campaign_id))
     return import_review(connection, owner_id, campaign_id)
 
 
