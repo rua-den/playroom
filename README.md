@@ -6,7 +6,7 @@ Trọng tâm là quản lý context qua nhiều chương: lưu hồ sơ, cảnh,
 
 ## Trạng thái — 17/10/2026
 
-**Chuyển giao hiện hành:** Chủ dự án chọn **Codex Astra** làm coding agent. Đọc [handoff mới nhất](docs/handoff/2026-10-16-codex-astra-transfer.md) và [AGENTS.md](AGENTS.md) trước khi code. `main` của GitHub là source of truth. Bài viết/các SHAs bên dưới là bằng chứng tại từng mốc, không thay cho CI của commit tương lai.
+**Chuyển giao hiện hành:** Chủ dự án chọn **Codex Astra** làm coding agent. Đọc [handoff mới nhất](docs/handoff/2026-10-17-legacy-import.md) và [AGENTS.md](AGENTS.md) trước khi code. `main` của GitHub là source of truth. Bài viết/các SHAs bên dưới là bằng chứng tại từng mốc, không thay cho CI của commit tương lai.
 
 - **B1–B3**: Send/reconnect, narrator JSON/cast/version và Chromium synthetic gameplay PASS ([PR #3](https://github.com/rua-den/playroom/pull/3), [#5](https://github.com/rua-den/playroom/pull/5), [#7](https://github.com/rua-den/playroom/pull/7), [#8](https://github.com/rua-den/playroom/pull/8)).
 - **Ngân sách**: opt-in cumulative/per-send spending grants qua [PR #11](https://github.com/rua-den/playroom/pull/11), Free-first UI qua [PR #13](https://github.com/rua-den/playroom/pull/13), Gemma4 Cloud starter `gemma4:31b` qua [PR #16](https://github.com/rua-den/playroom/pull/16), cơ chế chặn rủi ro trừ credits mua thêm qua [PR #18](https://github.com/rua-den/playroom/pull/18). Giá/giới hạn nội bộ là dự toán, không phải bảo đảm hóa đơn provider.
