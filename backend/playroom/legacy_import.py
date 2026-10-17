@@ -110,7 +110,7 @@ def preview_legacy_bundle(source: dict) -> dict:
         _text(event.get("title"), "Timeline event title", max_len=500)
         if "chapter_range" in event:
             _text(event["chapter_range"], "Timeline chapter range", max_len=160)
-        if "publicity" in event and event["publicity"] not in {"public", "restricted", "narrator_only", "unknown"}:
+        if "publicity" in event and event["publicity"] not in {"public", "restricted", "narrator_only", "unknown", "generally_known_within_relevant_group"}:
             raise ValidationError("Timeline event publicity is invalid")
         order = event.get("order")
         if type(order) is not int or order <= previous_order or key in event_keys or event_id in event_ids:
