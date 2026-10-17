@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict, StrictBool
 
 from ..chatgpt_import import MAX_SOURCE_BYTES, approve_import_review, import_conversation, import_review, preview_conversation
+from ..legacy_import import preview_legacy_bundle
 from ..db import request_connection
 from ..domain import Owner, ValidationError
 from .auth import require_owner
@@ -36,7 +37,7 @@ class ImportReviewPayload(BaseModel):
 MAX_REQUEST_BYTES = MAX_SOURCE_BYTES + 128 * 1024
 
 
-async def _payload(request: Request) -> dict:
+async def _payload(request: Request, source_field: str = "conversation") -> dict:
     raw = bytearray()
     async for piece in request.stream():
         raw.extend(piece)
@@ -46,8 +47,8 @@ async def _payload(request: Request) -> dict:
         parsed = json.loads(raw)
     except (ValueError, UnicodeDecodeError) as exc:
         raise ValidationError("Import JSON cannot be decoded") from exc
-    if not isinstance(parsed, dict) or not isinstance(parsed.get("conversation"), dict):
-        raise ValidationError("Choose exactly one ChatGPT conversation")
+    if not isinstance(parsed, dict) or not isinstance(parsed.get(source_field), dict):
+        raise ValidationError("Choose exactly one supported import source")
     return parsed
 
 
@@ -80,3 +81,10 @@ async def import_chatgpt(
 @router.post("/chatgpt/{campaign_id}/review")
 async def review_chatgpt(campaign_id: str, payload: ImportReviewPayload, connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
     return approve_import_review(connection, owner.id, campaign_id, payload.branch_id, payload.checkpoint_id, payload.review.model_dump())
+
+
+@router.post("/legacy/preview")
+async def preview_legacy(request: Request, owner: Owner = Depends(require_owner)):
+    """Read-only source metadata; not an import, authorization or model call."""
+    payload = await _payload(request, source_field="bundle")
+    return preview_legacy_bundle(payload["bundle"])
