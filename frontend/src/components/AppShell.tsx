@@ -9,6 +9,7 @@ import { SettingsPanel } from "./SettingsPanel";
 import { GenerationComposer } from "./GenerationComposer";
 import { ThemeSelector } from "./ThemeSelector";
 import { ChatGptImport } from "./ChatGptImport";
+import { LegacyImport } from "./LegacyImport";
 
 const RECOVERABLE_JOB_STATUSES = new Set(["queued", "running", "cancelling", "interrupted", "candidate"]);
 export function recoverableJobCount(jobs: Array<{ status?: string }>) { return jobs.filter((job) => RECOVERABLE_JOB_STATUSES.has(job.status ?? "")).length; }
@@ -48,7 +49,7 @@ function CampaignForm({ onCreated, onCancel, ariaHidden = false }: { onCreated: 
 }
 
 export function AppShell({ owner, onLogout, notice }: AppShellProps) {
-  const [campaigns, setCampaigns] = useState<CampaignSummary[]>([]); const [selectedId, setSelectedId] = useState<string | null>(null); const [projection, setProjection] = useState<CampaignProjection | null>(null); const [loading, setLoading] = useState(true); const [error, setError] = useState<string | null>(null); const [demoInfo, setDemoInfo] = useState<import("../api/types").DemoInfo | null>(null); const [createOpen, setCreateOpen] = useState(false); const [importOpen, setImportOpen] = useState(false); const [drawerOpen, setDrawerOpen] = useState(false); const [detailsOpen, setDetailsOpen] = useState(false); const [settingsOpen, setSettingsOpen] = useState(false); const [editorTab, setEditorTab] = useState<"profiles" | "memory" | "scene">("profiles");
+  const [campaigns, setCampaigns] = useState<CampaignSummary[]>([]); const [selectedId, setSelectedId] = useState<string | null>(null); const [projection, setProjection] = useState<CampaignProjection | null>(null); const [loading, setLoading] = useState(true); const [error, setError] = useState<string | null>(null); const [demoInfo, setDemoInfo] = useState<import("../api/types").DemoInfo | null>(null); const [createOpen, setCreateOpen] = useState(false); const [importOpen, setImportOpen] = useState(false); const [importMode, setImportMode] = useState<"chatgpt" | "legacy">("chatgpt"); const [drawerOpen, setDrawerOpen] = useState(false); const [detailsOpen, setDetailsOpen] = useState(false); const [settingsOpen, setSettingsOpen] = useState(false); const [editorTab, setEditorTab] = useState<"profiles" | "memory" | "scene">("profiles");
   const selectedIdRef = useRef<string | null>(selectedId); selectedIdRef.current = selectedId;
   const projectionRequest = useRef(0);
   const drawerTrigger = useRef<HTMLButtonElement>(null); const drawerClose = useRef<HTMLButtonElement>(null); const detailsTrigger = useRef<HTMLButtonElement>(null); const detailsReturn = useRef<HTMLButtonElement | null>(null); const detailsClose = useRef<HTMLButtonElement>(null); const settingsTrigger = useRef<HTMLButtonElement>(null); const settingsClose = useRef<HTMLButtonElement>(null);
@@ -107,7 +108,7 @@ export function AppShell({ owner, onLogout, notice }: AppShellProps) {
         <label htmlFor="campaign-select">Chiến dịch</label>
         <select id="campaign-select" aria-label="Chiến dịch hiện tại" value={selectedId ?? ""} onChange={(event) => setSelectedId(event.target.value)}>{campaigns.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select>
         <button type="button" className="quiet-button touch-target" onClick={() => setCreateOpen(true)}>Mới</button>
-        <button type="button" className="quiet-button touch-target" onClick={() => { setCreateOpen(false); setImportOpen(true); }}>Nhập ChatGPT</button>
+        <button type="button" className="quiet-button touch-target" onClick={() => { setCreateOpen(false); setImportMode("chatgpt"); setImportOpen(true); }}>Nhập ChatGPT</button><button type="button" className="quiet-button touch-target" onClick={() => { setCreateOpen(false); setImportMode("legacy"); setImportOpen(true); }}>Nhập Legacy</button>
         {campaigns.length > 1 && <div className="campaign-quick-list" aria-label="Chiến dịch gần đây">{campaigns.map((item) => <button type="button" className="campaign-item" key={`quick-${item.id}`} onClick={() => setSelectedId(item.id)} aria-pressed={item.id === selectedId}>{item.title}</button>)}</div>}
       </div>}
       <div className="account-menu">
@@ -118,7 +119,7 @@ export function AppShell({ owner, onLogout, notice }: AppShellProps) {
       </div>
     </header>
     {notice && <div role="alert" className="form-error shell-notice" aria-hidden={settingsOpen}> {notice}</div>}
-    {importOpen ? <ChatGptImport onImported={created} onCancel={() => setImportOpen(false)} /> : !campaigns.length && !createOpen && error ? <section className="empty-campaign" aria-hidden={settingsOpen}><h1>Chào mừng trở lại</h1><div role="alert" className="form-error">{error}</div></section> : !campaigns.length && !createOpen ? <section className="empty-campaign" aria-labelledby="empty-campaign-title" aria-hidden={settingsOpen}><p className="eyebrow">PHÒNG VIẾT RIÊNG</p><h1 id="empty-campaign-title">Chào mừng trở lại</h1><p>Thiết lập thế giới và persona trước khi mở chương đầu tiên.</p><button type="button" className="primary-button touch-target" onClick={() => setCreateOpen(true)}>Tạo chiến dịch đầu tiên</button><button type="button" className="quiet-button touch-target" onClick={() => setImportOpen(true)}>Nhập hội thoại ChatGPT</button></section> : createOpen ? <CampaignForm onCreated={created} onCancel={() => setCreateOpen(false)} ariaHidden={settingsOpen} /> : <>
+    {importOpen ? (importMode === "legacy" ? <LegacyImport onImported={created} onCancel={() => setImportOpen(false)} /> : <ChatGptImport onImported={created} onCancel={() => setImportOpen(false)} />) : !campaigns.length && !createOpen && error ? <section className="empty-campaign" aria-hidden={settingsOpen}><h1>Chào mừng trở lại</h1><div role="alert" className="form-error">{error}</div></section> : !campaigns.length && !createOpen ? <section className="empty-campaign" aria-labelledby="empty-campaign-title" aria-hidden={settingsOpen}><p className="eyebrow">PHÒNG VIẾT RIÊNG</p><h1 id="empty-campaign-title">Chào mừng trở lại</h1><p>Thiết lập thế giới và persona trước khi mở chương đầu tiên.</p><button type="button" className="primary-button touch-target" onClick={() => setCreateOpen(true)}>Tạo chiến dịch đầu tiên</button><button type="button" className="quiet-button touch-target" onClick={() => { setImportMode("chatgpt"); setImportOpen(true); }}>Nhập hội thoại ChatGPT</button><button type="button" className="quiet-button touch-target" onClick={() => { setImportMode("legacy"); setImportOpen(true); }}>Nhập Legacy Bundle</button></section> : createOpen ? <CampaignForm onCreated={created} onCancel={() => setCreateOpen(false)} ariaHidden={settingsOpen} /> : <>
       <div className="mobile-actions" aria-hidden={drawerOpen || detailsOpen || settingsOpen}>
         <button type="button" className="quiet-button touch-target mobile-campaign-trigger" onClick={() => setDrawerOpen(true)} ref={drawerTrigger}>Chiến dịch</button>
         <button type="button" className="quiet-button touch-target" onClick={(event) => openDetails(event.currentTarget)} ref={detailsTrigger}>AI đang nhớ gì</button>
@@ -142,6 +143,7 @@ export function ImportReviewPanel({ projection, onApproved }: { projection: Camp
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [memory, setMemory] = useState<import("../api/types").MemoryVersion[] | null>(null);
+  const [proposals, setProposals] = useState<import("../api/types").MemoryVersion[] | null>(null);
   const [scene, setScene] = useState<import("../api/types").SceneResponse | null>(null);
   const [snapshotError, setSnapshotError] = useState<string | null>(null);
   const [snapshotLoading, setSnapshotLoading] = useState(true);
@@ -157,9 +159,9 @@ export function ImportReviewPanel({ projection, onApproved }: { projection: Camp
   useEffect(() => { checkpointRef.current = checkpointId; setReview({ persona: false, npc_voice_presence: false, canon_known_by_narrator_only: false, missing_history: false }); setBusy(false); setError(null); }, [checkpointId]);
   useEffect(() => {
     let active = true;
-    setSnapshotLoading(true); setSnapshotError(null); setMemory(null); setScene(null);
-    Promise.all([api.listMemory(projection.campaign.id, projection.branch.id), api.getScene(projection.campaign.id, projection.branch.id)])
-      .then(([nextMemory, nextScene]) => { if (active) { setMemory(nextMemory); setScene(nextScene); setSnapshotLoading(false); } })
+    setSnapshotLoading(true); setSnapshotError(null); setMemory(null); setScene(null); setProposals(null);
+    Promise.all([api.listMemory(projection.campaign.id, projection.branch.id), api.getScene(projection.campaign.id, projection.branch.id), api.listProposals(projection.campaign.id, projection.branch.id)])
+      .then(([nextMemory, nextScene, nextProposals]) => { if (active) { setMemory(nextMemory); setScene(nextScene); setProposals(nextProposals); setSnapshotLoading(false); } })
       .catch(() => { if (active) { setSnapshotError("Không thể tải đầy đủ ký ức và cảnh hiện tại. Hãy tải lại rồi kiểm tra lại trước khi duyệt."); setSnapshotLoading(false); } });
     return () => { active = false; };
   }, [projection.campaign.id, projection.branch.id, checkpointId]);
@@ -184,7 +186,7 @@ export function ImportReviewPanel({ projection, onApproved }: { projection: Camp
   const characters = profiles.filter(([key, value]) => key.startsWith("character:") || value.kind === "character");
   const sceneItems = Object.values(scene?.scenes ?? {});
   const warnings = projection.import_review?.warnings ?? [];
-  const ready = !snapshotLoading && !snapshotError && !!memory && !!scene;
+  const ready = !snapshotLoading && !snapshotError && !!memory && !!scene && !!proposals;
   return <section className="create-card import-review-panel" aria-labelledby="import-review-title">
     <p className="eyebrow">CẦN DUYỆT RIÊNG</p><h2 id="import-review-title">Kiểm tra checkpoint nhập</h2>
     <p>Chiến dịch đang khóa Send. Hãy kiểm tra dữ liệu thực tế bên dưới, sửa trong Hồ sơ / Cảnh / Ký ức nếu cần, rồi xác nhận từng mục.</p>
@@ -196,7 +198,8 @@ export function ImportReviewPanel({ projection, onApproved }: { projection: Camp
       <section><h3>NPC, giọng nói và hiện diện</h3>{characters.length ? characters.map(([key, profile]) => <p key={key}><strong>{String(profile.data.name ?? key)}</strong>: {String(profile.data.description ?? "Chưa có mô tả giọng nói.")}</p>) : <p>Chưa có NPC trong hồ sơ.</p>}</section>
       <section><h3>Cảnh hiện tại</h3>{sceneItems.length ? sceneItems.map((item) => <p key={item.id}><strong>{String(item.name ?? "Cảnh chưa đặt tên")}</strong>{item.id === scene?.focus_scene_id ? " · đang diễn ra" : ""} · Có mặt: {item.present_ids.length ? item.present_ids.map((id) => String(projection.profiles[`character:${id}`]?.data.name ?? id)).join(", ") : "chưa ghi nhận"}</p>) : <p>Chưa có cảnh nào được ghi nhận.</p>}</section>
       <section><h3>Ký ức và phạm vi biết</h3>{memory?.length ? memory.map((item) => <p key={`${item.memory_id}-${item.version}`}><strong>{item.knowledge_scope === "narrator_only" ? "Chỉ người kể" : item.knowledge_scope === "known_by" ? `Nhân vật biết: ${(item.known_by ?? []).join(", ") || "chưa ghi rõ"}` : "Công khai"}</strong>: {item.text}</p>) : <p>Chưa có ký ức đã lưu.</p>}</section>
-      <section><h3>Lịch sử và nguồn</h3><p>{projection.import_review?.paired_turns ?? projection.transcript.length} cặp lượt đã nhập. Mã hội thoại nguồn: {projection.import_review?.source_conversation_id ?? "không có"}.</p><p>{projection.import_review?.skipped_messages == null ? "Chưa xác định số tin nhắn bị bỏ qua." : `${projection.import_review.skipped_messages} tin nhắn bị bỏ qua vì không đủ dữ liệu nhập.`}</p>{warnings.length ? warnings.map((warning) => <p className="form-error" key={warning}>{warning}</p>) : projection.import_review?.skipped_messages ? <p className="form-error">Có khoảng trống trong lịch sử; hãy xem kỹ trước khi coi nội dung là canon.</p> : <p>Không có cảnh báo nguồn.</p>}</section>
+      <section><h3>Đề xuất ký ức từ nguồn, chưa xác nhận</h3>{proposals?.length ? <><p className="form-error">{proposals.length} mục nguồn đang chờ duyệt. Nếu bạn xác nhận checkpoint Legacy, các đề xuất import còn chờ sẽ được phê duyệt hàng loạt; hãy rà soát từng mục hoặc từ chối các mục không đúng trước khi duyệt.</p>{proposals.map((item) => <p key={`${item.memory_id}-${item.version}`}><strong>{item.kind} / {item.knowledge_scope}</strong>: {item.text}</p>)}</> : <p>Không có đề xuất nhập nào đang chờ.</p>}</section>
+      <section><h3>Lịch sử và nguồn</h3><p>{projection.import_review?.paired_turns ?? projection.transcript.length} cặp lượt đã nhập (Legacy Bundle có 0 cặp vì chỉ là sự kiện/tóm tắt). Mã nguồn: {projection.import_review?.source_conversation_id ?? "không có"}.</p><p>{projection.import_review?.skipped_messages == null ? "Chưa xác định số tin nhắn bị bỏ qua." : `${projection.import_review.skipped_messages} tin nhắn bị bỏ qua vì không đủ dữ liệu nhập.`}</p>{warnings.length ? warnings.map((warning) => <p className="form-error" key={warning}>{warning}</p>) : projection.import_review?.skipped_messages ? <p className="form-error">Có khoảng trống trong lịch sử; hãy xem kỹ trước khi coi nội dung là canon.</p> : <p>Không có cảnh báo nguồn.</p>}</section>
     </div>
     <label><input type="checkbox" checked={review.persona} disabled={!ready} onChange={(event) => setReview((current) => ({ ...current, persona: event.target.checked }))} /> Persona đúng và người chơi vẫn tự quyết định lời nói, hành động.</label>
     <label><input type="checkbox" checked={review.npc_voice_presence} disabled={!ready} onChange={(event) => setReview((current) => ({ ...current, npc_voice_presence: event.target.checked }))} /> Hồ sơ, giọng nói và nhân vật đang có mặt đã đúng.</label>
