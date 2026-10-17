@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict, StrictBool
 
 from ..chatgpt_import import MAX_SOURCE_BYTES, approve_import_review, import_conversation, import_review, preview_conversation
-from ..legacy_import import preview_legacy_bundle
+from ..legacy_import import import_legacy_bundle, preview_legacy_bundle
 from ..db import request_connection
 from ..domain import Owner, ValidationError
 from .auth import require_owner
@@ -88,3 +88,20 @@ async def preview_legacy(request: Request, owner: Owner = Depends(require_owner)
     """Read-only source metadata; not an import, authorization or model call."""
     payload = await _payload(request, source_field="bundle")
     return preview_legacy_bundle(payload["bundle"])
+
+
+@router.post("/legacy/import", status_code=201)
+async def import_legacy(
+    request: Request,
+    connection: sqlite3.Connection = Depends(request_connection),
+    owner: Owner = Depends(require_owner),
+):
+    """Stage a private bundle with no historical turn invention or provider calls."""
+    payload = await _payload(request, source_field="bundle")
+    result = import_legacy_bundle(connection, owner.id, payload["bundle"], payload.get("import_key"))
+    result["review_required"] = import_review(connection, owner.id, result["campaign_id"])["required"]
+    result["checkpoint_id"] = connection.execute(
+        "SELECT head_checkpoint_id FROM branches WHERE id=?",
+        (result["branch_id"],),
+    ).fetchone()[0]
+    return result
