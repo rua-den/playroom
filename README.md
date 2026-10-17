@@ -4,7 +4,7 @@ App roleplay cá nhân bằng tiếng Việt, ưu tiên điện thoại và mở
 
 Trọng tâm là quản lý context qua nhiều chương: lưu hồ sơ, cảnh, sự kiện, quan hệ, tóm tắt và transcript riêng; xem được AI đang dùng dữ kiện nào, sửa được khi nhớ sai, và giữ bộ nhớ đúng theo nhánh truyện.
 
-## Trạng thái — 16/10/2026
+## Trạng thái — 17/10/2026
 
 **Chuyển giao hiện hành:** Chủ dự án chọn **Codex Astra** làm coding agent. Đọc [handoff mới nhất](docs/handoff/2026-10-16-codex-astra-transfer.md) và [AGENTS.md](AGENTS.md) trước khi code. `main` của GitHub là source of truth. Bài viết/các SHAs bên dưới là bằng chứng tại từng mốc, không thay cho CI của commit tương lai.
 
@@ -17,11 +17,13 @@ Trọng tâm là quản lý context qua nhiều chương: lưu hồ sơ, cảnh,
 
 **Cập nhật review gate:** [PR #28](https://github.com/rua-den/playroom/pull/28) đã merge với bước duyệt checkpoint riêng, khóa Send bền trong SQLite và kiểm tra lại ngay trước provider dispatch, kể cả job cũ sau restart. Giao diện hiển thị hồ sơ/cảnh/ký ức, phạm vi biết và phần nguồn bị bỏ qua trước khi duyệt. Kiểm chứng độc lập local: **320 backend, 94 frontend PASS / 3 skipped, typecheck/build/Chromium PASS**. Main CI chỉ xanh sau rerun Chromium do [#20](https://github.com/rua-den/playroom/issues/20), nên vẫn giữ #20 trong release checklist. [Handoff kiểm chứng](docs/handoff/2026-10-16-import-review-gate.md) ghi RED/GREEN và giới hạn của slice JSON.
 
-**Ưu tiên tiếp theo:** legacy bundle #29 → ZIP/lịch sử dài #27 → nghiệm thu app thật #9 và phê duyệt riêng cho triển khai điện thoại. Các race đã tái hiện ở #20 và runner #30 đã có PR merge; timeout lost-POST cũ vẫn nằm trong release checklist. [Handoff 16/10](docs/handoff/2026-10-16-codex-astra-transfer.md) giữ các giới hạn dữ liệu, chi phí và VPS; [checkpoint reconnect](docs/handoff/2026-10-16-reconnect-race.md) ghi regression và bằng chứng kiểm chứng mới.
+**Ưu tiên tiếp theo:** nghiệm thu riêng tư bundle #29 trên máy owner → ZIP/lịch sử dài #27 → khắc phục timeout #20 → nghiệm thu app thật #9 và phê duyệt riêng cho triển khai điện thoại. Các race đã tái hiện ở #20 và runner #30 đã có PR merge; timeout lost-POST cũ vẫn nằm trong release checklist. [Handoff 16/10](docs/handoff/2026-10-16-codex-astra-transfer.md) giữ các giới hạn dữ liệu, chi phí và VPS; [checkpoint reconnect](docs/handoff/2026-10-16-reconnect-race.md) ghi regression và bằng chứng kiểm chứng mới.
 
 **Cập nhật reconnect:** [PR #31](https://github.com/rua-den/playroom/pull/31) đã merge tại `3e9d23a711b59f379e1728e94900175102a4dad2`: giữ bản nháp khi phản hồi commit/poll/recovery đến muộn và chặn cập nhật nhầm chiến dịch. Exact PR và merged-main CI đều xanh ngay attempt 1. Local: **320 backend, 102 frontend PASS / 3 skipped**, typecheck/build/Chromium PASS. #20 vẫn mở cho timeout lost-POST cũ chưa được tái hiện cùng nguyên nhân.
 
 **Runner local thật:** [PR #32](https://github.com/rua-den/playroom/pull/32) đã merge tại `4f22646c3ea2a9d2efa410921c0eedfb836fbcb7`, cung cấp `playroom-live-local` với SQLite/credentials bền và bind `127.0.0.1`. Exact PR và merged-main CI đều xanh attempt 1, backend Linux **334 PASS**, frontend **102 PASS / 3 skipped** và hai kịch bản Chromium PASS. [Handoff local live](docs/handoff/2026-10-16-owner-local-live.md) ghi CI và hướng dẫn tài khoản/khởi động. Đây là runtime để owner tự cấu hình và Send; nghiệm thu Gemma4 thật, điện thoại và VPS vẫn thuộc #9.
+
+**Legacy bundle #29 đã merge:** [PR #34](https://github.com/rua-den/playroom/pull/34) tại `2975dc1`, hỗ trợ nhập `playroom_legacy_story_bundle` vào chiến dịch cần duyệt, chuyển canon/sự kiện/quan hệ thành ký ức nguồn chờ duyệt, giữ riêng toàn bộ source và không tạo 156 lượt giả. Exact PR-head [CI #39051072648](https://github.com/rua-den/playroom/actions/runs/39051072648) và merged-main [CI #39051194140](https://github.com/rua-den/playroom/actions/runs/39051194140) đều PASS backend/frontend/Chromium synthetic. **Chưa nghiệm thu chính file truyện riêng trên ứng dụng thật, không deploy**; xem [handoff 17/10](docs/handoff/2026-10-17-legacy-import.md).
 
 ## Đọc theo thứ tự
 
