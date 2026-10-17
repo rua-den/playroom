@@ -11,7 +11,7 @@
 - A separate `playroom_legacy_story_bundle` version `1.0.0` import path, unlike official ChatGPT `conversations.json`. Select one owner-local JSON file, inspect bounded metadata-only preview, stage authenticated source into owner-scoped persistent SQLite, and open a new provisional campaign.
 - Strict 20 MiB payload, schema/UUID/persona/NPC/reference/order/source-flag checks. Relationship/canon/event summaries become **pending imported memories**, not user/assistant conversation turns. Scene and the previous authored user excerpt are staged with unverified source attribution. No missing historical chapters or dialogue are fabricated.
 - Model Send remains server-locked until owner review of persona, cast/presence, knowledge scopes, missing history, and **separate explicit provider-data consent**. The selected source is never transmitted to an external provider at preview, import or review; a later explicit Send still requires configured provider and its existing grant/policy checks.
-- UI has **Nhập Legacy**, preview/confirmation, review of source proposals, and consent check. Chromium tests exercise synthetic import → unauthorized Send blocked → review → one fake Send → reload. Import preserves source bytes as JSON in local database, not in this public repository.
+- UI has **Nhập Legacy**, preview/confirmation, review of source proposals, and consent check. Chromium tests exercise synthetic import → unauthorized Send blocked → review → one fake Send → reload. Import preserves the complete selected JSON object serialized in the private SQLite database (not original whitespace/byte layout), not in this public repository.
 
 ## Verification record and limitations
 
