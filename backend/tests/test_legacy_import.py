@@ -161,6 +161,9 @@ def test_legacy_staging_is_atomic_durable_nonreplayable_and_review_locked(tmp_pa
     reopened = connect(path); migrate(reopened)
     with pytest.raises(StateConflict, match="review"):
         assert_import_review_approved(reopened, owner.id, saved["campaign_id"], head.checkpoint_id)
+    with pytest.raises(ValidationError, match="provider-data consent"):
+        approve_import_review(reopened, owner.id, saved["campaign_id"], saved["branch_id"], head.checkpoint_id, dict(persona=True, npc_voice_presence=True, canon_known_by_narrator_only=True, missing_history=True, provider_data=False))
+    assert len(list_memory_proposals(reopened, saved["campaign_id"], saved["branch_id"], None, owner_id=owner.id)) == 3
     approved = approve_import_review(reopened, owner.id, saved["campaign_id"], saved["branch_id"], head.checkpoint_id, dict(persona=True, npc_voice_presence=True, canon_known_by_narrator_only=True, missing_history=True, provider_data=True))
     assert approved["approved"]
     new_head = get_branch_head(reopened, saved["campaign_id"], saved["branch_id"], owner.id)
