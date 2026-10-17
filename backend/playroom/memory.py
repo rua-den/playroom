@@ -31,7 +31,25 @@ def _to_memory(row: sqlite3.Row, state_version: int, checkpoint_id: str) -> Memo
 
 
 def _effective_characters(connection: sqlite3.Connection, campaign_id: str, snapshot: dict) -> set[str]:
-    return {key.partition(":")[2] for key in snapshot["profile_versions"] if key.startswith("character:")}
+    """Known-by and presence may reference the player persona, not only NPCs.
+
+    This does not register the player as an NPC or authorize narrator agency.
+    """
+    ids = {key.partition(":")[2] for key in snapshot["profile_versions"] if key.startswith("character:")}
+    persona_version = snapshot["profile_versions"].get("persona")
+    if persona_version:
+        row = connection.execute(
+            "SELECT data_json FROM profile_versions WHERE id=? AND campaign_id=? AND profile_key='persona'",
+            (persona_version, campaign_id),
+        ).fetchone()
+        if row:
+            player_id = json.loads(row["data_json"]).get("id")
+            if isinstance(player_id, str):
+                try:
+                    ids.add(require_uuid(player_id, "persona id"))
+                except ValidationError:
+                    pass  # Legacy/imported personas without IDs remain allowed.
+    return ids
 
 
 def _append_memory_in_transaction(
