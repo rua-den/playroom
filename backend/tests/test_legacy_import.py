@@ -236,7 +236,7 @@ def test_legacy_rejects_invalid_optional_metadata_without_server_500():
     with pytest.raises(ValidationError):
         preview_legacy_bundle(source)
     source = synthetic_bundle()
-    source["campaign_create_payload"]["characters"][0]["id"] = source["campaign_create_payload"]["characters"][0]["id"].upper()
+    source["campaign_create_payload"]["characters"][0]["id"] = "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"
     with pytest.raises(ValidationError, match="canonical"):
         preview_legacy_bundle(source)
 
