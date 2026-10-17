@@ -275,7 +275,7 @@ def import_legacy_bundle(connection, owner_id: str, source: dict, import_key: st
                 connection, campaign_id, branch_id, "event", text,
                 origin="import", status="pending", expected_state_version=version,
                 source_revision_ids=[], entity_ids=list(event["participant_ids"]),
-                knowledge_scope="narrator_only" if event.get("publicity") == "restricted" else "public",
+                knowledge_scope="public" if event.get("publicity") == "public" else "narrator_only",  # Group-only facts cannot silently become world-public.
             )
             version += 1
         for relation in source["relationship_states"]:
