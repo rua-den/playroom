@@ -80,6 +80,7 @@ export interface CampaignProjection {
     import_review?: {
       required: boolean;
       approved: boolean;
+      source_kind?: "legacy_bundle";
       approved_checkpoint_id?: string | null;
       review: Record<string, boolean>;
       warnings?: string[];
