@@ -27,6 +27,7 @@ class ImportReview(BaseModel):
     npc_voice_presence: StrictBool
     canon_known_by_narrator_only: StrictBool
     missing_history: StrictBool
+    provider_data: StrictBool | None = None
 
 
 class ImportReviewPayload(BaseModel):
