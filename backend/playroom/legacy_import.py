@@ -32,9 +32,12 @@ def _uuid(value: object, label: str) -> str:
     if not isinstance(value, str):
         raise ValidationError(f"{label} must be a UUID")
     try:
-        return str(UUID(value))
+        normalized = str(UUID(value))
     except ValueError as exc:
         raise ValidationError(f"{label} must be a UUID") from exc
+    if normalized != value:
+        raise ValidationError(f"{label} must use the canonical UUID format")
+    return normalized
 
 
 def _text(value: object, label: str, *, max_len: int = 20000) -> str:
@@ -104,6 +107,11 @@ def preview_legacy_bundle(source: dict) -> dict:
         event_id = _uuid(event.get("id"), "Timeline event id")
         key = _text(event.get("key"), "Timeline event key", max_len=160)
         _text(event.get("summary"), "Timeline summary")
+        _text(event.get("title"), "Timeline event title", max_len=500)
+        if "chapter_range" in event:
+            _text(event["chapter_range"], "Timeline chapter range", max_len=160)
+        if "publicity" in event and event["publicity"] not in {"public", "restricted", "narrator_only", "unknown"}:
+            raise ValidationError("Timeline event publicity is invalid")
         order = event.get("order")
         if type(order) is not int or order <= previous_order or key in event_keys or event_id in event_ids:
             raise ValidationError("Timeline event keys, IDs and strictly increasing orders must be unique")
@@ -130,13 +138,17 @@ def preview_legacy_bundle(source: dict) -> dict:
         if fact["knowledge_scope"] == "known_by" and not known_by:
             raise ValidationError("Known-by canon must name its readers")
         related = _items(fact.get("related_event_keys", []), "Related event keys", 500)
-        if len(set(related)) != len(related) or any(not isinstance(k, str) or k not in event_keys for k in related):
+        if any(not isinstance(k, str) or k not in event_keys for k in related) or len(set(related)) != len(related):
             raise ValidationError("Canon fact references an unknown event")
 
     relations = _items(root.get("relationship_states"), "Relationships", 500)
     for item in relations:
         relation = _record(item, "Relationship")
         _refs([relation.get("from_id"), relation.get("to_id")], "Relationship characters", valid_ids)
+        if "type" in relation:
+            _text(relation["type"], "Relationship type", max_len=160)
+        if "state" in relation:
+            _text(relation["state"], "Relationship state", max_len=1000)
 
     excerpts = _items(root.get("player_source_excerpts_ch137_156"), "Player excerpts", 1000)
     for item in excerpts:
@@ -162,6 +174,15 @@ def preview_legacy_bundle(source: dict) -> dict:
     _uuid(focus.get("scene_id"), "Resume scene id")
     _text(focus.get("location"), "Resume location", max_len=500)
     present = _refs(focus.get("present_character_ids"), "Present characters", valid_ids)
+    for field in ("narrator_must_not_assume", "narrator_may_assume"):
+        if field in focus:
+            notes = _items(focus[field], field, 64)
+            if any(not isinstance(note, str) or len(note) > 2000 for note in notes):
+                raise ValidationError(f"{field} must contain bounded text only")
+    if "relative_time" in focus and focus["relative_time"] is not None:
+        _text(focus["relative_time"], "Resume relative time", max_len=300)
+    if "player_latest_exact" in focus and focus["player_latest_exact"] is not None:
+        _text(focus["player_latest_exact"], "Latest exact player excerpt", max_len=20000)
 
     gaps = _items(root.get("gaps_and_review_queue"), "Missing-history review queue", 500)
     for item in gaps:
@@ -241,7 +262,7 @@ def import_legacy_bundle(connection, owner_id: str, source: dict, import_key: st
         version = 1
         for fact in source["canon_facts"]:
             _append_memory_in_transaction(
-                connection, campaign_id, branch_id, "lore", fact["text"],
+                connection, campaign_id, branch_id, "lore", f"[legacy canon {fact['key']}] {fact['text']}",
                 origin="import", status="pending", expected_state_version=version,
                 source_revision_ids=[], knowledge_scope=fact["knowledge_scope"],
                 known_by=list(fact["known_by_entity_ids"]),
@@ -249,7 +270,7 @@ def import_legacy_bundle(connection, owner_id: str, source: dict, import_key: st
             version += 1
         for event in source["timeline_events"]:
             # Never manufacture a full turn/revision from a chapter summary.
-            text = f"{event.get('chapter_range', 'Historical summary')}: {event['title']} — {event['summary']}"
+            text = f"[legacy event {event['key']}] {event.get('chapter_range', 'Historical summary')}: {event['title']} — {event['summary']}"
             _append_memory_in_transaction(
                 connection, campaign_id, branch_id, "event", text,
                 origin="import", status="pending", expected_state_version=version,
@@ -276,6 +297,7 @@ def import_legacy_bundle(connection, owner_id: str, source: dict, import_key: st
             "relative_time": focus.get("relative_time"),
             "present_ids": list(focus["present_character_ids"]),
             "unverified_legacy_resume": True,
+            "last_player_excerpt_unverified": focus.get("player_latest_exact"),
             "narrator_must_not_assume": focus.get("narrator_must_not_assume", []),
         }
         connection.execute(
