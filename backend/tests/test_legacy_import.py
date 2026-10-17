@@ -154,14 +154,14 @@ def test_legacy_staging_is_atomic_durable_nonreplayable_and_review_locked(tmp_pa
     with pytest.raises(StateConflict, match="review"):
         assert_import_review_approved(conn, owner.id, saved["campaign_id"], head.checkpoint_id)
     with pytest.raises(Exception, match="not found|review"):
-        approve_import_review(conn, second_owner.id, saved["campaign_id"], saved["branch_id"], head.checkpoint_id, dict(persona=True, npc_voice_presence=True, canon_known_by_narrator_only=True, missing_history=True))
+        approve_import_review(conn, second_owner.id, saved["campaign_id"], saved["branch_id"], head.checkpoint_id, dict(persona=True, npc_voice_presence=True, canon_known_by_narrator_only=True, missing_history=True, provider_data=True))
 
     # Reopened database remains locked until a separate user review approval.
     conn.close()
     reopened = connect(path); migrate(reopened)
     with pytest.raises(StateConflict, match="review"):
         assert_import_review_approved(reopened, owner.id, saved["campaign_id"], head.checkpoint_id)
-    approved = approve_import_review(reopened, owner.id, saved["campaign_id"], saved["branch_id"], head.checkpoint_id, dict(persona=True, npc_voice_presence=True, canon_known_by_narrator_only=True, missing_history=True))
+    approved = approve_import_review(reopened, owner.id, saved["campaign_id"], saved["branch_id"], head.checkpoint_id, dict(persona=True, npc_voice_presence=True, canon_known_by_narrator_only=True, missing_history=True, provider_data=True))
     assert approved["approved"]
     new_head = get_branch_head(reopened, saved["campaign_id"], saved["branch_id"], owner.id)
     assert_import_review_approved(reopened, owner.id, saved["campaign_id"], new_head.checkpoint_id)
