@@ -415,8 +415,50 @@ def browser_synthetic_chat() -> None:
                 page.reload(wait_until="domcontentloaded")
                 expect(page.locator(".generation-composer")).to_be_visible(timeout=12000)
                 _assert_mobile(page, 360)
+
+                # Issue #29: owner-selected synthetic structured legacy source.
+                # No private material, no historical turn fabrication, no model call on import.
+                from test_legacy_import import synthetic_bundle
+                source = synthetic_bundle()
+                page.get_by_role("button", name="Nhập Legacy").click()
+                page.get_by_label("Bundle JSON (tối đa 20 MiB)").set_input_files({
+                    "name": "legacy-synthetic.json", "mimeType": "application/json",
+                    "buffer": json.dumps(source, ensure_ascii=False).encode("utf-8"),
+                })
+                page.get_by_role("button", name="Xem cấu trúc và khoảng trống").click()
+                expect(page.get_by_text("Chương hoàn thành", exact=False)).to_be_visible(timeout=12000)
+                page.get_by_label("Tôi hiểu đây không phải toàn bộ lịch sử", exact=False).check()
+                page.get_by_role("button", name="Tạo chiến dịch nháp để duyệt").click()
+                expect(page.get_by_role("heading", name="Lanterns")).to_be_visible(timeout=12000)
+                expect(page.locator(".story-turn")).to_have_count(0)
+                expect(page.locator(".generation-composer")).to_have_count(0)
+                imported_campaigns = page.context.request.get(f"{origin}/api/campaigns").json()
+                imported_legacy = next(c for c in imported_campaigns if c["title"] == "Lanterns")
+                legacy_detail = page.context.request.get(f"{origin}/api/campaigns/{imported_legacy['id']}").json()
+                legacy_projection = _project(page, origin, imported_legacy["id"], legacy_detail["branch_id"])
+                assert legacy_projection["transcript"] == []
+                assert legacy_projection["import_review"]["required"] is True
+                assert legacy_projection["import_review"]["source_kind"] == "legacy_bundle"
+                assert len(campaign.calls) == 8
+                blocked = page.context.request.post(f"{origin}/api/campaigns/{imported_legacy['id']}/generate", data=json.dumps({
+                    "branch_id": legacy_detail["branch_id"], "action": "*Lan chờ.*",
+                    "idempotency_key": str(uuid4()), "checkpoint_id": legacy_projection["branch"]["checkpoint_id"],
+                }), headers={"content-type": "application/json", "origin": origin})
+                assert blocked.status == 409
+                page.reload(wait_until="domcontentloaded")
+                expect(page.get_by_text("3 mục nguồn đang chờ duyệt", exact=False)).to_be_visible(timeout=12000)
+                checks = page.locator(".import-review-panel input[type=checkbox]")
+                expect(checks).to_have_count(5)
+                for index in range(5):
+                    checks.nth(index).check()
+                page.get_by_role("button", name=re.compile("Duy.*Send")).click()
+                expect(page.locator(".generation-composer")).to_be_visible(timeout=12000)
+                _send_and_wait(page, "*Lan hỏi Vy về tờ giấy.*", 1)
+                assert len(campaign.calls) == 9
+                page.reload(wait_until="domcontentloaded")
+                expect(page.locator(".story-turn")).to_have_count(1)
                 browser.close()
-                print("B3 Chromium synthetic: seven committed turns, attributed NPC/version, reload/reconnect, 409/422/refresh recovery, IME and 360/390/430 mobile PASS; selected ChatGPT JSON import PASS")
+                print("B3 Chromium synthetic + ChatGPT JSON review and Legacy bundle import/review/fake Send PASS")
         finally:
             server.should_exit = True
             thread.join(timeout=10)
