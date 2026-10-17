@@ -160,7 +160,7 @@ export function ImportReviewPanel({ projection, onApproved }: { projection: Camp
   useEffect(() => {
     let active = true;
     setSnapshotLoading(true); setSnapshotError(null); setMemory(null); setScene(null); setProposals(null);
-    Promise.all([api.listMemory(projection.campaign.id, projection.branch.id), api.getScene(projection.campaign.id, projection.branch.id), api.listProposals(projection.campaign.id, projection.branch.id)])
+    Promise.all([api.listMemory(projection.campaign.id, projection.branch.id), api.getScene(projection.campaign.id, projection.branch.id), projection.import_review?.source_kind === "legacy_bundle" ? api.listProposals(projection.campaign.id, projection.branch.id) : Promise.resolve([] as import("../api/types").MemoryVersion[])])
       .then(([nextMemory, nextScene, nextProposals]) => { if (active) { setMemory(nextMemory); setScene(nextScene); setProposals(nextProposals); setSnapshotLoading(false); } })
       .catch(() => { if (active) { setSnapshotError("Không thể tải đầy đủ ký ức và cảnh hiện tại. Hãy tải lại rồi kiểm tra lại trước khi duyệt."); setSnapshotLoading(false); } });
     return () => { active = false; };
