@@ -67,7 +67,7 @@ def import_review(connection: sqlite3.Connection, owner_id: str, campaign_id: st
 
 
 def assert_import_review_approved(connection: sqlite3.Connection, owner_id: str, campaign_id: str, checkpoint_id: str) -> None:
-    row = connection.execute("SELECT approved_checkpoint_id FROM import_review_checkpoints WHERE owner_id=? AND campaign_id=?", (owner_id, campaign_id)).fetchone()
+    row = connection.execute("SELECT approved_checkpoint_id, review_json FROM import_review_checkpoints WHERE owner_id=? AND campaign_id=?", (owner_id, campaign_id)).fetchone()
     source = connection.execute("SELECT 1 FROM chatgpt_import_sources WHERE owner_id=? AND campaign_id=?", (owner_id, campaign_id)).fetchone()
     legacy = connection.execute(
         "SELECT 1 FROM legacy_import_sources WHERE owner_id=? AND campaign_id=?",
