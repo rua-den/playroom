@@ -67,6 +67,15 @@ export const api = {
   }, importKey: string) => request<{
     campaign_id: string; branch_id: string; checkpoint_id: string; turn_count: number; already_imported: boolean;
   }>("/api/transfers/chatgpt/import", { method: "POST", body: JSON.stringify({ conversation, config, import_key: importKey }) }),
+  previewLegacyImport: (bundle: Record<string, unknown>) => request<{
+    format: string; schema_version: string; title: string; turn_count: number; missing_history: boolean;
+    counts: { characters: number; canon_facts: number; relationships: number; timeline_events: number; player_excerpts: number };
+    checkpoint: { last_completed_chapter: number; next_chapter: number; next_chapter_written: boolean; present_character_count: number };
+    warnings: string[]; requires_owner_review: boolean;
+  }>("/api/transfers/legacy/preview", { method: "POST", body: JSON.stringify({ bundle }) }),
+  importLegacyBundle: (bundle: Record<string, unknown>, importKey: string) => request<{
+    campaign_id: string; branch_id: string; checkpoint_id: string; turn_count: number; already_imported: boolean;
+  }>("/api/transfers/legacy/import", { method: "POST", body: JSON.stringify({ bundle, import_key: importKey }) }),
   approveChatGptImport: (campaignId: string, payload: { branch_id: string; checkpoint_id: string; review: { persona: boolean; npc_voice_presence: boolean; canon_known_by_narrator_only: boolean; missing_history: boolean } }) => request<{ required: boolean; approved: boolean }>(`/api/transfers/chatgpt/${encodeURIComponent(campaignId)}/review`, { method: "POST", body: JSON.stringify(payload) }),
   getCampaignProjection: (campaignId: string, branchId: string) => request<CampaignProjection>(`/api/campaigns/${encodeURIComponent(campaignId)}/projection?branch_id=${encodeURIComponent(branchId)}`),
   getGenerationJobs: (campaignId: string, branchId: string, limit = 20) => request<{ jobs: GenerationJobSummary[] }>(`/api/campaigns/${encodeURIComponent(campaignId)}/generation-jobs?branch_id=${encodeURIComponent(branchId)}&limit=${limit}`),
