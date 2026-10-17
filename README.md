@@ -59,6 +59,14 @@ Caddy là thông tin mới nhất do người dùng xác nhận. Tài liệu Ngi
 
 Domain, model/API, tài nguyên và cấu hình VPS thực tế cần xác minh trước khi nối/deploy. Chất lượng kể chuyện và giữ mạch phải được kiểm chứng bằng phiên chơi thật, ngoài các test dữ liệu.
 
+## Nhập Legacy Story Bundle (Issue #29)
+
+Nếu có tệp riêng `playroom_legacy_story_bundle` bản `1.0.0`, chạy **Playroom local thật** trước, rồi trong màn hình chiến dịch chọn **Nhập Legacy**. Chọn duy nhất file JSON (tối đa 20 MiB), xem preview đếm nhân vật/canon/sự kiện/trích đoạn và kiểm tra cảnh/chương hiện tại. App không gửi yêu cầu AI trong bước này; file được chuyển tới **server Playroom mà bạn đang mở** và lưu riêng trong SQLite. Không chọn server lạ nếu muốn giữ story chỉ trên máy cá nhân.
+
+Nhấn **Tạo chiến dịch nháp để duyệt**: profile NPC, persona, cảnh và các ký ức canon/sự kiện/quan hệ được đưa vào trạng thái **chưa được xác nhận**, giữ nguyên nguồn đầy đủ trong bản lưu riêng, và **khóa Send** ở phía server. Timeline/chapter summaries **không phải** transcript; không tự tạo 156 lượt hay chương tiếp theo, không tự diễn vai người chơi. Rà soát đầy đủ ký ức nguồn đang chờ, phạm vi ai biết/cảnh có mặt và lịch sử thiếu; có thể từ chối hoặc sửa các phần không đúng. Duyệt checkpoint sẽ phê duyệt các đề xuất còn chờ theo đúng xác nhận người chơi.
+
+Để mở khóa Send với Legacy, người chơi phải xác nhận riêng việc chia sẻ context riêng cho provider AI mà họ tự cấu hình **khi chủ động nhấn Send**; việc import hoặc duyệt không tạo model call. Nếu chưa muốn chia sẻ private story với cloud thì **không** đánh dấu ô này. Chế độ Local-only/không cấp quyền gửi là mặc định khóa. Repo GitHub, test fixture và CI chỉ có dữ liệu nhân tạo, không có file truyện riêng.
+
 ## Chạy demo cục bộ
 
 Demo tổng hợp là chế độ opt-in riêng, chỉ bind loopback và không gọi model thật.
