@@ -193,3 +193,114 @@ def preview_legacy_bundle(source: dict) -> dict:
         ],
         "requires_owner_review": True,
     }
+
+
+def import_legacy_bundle(connection, owner_id: str, source: dict, import_key: str) -> dict:
+    """Atomically stage profiles/scene/memories as REVIEW REQUIRED, with no turns.
+
+    This is local durable import only; no remote model is invoked.
+    """
+    import hashlib
+    from uuid import uuid4
+
+    from .campaigns import create_campaign
+    from .db import transaction
+    from .domain import require_uuid
+    from .memory import _append_memory_in_transaction
+    from .timeline import _advance_checkpoint, get_branch_head, load_state_checkpoint, utc_now
+
+    report = preview_legacy_bundle(source)
+    key = require_uuid(import_key, "import key")
+    owner_id = require_uuid(owner_id, "owner id")
+    serialized = json.dumps(source, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+    payload = source["campaign_create_payload"]
+
+    with transaction(connection):
+        existing = connection.execute(
+            "SELECT campaign_id, branch_id, payload_hash FROM legacy_import_sources WHERE owner_id=? AND import_key=?",
+            (owner_id, key),
+        ).fetchone()
+        if existing:
+            if existing["payload_hash"] != digest:
+                raise ValidationError("Import key already used for another legacy source")
+            return {"campaign_id": existing["campaign_id"], "branch_id": existing["branch_id"], "already_imported": True, "turn_count": 0}
+        duplicate = connection.execute(
+            "SELECT campaign_id, branch_id FROM legacy_import_sources WHERE owner_id=? AND payload_hash=?",
+            (owner_id, digest),
+        ).fetchone()
+        if duplicate:
+            return {"campaign_id": duplicate["campaign_id"], "branch_id": duplicate["branch_id"], "already_imported": True, "turn_count": 0}
+
+        created = create_campaign(
+            connection, owner_id, payload["title"], dict(payload["world"]),
+            [dict(character) for character in payload["characters"]], dict(payload["persona"]),
+            style=dict(payload["style"]), _within_transaction=True,
+        )
+        campaign_id, branch_id = created.id, created.initial_branch_id
+        version = 1
+        for fact in source["canon_facts"]:
+            _append_memory_in_transaction(
+                connection, campaign_id, branch_id, "lore", fact["text"],
+                origin="import", status="pending", expected_state_version=version,
+                source_revision_ids=[], knowledge_scope=fact["knowledge_scope"],
+                known_by=list(fact["known_by_entity_ids"]),
+            )
+            version += 1
+        for event in source["timeline_events"]:
+            # Never manufacture a full turn/revision from a chapter summary.
+            text = f"{event.get('chapter_range', 'Historical summary')}: {event['title']} — {event['summary']}"
+            _append_memory_in_transaction(
+                connection, campaign_id, branch_id, "event", text,
+                origin="import", status="pending", expected_state_version=version,
+                source_revision_ids=[], entity_ids=list(event["participant_ids"]),
+                knowledge_scope="narrator_only" if event.get("publicity") == "restricted" else "public",
+            )
+            version += 1
+        for relation in source["relationship_states"]:
+            text = f"{relation.get('type', 'relationship')}: {relation.get('state', 'unspecified')}"
+            _append_memory_in_transaction(
+                connection, campaign_id, branch_id, "relationship", text,
+                origin="import", status="pending", expected_state_version=version,
+                source_revision_ids=[], entity_ids=[relation["from_id"], relation["to_id"]],
+                knowledge_scope="narrator_only",  # Conservative until reviewed.
+            )
+            version += 1
+
+        focus = source["resume_checkpoint"]["focus_scene"]
+        checkpoint = load_state_checkpoint(connection, campaign_id, branch_id, None)
+        scene_version = str(uuid4())
+        scene_checkpoint = str(uuid4())
+        scene_record = {
+            "id": focus["scene_id"], "name": focus["location"],
+            "relative_time": focus.get("relative_time"),
+            "present_ids": list(focus["present_character_ids"]),
+            "unverified_legacy_resume": True,
+            "narrator_must_not_assume": focus.get("narrator_must_not_assume", []),
+        }
+        connection.execute(
+            "INSERT INTO scene_versions(id,campaign_id,branch_id,version,data_json,effective_state_version,effective_checkpoint_id,created_at) VALUES (?,?,?,?,?,?,?,?)",
+            (scene_version, campaign_id, branch_id, 2,
+             json.dumps({"focus_scene_id": focus["scene_id"], "scenes": {focus["scene_id"]: scene_record}}, ensure_ascii=False),
+             version + 1, scene_checkpoint, utc_now()),
+        )
+        snapshot = dict(checkpoint.snapshot)
+        snapshot["scene_version_id"] = scene_version
+        _advance_checkpoint(connection, campaign_id, branch_id, version, snapshot, checkpoint_id=scene_checkpoint)
+
+        connection.execute(
+            "INSERT INTO legacy_import_sources(id,owner_id,campaign_id,branch_id,import_key,payload_hash,selected_source_json,warnings_json,canon_count,event_count,excerpt_count,imported_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (str(uuid4()), owner_id, campaign_id, branch_id, key, digest, serialized,
+             json.dumps(report["warnings"], ensure_ascii=False), report["counts"]["canon_facts"],
+             report["counts"]["timeline_events"], report["counts"]["player_excerpts"], utc_now()),
+        )
+        connection.execute(
+            "INSERT INTO import_review_checkpoints(campaign_id,owner_id,source_checkpoint_id,review_json,created_at) VALUES(?,?,?,?,?)",
+            (campaign_id, owner_id, scene_checkpoint, "{}", utc_now()),
+        )
+    return {
+        "campaign_id": campaign_id, "branch_id": branch_id, "checkpoint_id": scene_checkpoint,
+        "turn_count": 0, "already_imported": False, "review_required": True,
+        "pending_memories": len(source["canon_facts"]) + len(source["timeline_events"]) + len(source["relationship_states"]),
+        "warnings": report["warnings"],
+    }
