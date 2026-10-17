@@ -140,6 +140,7 @@ export function AppShell({ owner, onLogout, notice }: AppShellProps) {
 
 export function ImportReviewPanel({ projection, onApproved }: { projection: CampaignProjection; onApproved: () => void }) {
   const [review, setReview] = useState({ persona: false, npc_voice_presence: false, canon_known_by_narrator_only: false, missing_history: false });
+  const [dataConsent, setDataConsent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [memory, setMemory] = useState<import("../api/types").MemoryVersion[] | null>(null);
@@ -156,7 +157,7 @@ export function ImportReviewPanel({ projection, onApproved }: { projection: Camp
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
   }, []);
-  useEffect(() => { checkpointRef.current = checkpointId; setReview({ persona: false, npc_voice_presence: false, canon_known_by_narrator_only: false, missing_history: false }); setBusy(false); setError(null); }, [checkpointId]);
+  useEffect(() => { checkpointRef.current = checkpointId; setReview({ persona: false, npc_voice_presence: false, canon_known_by_narrator_only: false, missing_history: false }); setDataConsent(false); setBusy(false); setError(null); }, [checkpointId]);
   useEffect(() => {
     let active = true;
     setSnapshotLoading(true); setSnapshotError(null); setMemory(null); setScene(null); setProposals(null);
@@ -172,7 +173,7 @@ export function ImportReviewPanel({ projection, onApproved }: { projection: Camp
     if (checkpointRef.current !== targetCheckpointId) return;
     setBusy(true); setError(null);
     try {
-      await api.approveChatGptImport(projection.campaign.id, { branch_id: projection.branch.id, checkpoint_id: projection.branch.checkpoint_id, review });
+      await api.approveChatGptImport(projection.campaign.id, { branch_id: projection.branch.id, checkpoint_id: projection.branch.checkpoint_id, review: projection.import_review?.source_kind === "legacy_bundle" ? { ...review, provider_data: dataConsent } : review });
       if (mountedRef.current && checkpointRef.current === targetCheckpointId && identityRef.current === targetIdentity) onApproved();
     } catch (cause) {
       if (mountedRef.current && identityRef.current === targetIdentity) setError(cause instanceof Error ? cause.message : "Không thể lưu duyệt checkpoint.");
@@ -205,7 +206,8 @@ export function ImportReviewPanel({ projection, onApproved }: { projection: Camp
     <label><input type="checkbox" checked={review.npc_voice_presence} disabled={!ready} onChange={(event) => setReview((current) => ({ ...current, npc_voice_presence: event.target.checked }))} /> Hồ sơ, giọng nói và nhân vật đang có mặt đã đúng.</label>
     <label><input type="checkbox" checked={review.canon_known_by_narrator_only} disabled={!ready} onChange={(event) => setReview((current) => ({ ...current, canon_known_by_narrator_only: event.target.checked }))} /> Ai biết từng thông tin và bí mật của người kể đã được kiểm tra.</label>
     <label><input type="checkbox" checked={review.missing_history} disabled={!ready} onChange={(event) => setReview((current) => ({ ...current, missing_history: event.target.checked }))} /> Lịch sử thiếu và cảnh báo nguồn đã được ghi nhận, không coi là canon.</label>
-    <button className="primary-button touch-target" type="button" disabled={!ready || busy || Object.values(review).some((value) => !value)} onClick={() => void submit()}>{busy ? "Đang lưu…" : "Duyệt checkpoint và bật Send"}</button>
+    {projection.import_review?.source_kind === "legacy_bundle" && <label><input type="checkbox" disabled={!ready} checked={dataConsent} onChange={(event) => setDataConsent(event.target.checked)} /> Tôi đồng ý: SAU KHI tôi chủ động nhấn Send, Playroom có thể gửi context riêng của chiến dịch tới provider AI tôi đã cấu hình. Việc nhập / duyệt không tự gửi AI.</label>}
+    <button className="primary-button touch-target" type="button" disabled={!ready || busy || Object.values(review).some((value) => !value) || (projection.import_review?.source_kind === "legacy_bundle" && !dataConsent)} onClick={() => void submit()}>{busy ? "Đang lưu…" : "Duyệt checkpoint và bật Send"}</button>
   </section>;
 }
 
