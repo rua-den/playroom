@@ -21,7 +21,7 @@ The owner supplied the same local Legacy bundle as before. Controlled shape insp
 - [x] Local guarded ZIP/JSON reader and regression tests; owner `issue27_zip_reader`.
 - [x] ChatGPT importer integration and deferred-result regressions; owner `issue27_zip_ui`.
 - [x] 125-turn restart/idempotency and real Chromium ZIP import/review/owner-summary/new-fake-Send acceptance; owner `issue27_zip_acceptance`.
-- [ ] Independent diff/security review, parent full checks and exact PR/merged-code CI.
+- [x] Independent production diff/security review and parent full checks; final harness review and exact PR/merged-code CI tracked below.
 - [ ] Update release evidence and current README/handoff pointer.
 
 The reader produces `readChatGptExportFiles(files: File[]): Promise<ChatGptConversation[]>`; the UI consumes it without a backend contract change. The browser gate consumes the built UI and existing authenticated JSON API. The three workers own disjoint files; all commits use explicit paths and never amend shared history.
@@ -54,4 +54,16 @@ Parent full Chromium at `cd8ab6f` failed in the older stale-409 scenario before 
 
 Parent then executed the **exact current ZIP scenario block from the repository** in a fresh real Chromium/demo assembly with a temporary DB, bypassing only the unrelated earlier gameplay scenario setup. At `3f5629c`: **PASS** for local ZIP discovery, selected-only preview/import, 125 original turns, reload/review, exact wire-budget refusal with zero provider calls, manually authored approved `narrator_only` summary covering the first 117 source revisions, unchanged 125 revision IDs, a new explicit Send producing turn 126, exact new action/fake narration and reload. Zero external requests; summary creation did not dispatch a provider; exactly one fake provider call followed the final explicit Send. This is isolated feature acceptance, not a passing local full gate or real model acceptance.
 
-Final Sol test-diff review through `3f5629c` resolved campaign-scoped diagnostic provenance and the immediate pre-Send no-auto-dispatch proof; no blocking finding remains. Remote exact PR/full merged-code CI is pending.
+Final Sol test-diff review through `3f5629c` resolved campaign-scoped diagnostic provenance and the immediate pre-Send no-auto-dispatch proof; no blocking finding remains.
+
+## Chromium route lifecycle follow-up
+
+Initial [PR #38](https://github.com/rua-den/playroom/pull/38) head `38b4b186d1fbf044747ff1809af21b44a75632a5`, [CI #39140734565 attempt 1](https://github.com/rua-den/playroom/actions/runs/39140734565): backend **357 passed**, frontend **136 passed / 3 skipped**, typecheck/build/compile passed; browser **FAILED** in the old stale-409/by-key wait before ZIP. That failed run is retained; it was not rerun to obtain green.
+
+The browser trace matches [Playwright #41802](https://github.com/microsoft/playwright/issues/41802): automatic removal of a `times=1` route can race a subsequent request when Chromium processes `Fetch.disable`. Upstream [PR #42924](https://github.com/microsoft/playwright/pull/42924/files) documents the affected Chromium range below 155; this gate pins Playwright 1.56.0 with Chromium 141. This is a supported causal inference from matching traces and upstream evidence, not direct proof from a failing ASGI trace.
+
+At `eea12d1`, the test keeps all four synthetic route handlers registered, each injecting its response/abort once and forwarding subsequent requests. Existing recovery assertions, provider counts, timeout values and explicit-Send requirements remain. A bounded test-only ASGI observer and authenticated by-key failure probe provide future boundary diagnostics without request/response bodies or credentials. The observer-only baseline run passed, so it captured no failing server trace. The agent's run after the route change passed; the parent independently reviewed the diff and ran the complete locked browser gate at `eea12d1`: **synthetic Chromium including the ZIP 125-turn scenario PASS; live-local assembly Chromium PASS**. Parent compile and full-range raw diff checks also passed. No application generation/recovery behavior changed; keep broader #20 open pending further evidence.
+
+Independent Sol review of `38b4b18..eea12d1`: no blocking findings; all four injections remain asserted, later requests forward, observer preserves lifespan and excludes bodies/headers/query values/credentials, and the by-key diagnostic is read-only. Reviewer compile/raw diff checks passed; reviewer did not rerun Chromium.
+
+Final exact PR-head and merged-code CI remain pending. Record them below after verification rather than relabel the initial failed run.
