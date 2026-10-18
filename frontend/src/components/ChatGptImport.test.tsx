@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { StrictMode } from "react";
 import { api } from "../api/client";
 import { readChatGptExportFiles } from "../features/import/readChatGptExportFiles";
 import { ChatGptConversation } from "../features/import/parseChatGptExport";
@@ -24,13 +25,17 @@ const preview = {
   title: "one",
   turn_count: 1,
   skipped_messages: 0,
-  warnings: [],
+  warnings: [] as string[],
   sample_first: { action_text: "action", narrative_text: "narrative" },
   sample_last: { action_text: "action", narrative_text: "narrative" },
 };
 
 function renderImport(onImported = vi.fn()) {
   return render(<ChatGptImport onImported={onImported} onCancel={vi.fn()} />);
+}
+
+function renderStrictImport(onImported = vi.fn()) {
+  return render(<StrictMode><ChatGptImport onImported={onImported} onCancel={vi.fn()} /></StrictMode>);
 }
 
 async function chooseFiles(files: File[]) {
@@ -62,6 +67,39 @@ describe("ChatGptImport", () => {
     await chooseFiles([file]);
     expect(readFiles).toHaveBeenCalledWith([file]);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("rejects selected input above the 20 MiB local limit", async () => {
+    renderImport();
+    const oversized = new File(["x"], "large.json", { type: "application/json" });
+    Object.defineProperty(oversized, "size", { value: 20 * 1024 * 1024 + 1 });
+    fireEvent.change(screen.getByLabelText("Tệp xuất từ ChatGPT"), { target: { files: [oversized] } });
+    expect(await screen.findByRole("alert")).toHaveTextContent(/20 MiB/);
+    expect(readFiles).not.toHaveBeenCalled();
+  });
+
+  it("adopts a file read result under StrictMode", async () => {
+    readFiles.mockResolvedValue([conversation("strict")]);
+    renderStrictImport();
+    await chooseFiles([new File(["json"], "conversations.json", { type: "application/json" })]);
+    expect(screen.getByRole("option")).toHaveTextContent("strict");
+  });
+
+  it("keeps the newest file selection when an older read resolves later", async () => {
+    let resolveA: (items: ChatGptConversation[]) => void = () => undefined;
+    let resolveB: (items: ChatGptConversation[]) => void = () => undefined;
+    readFiles.mockImplementationOnce(() => new Promise((resolve) => { resolveA = resolve; }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveB = resolve; }));
+    renderImport();
+    const input = screen.getByLabelText("Tệp xuất từ ChatGPT");
+    fireEvent.change(input, { target: { files: [new File(["a"], "a.json")] } });
+    fireEvent.change(input, { target: { files: [new File(["b"], "b.json")] } });
+    resolveB([conversation("newest")]);
+    await screen.findByRole("option");
+    resolveA([conversation("stale")]);
+    await act(async () => undefined);
+    expect(screen.getByRole("option")).toHaveTextContent("newest");
+    expect(screen.queryByText(/stale/)).not.toBeInTheDocument();
   });
 
   it("posts only the conversation selected for preview and import", async () => {
@@ -101,7 +139,48 @@ describe("ChatGptImport", () => {
     await userEvent.setup().selectOptions(screen.getByRole("combobox"), "1");
     rejectPreview(new Error("stale preview"));
     await act(async () => undefined);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps the newest preview when an older preview resolves later", async () => {
+    readFiles.mockResolvedValue([conversation("one"), conversation("two")]);
+    renderImport();
+    await chooseFiles([new File(["json"], "conversations.json")]);
+    let resolveA: (value: typeof preview) => void = () => undefined;
+    let resolveB: (value: typeof preview) => void = () => undefined;
+    vi.spyOn(api, "previewChatGptImport")
+      .mockImplementationOnce(() => new Promise<typeof preview>((resolve) => { resolveA = resolve; }))
+      .mockImplementationOnce(() => new Promise<typeof preview>((resolve) => { resolveB = resolve; }));
+    await userEvent.setup().click(screen.getByRole("button", { name: /Xem tr/ }));
+    await userEvent.setup().selectOptions(screen.getByRole("combobox"), "1");
+    await userEvent.setup().click(screen.getByRole("button", { name: /Xem tr/ }));
+    resolveB({ ...preview, warnings: ["newest preview"] });
+    await screen.findByText("newest preview");
+    resolveA({ ...preview, warnings: ["stale preview"] });
+    await act(async () => undefined);
+    expect(screen.getByText("newest preview")).toBeInTheDocument();
     expect(screen.queryByText("stale preview")).not.toBeInTheDocument();
+  });
+
+  it("captures import config before a pending request can observe edits", async () => {
+    await prepareImport();
+    let resolveImport: (value: { campaign_id: string; branch_id: string; checkpoint_id: string; turn_count: number; already_imported: boolean }) => void = () => undefined;
+    const importSpy = vi.spyOn(api, "importChatGpt").mockReturnValue(new Promise((resolve) => { resolveImport = resolve; }));
+    await userEvent.setup().click(screen.getByRole("button", { name: /Nhập v/ }));
+    await userEvent.setup().clear(screen.getByLabelText("Tên chiến dịch mới"));
+    await userEvent.setup().type(screen.getByLabelText("Tên chiến dịch mới"), "changed after submit");
+    resolveImport({ campaign_id: "campaign", branch_id: "branch", checkpoint_id: "checkpoint", turn_count: 1, already_imported: false });
+    await waitFor(() => expect(importSpy).toHaveBeenCalledTimes(1));
+    expect(importSpy.mock.calls[0][1].title).toBe("one");
+  });
+
+  it("rejects selected conversation text above 20 MiB before preview", async () => {
+    const huge = conversation("huge", "x".repeat(20 * 1024 * 1024));
+    readFiles.mockResolvedValue([huge]);
+    renderImport();
+    await chooseFiles([new File(["json"], "conversations.json")]);
+    await userEvent.setup().click(screen.getByRole("button", { name: /Xem tr/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/20 MiB/);
   });
 
   it("ignores a completed import after unmount", async () => {

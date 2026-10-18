@@ -4,6 +4,7 @@ import { ChatGptConversation } from "../features/import/parseChatGptExport";
 import { readChatGptExportFiles } from "../features/import/readChatGptExportFiles";
 
 type Preview = Awaited<ReturnType<typeof api.previewChatGptImport>>;
+const MAX_INPUT_BYTES = 20 * 1024 * 1024;
 interface Props {
   onImported: (campaign: { id: string; title: string; created_at: string; updated_at: string; archived_at: null }) => void;
   onCancel: () => void;
@@ -30,7 +31,10 @@ export function ChatGptImport({ onImported, onCancel }: Props) {
   const importInFlightRef = useRef(false);
   const selected = conversations[selectedIndex];
 
-  useEffect(() => () => { mountedRef.current = false; }, []);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   async function loadFiles(event: ChangeEvent<HTMLInputElement>) {
     const epoch = ++sourceEpochRef.current;
@@ -38,18 +42,16 @@ export function ChatGptImport({ onImported, onCancel }: Props) {
     keyRef.current = makeKey();
     const files = Array.from(event.target.files ?? []);
     if (!files.length) return;
+    if (files.reduce((total, file) => total + file.size, 0) > MAX_INPUT_BYTES) {
+      setError("Tổng tệp đầu vào vượt quá giới hạn 20 MiB.");
+      return;
+    }
     try {
       const found = await readChatGptExportFiles(files);
       if (!mountedRef.current || sourceEpochRef.current !== epoch) return;
-      const seen = new Set<string>();
-      const unique = found.filter((item) => {
-        if (seen.has(item.id)) return false;
-        seen.add(item.id);
-        return true;
-      });
-      setConversations(unique); setSelectedIndex(0);
-      setTitle(unique[0]?.title.slice(0, 160) || "Truyện nhập từ ChatGPT");
-      setNotice(`Đã đọc ${unique.length} cuộc hội thoại trên thiết bị. Chưa tải nội dung lên server.`);
+      setConversations(found); setSelectedIndex(0);
+      setTitle(found[0]?.title.slice(0, 160) || "Truyện nhập từ ChatGPT");
+      setNotice(`Đã đọc ${found.length} cuộc hội thoại trên thiết bị. Chưa tải nội dung lên server.`);
     } catch (cause) {
       if (!mountedRef.current || sourceEpochRef.current !== epoch) return;
       setConversations([]);
@@ -68,6 +70,11 @@ export function ChatGptImport({ onImported, onCancel }: Props) {
     if (!selected) return;
     const epoch = sourceEpochRef.current;
     const conversation = selected;
+    const conversationBytes = new TextEncoder().encode(JSON.stringify(conversation)).byteLength;
+    if (conversationBytes > MAX_INPUT_BYTES) {
+      setPreview(null); setError("Thread đã chọn vượt quá giới hạn 20 MiB.");
+      return;
+    }
     setBusy(true); setError(null);
     try {
       const result = await api.previewChatGptImport(conversation);
@@ -132,17 +139,18 @@ export function ChatGptImport({ onImported, onCancel }: Props) {
         <button type="button" className="quiet-button touch-target" disabled={busy || importing} onClick={() => void doPreview()}>Xem trước thread này</button>
       </>}
       {preview && selected && <form className="campaign-form" onSubmit={(event) => void submit(event)}>
-        <p role="status">Tìm thấy <strong>{preview.turn_count}</strong> cặp người chơi / AI trong nhánh ChatGPT đang chọn. Bỏ qua <strong>{preview.skipped_messages}</strong> thông điệp không đủ điều kiện.</p>
+        <p role="status">Tìm thấy <strong>{preview.turn_count}</strong> cặp người chơi / AI trong nhánh ChatGPT đang chọn. Bỏ qua <strong>{preview.skipped_messages}</strong> thông điệp không đủ điều kiện; không nhập nhánh AI thay thế.</p>
         {preview.warnings.map((warning) => <p key={warning} className="form-error">{warning}</p>)}
         <details><summary>Xem hai lượt đầu/cuối</summary><p><strong>Người chơi (đầu):</strong> {preview.sample_first.action_text}</p><p><strong>AI (đầu):</strong> {preview.sample_first.narrative_text}</p><p><strong>Người chơi (cuối):</strong> {preview.sample_last.action_text}</p><p><strong>AI (cuối):</strong> {preview.sample_last.narrative_text}</p></details>
         <label htmlFor="import-campaign-title">Tên chiến dịch mới</label><input id="import-campaign-title" required maxLength={160} value={title} onChange={(event) => setTitle(event.target.value)} />
         <label htmlFor="import-world">Thế giới</label><input id="import-world" required value={world} onChange={(event) => setWorld(event.target.value)} />
         <label htmlFor="import-persona">Persona người chơi</label><input id="import-persona" required value={persona} onChange={(event) => setPersona(event.target.value)} />
         <label htmlFor="import-cast">Nhân vật đã xác nhận (cách nhau dấu phẩy)</label><input id="import-cast" value={cast} onChange={(event) => setCast(event.target.value)} placeholder="Yuna, Gi A, Yoongi" />
-        <p>Import giữ nguyên lời người chơi và AI cũ; chưa tự tạo trí nhớ/canon.</p>
+        <p>Import giữ nguyên lời người chơi và AI cũ; chưa tự tạo trí nhớ/canon, chưa tự xác định NPC nào đang có mặt. Kiểm tra Hồ sơ / Cảnh trước khi chơi tiếp, nhất là quy tắc không tự điều khiển Henn.</p>
         <label><input type="checkbox" checked={approved} onChange={(event) => setApproved(event.target.checked)} /> Tôi đã xem đúng thread và muốn tạo chiến dịch tạm khóa để duyệt riêng.</label>
         <button className="primary-button touch-target" type="submit" disabled={!approved || busy || importing}>{busy ? "Đang nhập…" : "Nhập và mở chiến dịch"}</button>
       </form>}
     </div>
   </section>;
 }
+
