@@ -66,10 +66,12 @@ def import_review(connection: sqlite3.Connection, owner_id: str, campaign_id: st
                 for item in queue[:500]:
                     if not isinstance(item, dict):
                         continue
-                    clean_item = {
-                        key: item[key] for key in ("issue", "policy")
-                        if isinstance(item.get(key), str) and len(item[key]) <= 2000
-                    }
+                    clean_item = {}
+                    for key in ("issue", "policy"):
+                        value = item.get(key)
+                        if not isinstance(value, str):
+                            continue
+                        clean_item[key] = value if len(value) <= 2000 else f"{value[:1987]}… [truncated]"
                     source_meta["review_queue"].append(clean_item)
     if source:
         try:

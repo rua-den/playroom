@@ -110,7 +110,7 @@ describe("recoverable job summary", () => {
 
   it("shows structured profile, scene, and knowledge references with readable labels and IDs", async () => {
     vi.spyOn(api, "listMemory").mockResolvedValue([{ memory_id: "memory-1", id: "version-1", version: 1, kind: "lore", text: "A sealed note", origin: "import", status: "pending", pinned: false, source_revision_ids: [], entity_ids: ["npc-1"], knowledge_scope: "known_by", known_by: ["npc-1"] }]);
-    vi.spyOn(api, "getScene").mockResolvedValue({ focus_scene_id: "scene-1", scenes: { "scene-1": { id: "scene-1", name: "Market", present_ids: ["npc-1"], role: "watcher", notes: "Rainy" } } });
+    vi.spyOn(api, "getScene").mockResolvedValue({ focus_scene_id: "scene-1", scenes: { "scene-1": { id: "scene-1", name: "Market", present_ids: ["npc-1"], participant_ids: ["npc-1"], role: "watcher", notes: "Rainy" } } });
     const projection = { ...reviewProjection(), profiles: {
       persona: { profile_key: "persona", kind: "persona", version: 1, data: { id: "persona-1", name: "Lan", traits: { agency: "player" } } },
       "character:npc-1": { profile_key: "character:npc-1", kind: "character", version: 1, data: { id: "npc-1", name: "Vy", role: "scout", notes: "Quiet voice" } },
@@ -122,6 +122,7 @@ describe("recoverable job summary", () => {
     expect(screen.getByText(/Nhân vật biết: Vy \(npc-1\)/)).toBeInTheDocument();
     expect(screen.getAllByText("role").length).toBeGreaterThan(0);
     expect(screen.getByText(/Rainy/)).toBeInTheDocument();
+    expect(screen.getByText("participant_ids")).toBeInTheDocument();
   });
 
   it("resets every acknowledgement when the checkpoint changes", async () => {

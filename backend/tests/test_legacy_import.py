@@ -196,6 +196,22 @@ def test_legacy_review_metadata_drops_non_text_gap_fields(tmp_path):
     assert metadata["review_queue"] == [{"policy": "do not invent"}]
 
 
+def test_legacy_review_metadata_marks_truncated_gap_text(tmp_path):
+    from uuid import uuid4
+    from playroom.auth import create_owner
+    from playroom.chatgpt_import import import_review
+    from playroom.db import connect, migrate
+    from playroom.legacy_import import import_legacy_bundle
+
+    conn = connect(tmp_path / "truncated-metadata.sqlite3"); migrate(conn)
+    owner = create_owner(conn, "truncated-legacy@example.test", "synthetic long password")
+    source = synthetic_bundle()
+    source["gaps_and_review_queue"][0]["issue"] = "x" * 2500
+    saved = import_legacy_bundle(conn, owner.id, source, str(uuid4()))
+    metadata = import_review(conn, owner.id, saved["campaign_id"])
+    assert metadata["review_queue"][0]["issue"].endswith("… [truncated]")
+
+
 def test_legacy_import_invalid_payload_and_idempotency_do_not_duplicate_campaign(tmp_path):
     from uuid import uuid4
     from playroom.auth import create_owner

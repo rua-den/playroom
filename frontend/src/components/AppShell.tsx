@@ -29,7 +29,7 @@ function safeStructuredValue(value: unknown): string {
 }
 
 function StructuredFields({ data, profiles, idFields = [] }: { data: Record<string, unknown>; profiles: Record<string, { data: Record<string, unknown> }>; idFields?: string[] }) {
-  const entries = Object.entries(data).filter(([key]) => !["name", "description", ...idFields].includes(key));
+  const entries = Object.entries(data).filter(([key]) => !["name", "description"].includes(key));
   if (!entries.length) return null;
   return <details><summary>Chi tiết cấu trúc</summary><dl>{entries.map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{idFields.includes(key) && Array.isArray(value) ? value.map((id) => <span key={String(id)}>{profileName(profiles, String(id))} </span>) : safeStructuredValue(value)}</dd></div>)}</dl></details>;
 }
