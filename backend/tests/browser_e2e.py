@@ -30,6 +30,49 @@ from playroom.provider import ProviderResult
 REPO = Path(__file__).resolve().parents[2]
 EMAIL = "synthetic-b3@example.test"
 PASSWORD = "synthetic fixture password only"
+
+
+class _BoundedASGIObserver:
+    """Test-only ASGI boundary trace that delegates the app unchanged."""
+
+    def __init__(self, app, limit: int = 100):
+        self.app = app
+        self.limit = limit
+        self.events: list[dict] = []
+        self._lock = threading.Lock()
+        self._started = time.monotonic()
+
+    def _record(self, kind: str, scope, **fields: object) -> None:
+        if scope.get("type") != "http" or not scope.get("path", "").startswith("/api/"):
+            return
+        event = {"ms": round((time.monotonic() - self._started) * 1000),
+                 "kind": kind, "method": scope.get("method"),
+                 "path": scope.get("path"), **fields}
+        with self._lock:
+            if len(self.events) >= self.limit:
+                self.events.pop(0)
+            self.events.append(event)
+
+    def snapshot(self) -> list[dict]:
+        with self._lock:
+            return list(self.events)
+
+    async def __call__(self, scope, receive, send):
+        self._record("request_enter", scope)
+
+        async def observed_send(message):
+            message_type = message.get("type")
+            if message_type == "http.response.start":
+                self._record("response_start", scope, status=message.get("status"))
+            elif message_type == "http.response.body" and not message.get("more_body", False):
+                self._record("response_body_final", scope)
+            await send(message)
+
+        try:
+            await self.app(scope, receive, observed_send)
+        except Exception as cause:
+            self._record("exception", scope, exception_type=type(cause).__name__)
+            raise
 NARRATION = "Ánh sáng dịu lan qua căn phòng, và câu chuyện tiếp tục mở ra."
 
 
@@ -44,8 +87,10 @@ def _start_demo(data_dir: Path):
     if not (dist / "index.html").is_file():
         raise RuntimeError("Build frontend first: npm ci && npm run build")
     app, _ = create_demo_app(data_dir, email=EMAIL, password=PASSWORD, frontend_dist=dist)
+    observer = _BoundedASGIObserver(app)
+    app.state.browser_asgi_observer = observer
     port = _free_loopback_port()
-    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
+    server = uvicorn.Server(uvicorn.Config(observer, host="127.0.0.1", port=port, log_level="error"))
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
     origin = f"http://127.0.0.1:{port}"
@@ -126,8 +171,24 @@ def _redact_browser_url(url: str) -> str:
     return re.sub(r"[0-9a-f]{8}-[0-9a-f-]{27,36}", "<uuid>", url)
 
 
-def _print_generation_diagnostics(page, origin: str, campaign_id: str, branch_id: str, campaign_calls: list[dict], trace_events: list[dict], stale_route_hits: int) -> None:
+def _print_generation_diagnostics(page, origin: str, campaign_id: str, branch_id: str, campaign_calls: list[dict], trace_events: list[dict], stale_route_hits: int, server_events=None) -> None:
     """Print redacted state only when a browser gate assertion fails."""
+    direct_probe = None
+    try:
+        receipts_for_probe = page.evaluate("""() => Object.keys(localStorage).filter((key) => key.startsWith('playroom:generation:')).map((key) => {
+          try { const value = JSON.parse(localStorage.getItem(key) || '{}'); return { branchId: key.split(':').at(-1), idempotencyKey: value.idempotencyKey }; } catch { return null; }
+        }).filter(Boolean)""")
+        probe_receipt = next((receipt for receipt in receipts_for_probe if receipt.get("branchId") == branch_id and receipt.get("idempotencyKey")), None)
+        if probe_receipt:
+            response = page.context.request.get(
+                f"{origin}/api/generation/jobs/by-key",
+                params={"branch_id": branch_id, "idempotency_key": probe_receipt["idempotencyKey"]},
+            )
+            direct_probe = {"status": response.status, "ok": response.ok}
+        else:
+            direct_probe = {"status": None, "ok": None, "error": "no_receipt"}
+    except Exception as cause:
+        direct_probe = {"error": type(cause).__name__}
     try:
         projection = _project(page, origin, campaign_id, branch_id)
         jobs = []
@@ -164,7 +225,8 @@ def _print_generation_diagnostics(page, origin: str, campaign_id: str, branch_id
                               "context_window": budget.get("context_window"), "output_reserve": budget.get("output_reserve")}
             break
     details = page.locator(".generation-details")
-    print(json.dumps({"jobs": jobs, "preview_budget": preview_budget, "alerts": alerts, "composer": {"visible": compose.is_visible(), "value_length": len(compose.input_value())}, "send": {"disabled": send.is_disabled(), "text": send.inner_text()}, "generation_details": details.all_text_contents(), "receipts": receipts, "provider_call_count": len(campaign_calls), "stale_route_hits": stale_route_hits, "browser_trace": trace_events}, ensure_ascii=True))
+    server_trace = server_events.snapshot() if hasattr(server_events, "snapshot") else (server_events or [])
+    print(json.dumps({"jobs": jobs, "preview_budget": preview_budget, "alerts": alerts, "composer": {"visible": compose.is_visible(), "value_length": len(compose.input_value())}, "send": {"disabled": send.is_disabled(), "text": send.inner_text()}, "generation_details": details.all_text_contents(), "receipts": receipts, "provider_call_count": len(campaign_calls), "stale_route_hits": stale_route_hits, "browser_trace": trace_events, "server_trace": server_trace, "direct_by_key_probe": direct_probe}, ensure_ascii=True))
 
 
 def _assert_mobile(page, width: int) -> None:
@@ -328,24 +390,36 @@ def browser_synthetic_chat() -> None:
                 intercepted = {"count": 0}
                 def drop_post(route):
                     intercepted["count"] += 1
+                    if intercepted["count"] > 1:
+                        route.continue_()
+                        return
                     response = route.fetch()
                     assert response.status == 201
                     route.abort("failed")
-                page.route("**/api/campaigns/*/generate", drop_post, times=1)
+                # Keep this route registered after its one synthetic failure.
+                # Playwright 1.56 can race auto-removal with a follow-up fetch:
+                # https://github.com/microsoft/playwright/issues/41802
+                page.route("**/api/campaigns/*/generate", drop_post)
                 _send_and_wait(page, "**Henn gật đầu**", 3)
                 assert intercepted["count"] == 1
                 assert len(campaign.calls) == 3
 
                 # Definite rejection has no reserved job and must not block
                 # the next *explicit* Send; no automatic paid retry.
+                rejected = {"count": 0}
                 def reject_once(route):
+                    rejected["count"] += 1
+                    if rejected["count"] > 1:
+                        route.continue_()
+                        return
                     route.fulfill(status=422, content_type="application/json", body=json.dumps({"detail": "Rejected before reservation"}))
-                page.route("**/api/campaigns/*/generate", reject_once, times=1)
+                page.route("**/api/campaigns/*/generate", reject_once)
                 draft = "Chúng ta cùng bắt đầu."
                 page.get_by_role("textbox", name="Hành động tiếp theo").fill(draft)
                 page.get_by_role("button", name="Gửi", exact=True).click()
                 expect(page.get_by_role("alert")).to_be_visible(timeout=10000)
                 expect(page.get_by_role("textbox", name="Hành động tiếp theo")).to_have_value(draft)
+                assert rejected["count"] == 1
                 assert len(campaign.calls) == 3
                 _send_and_wait(page, draft, 4)
                 assert len(campaign.calls) == 4
@@ -357,9 +431,12 @@ def browser_synthetic_chat() -> None:
                 def stale_once(route):
                     nonlocal stale_route_hits
                     stale_route_hits += 1
+                    if stale_route_hits > 1:
+                        route.continue_()
+                        return
                     trace("stale_route_hit", count=stale_route_hits)
                     route.fulfill(status=409, content_type="application/json", body=json.dumps({"detail": "Generation checkpoint is stale"}))
-                page.route("**/api/campaigns/*/generate", stale_once, times=1)
+                page.route("**/api/campaigns/*/generate", stale_once)
                 fifth = "Cậu thấy lượt bóng vừa rồi chứ?"
                 compose.fill(fifth)
                 trace("stale_click_before")
@@ -369,8 +446,9 @@ def browser_synthetic_chat() -> None:
                     expect(page.get_by_text("Tác vụ đã thay đổi.", exact=False)).to_be_visible(timeout=12000)
                 except (PlaywrightTimeoutError, AssertionError):
                     trace("stale_assertion_timeout", button_disabled=page.locator(".generation-composer button[type=submit]").is_disabled(), button_text=page.locator(".generation-composer button[type=submit]").inner_text())
-                    _print_generation_diagnostics(page, origin, campaign_id, branch_id, campaign.calls, trace_events, stale_route_hits)
+                    _print_generation_diagnostics(page, origin, campaign_id, branch_id, campaign.calls, trace_events, stale_route_hits, app.state.browser_asgi_observer)
                     raise
+                assert stale_route_hits == 1
                 expect(compose).to_have_value(fifth)
                 assert len(campaign.calls) == 4
                 _send_and_wait(page, fifth, 5)
@@ -379,14 +457,20 @@ def browser_synthetic_chat() -> None:
                 # The candidate may be committed but the parent projection
                 # refresh can fail. The same job must be retried for commit,
                 # never paid/reserved as another generation.
+                projection_failures = {"count": 0}
                 def fail_projection_once(route):
+                    projection_failures["count"] += 1
+                    if projection_failures["count"] > 1:
+                        route.continue_()
+                        return
                     route.fulfill(status=503, content_type="application/json", body=json.dumps({"detail": "Synthetic refresh outage"}))
-                page.route("**/api/campaigns/*/projection*", fail_projection_once, times=1)
+                page.route("**/api/campaigns/*/projection*", fail_projection_once)
                 sixth = "Cứ tiếp tục thôi, Yuna."
                 compose.fill(sixth)
                 page.get_by_role("button", name="Gửi", exact=True).click()
                 expect(page.get_by_text("Không thể lưu lượt kể hoàn chỉnh", exact=False)).to_be_visible(timeout=20000)
                 expect(compose).to_have_value(sixth)
+                assert projection_failures["count"] == 1
                 assert len(campaign.calls) == 6
                 # A retried commit of the same candidate only refreshes UI.
                 page.get_by_role("button", name="Gửi", exact=True).click()
