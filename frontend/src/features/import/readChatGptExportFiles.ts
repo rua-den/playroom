@@ -1,4 +1,4 @@
-import { Unzip, UnzipInflate, UnzipPassThrough } from "fflate";
+import { Inflate } from "fflate";
 import {
   ChatGptConversation,
   listChatGptConversations,
@@ -28,6 +28,12 @@ interface ZipEntry {
   dataEnd: number;
 }
 
+interface ReadBudget {
+  entryCount: number;
+  declaredTotal: number;
+  actualTotal: number;
+}
+
 const readU16 = (data: Uint8Array, at: number) => data[at] | (data[at + 1] << 8);
 const readU32 = (data: Uint8Array, at: number) => (readU16(data, at) + readU16(data, at + 2) * 0x10000) >>> 0;
 const sameBytes = (a: Uint8Array, b: Uint8Array) => a.length === b.length && a.every((value, index) => value === b[index]);
@@ -42,7 +48,7 @@ function decodeName(bytes: Uint8Array): string {
 
 function validateName(name: string): void {
   const parts = name.endsWith("/") ? name.slice(0, -1).split("/") : name.split("/");
-  if (!name || name.includes("\\") || name.startsWith("/") || /^[A-Za-z]:/.test(name) ||
+  if (!name || name.includes("\\") || name.includes("\0") || name.startsWith("/") || /^[A-Za-z]:/.test(name) ||
       parts.some(part => !part || part === "." || part === "..")) {
     throw new Error("ZIP chứa đường dẫn không an toàn. Hãy tạo lại bản xuất rồi thử lại.");
   }
@@ -68,6 +74,7 @@ function findEndOfCentralDirectory(data: Uint8Array): number {
 function parseZipEntries(data: Uint8Array): ZipEntry[] {
   const end = findEndOfCentralDirectory(data);
   if (end + 22 > data.length || readU16(data, end + 4) !== 0 || readU16(data, end + 6) !== 0 ||
+      readU16(data, end + 8) !== readU16(data, end + 10) ||
       readU16(data, end + 8) === ZIP64 || readU16(data, end + 10) === ZIP64 ||
       readU32(data, end + 12) === 0xffffffff || readU32(data, end + 16) === 0xffffffff ||
       end + 22 + readU16(data, end + 20) !== data.length) throw invalidArchive();
@@ -121,9 +128,8 @@ function parseZipEntries(data: Uint8Array): ZipEntry[] {
   if (at !== end) throw invalidArchive();
   const sorted = [...entries].sort((a, b) => a.localOffset - b.localOffset);
   for (let index = 1; index < sorted.length; index += 1) {
-    if (sorted[index - 1].dataEnd > sorted[index].localOffset) throw invalidArchive();
+    if (sorted[index - 1].dataEnd > sorted[index].localOffset || sorted[index - 1].localOffset === sorted[index].localOffset) throw invalidArchive();
   }
-  if (entries.reduce((total, entry) => total + entry.uncompressedSize, 0) > MAX_DECLARED_OUTPUT_BYTES) throw limitError("dung lượng giải nén");
   return entries;
 }
 
@@ -131,43 +137,49 @@ function isConversationName(name: string): boolean {
   return /(?:^|\/)conversations(?:[-_]\d+)?\.json$/i.test(name);
 }
 
-async function readZip(data: Uint8Array): Promise<string[]> {
+async function readZip(data: Uint8Array, budget: ReadBudget): Promise<string[]> {
   const entries = parseZipEntries(data);
+  budget.entryCount += entries.length;
+  if (budget.entryCount > MAX_ENTRIES) throw limitError("số lượng entry");
   const selected = new Map(entries.filter(entry => isConversationName(entry.name)).map(entry => [entry.name, entry]));
   if (!selected.size) throw new Error("Không tìm thấy tệp conversation trong ZIP. Hãy chọn bản xuất ChatGPT đầy đủ.");
+  budget.declaredTotal += entries.reduce((total, entry) => total + entry.uncompressedSize, 0);
+  if (budget.declaredTotal > MAX_DECLARED_OUTPUT_BYTES) throw limitError("dung lượng giải nén");
   const outputs = new Map<string, Uint8Array>();
-  let actualTotal = 0;
-  const unzipper = new Unzip(file => {
-    const entry = selected.get(file.name);
-    if (!entry) return;
+  for (const entry of selected.values()) {
     if (entry.uncompressedSize > MAX_CONVERSATION_BYTES) throw limitError("mỗi tệp conversation");
     const chunks: Uint8Array[] = [];
     let size = 0;
-    file.ondata = (error, chunk) => {
-      if (error) throw invalidArchive();
+    let finished = false;
+    const ondata = (chunk: Uint8Array, final: boolean) => {
       size += chunk.length;
-      actualTotal += chunk.length;
-      if (size > entry.uncompressedSize || size > MAX_CONVERSATION_BYTES || actualTotal > MAX_DECLARED_OUTPUT_BYTES) throw limitError("dung lượng giải nén");
+      budget.actualTotal += chunk.length;
+      if (size > entry.uncompressedSize || size > MAX_CONVERSATION_BYTES || budget.actualTotal > MAX_DECLARED_OUTPUT_BYTES) throw limitError("dung lượng giải nén");
       chunks.push(chunk);
-      if (size === entry.uncompressedSize) {
-        const output = new Uint8Array(size);
-        let offset = 0;
-        for (const part of chunks) { output.set(part, offset); offset += part.length; }
-        if (crc32(output) !== entry.crc) throw invalidArchive();
-        outputs.set(entry.name, output);
-      }
+      if (final) finished = true;
     };
-    file.start();
-  });
-  unzipper.register(UnzipInflate);
-  unzipper.register(UnzipPassThrough);
-  try {
-    unzipper.push(data, true);
-  } catch (error) {
-    if (error instanceof Error && error.message.includes("giới hạn")) throw error;
-    throw invalidArchive();
+    try {
+      if (entry.compression === 0) {
+        for (let at = entry.dataOffset; at < entry.dataEnd; at += 4096) {
+          ondata(data.subarray(at, Math.min(entry.dataEnd, at + 4096)), at + 4096 >= entry.dataEnd);
+        }
+      } else {
+        const inflate = new Inflate({}, ondata);
+        for (let at = entry.dataOffset; at < entry.dataEnd; at += 4096) {
+          inflate.push(data.subarray(at, Math.min(entry.dataEnd, at + 4096)), at + 4096 >= entry.dataEnd);
+        }
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("giới hạn")) throw error;
+      throw invalidArchive();
+    }
+    if (!finished || size !== entry.uncompressedSize) throw invalidArchive();
+    const output = new Uint8Array(size);
+    let offset = 0;
+    for (const part of chunks) { output.set(part, offset); offset += part.length; }
+    if (crc32(output) !== entry.crc) throw invalidArchive();
+    outputs.set(entry.name, output);
   }
-  if (outputs.size !== selected.size) throw invalidArchive();
   try {
     return [...selected.keys()].map(name => new TextDecoder("utf-8", { fatal: true }).decode(outputs.get(name)!));
   } catch {
@@ -189,6 +201,12 @@ function deduplicate(conversations: ChatGptConversation[]): ChatGptConversation[
 /** Read local ChatGPT JSON/ZIP files without network access or partial results. */
 export async function readChatGptExportFiles(files: File[]): Promise<ChatGptConversation[]> {
   if (!files.length) throw invalidJson();
+  let announcedBytes = 0;
+  for (const file of files) {
+    if (!Number.isSafeInteger(file.size) || file.size < 0 || file.size > MAX_INPUT_BYTES) throw limitError("tổng dung lượng tệp");
+    announcedBytes += file.size;
+    if (announcedBytes > MAX_INPUT_BYTES) throw limitError("tổng dung lượng tệp");
+  }
   const contents: Uint8Array[] = [];
   let totalBytes = 0;
   for (const file of files) {
@@ -199,10 +217,11 @@ export async function readChatGptExportFiles(files: File[]): Promise<ChatGptConv
     contents.push(bytes);
   }
   const jsonTexts: string[] = [];
+  const budget: ReadBudget = { entryCount: 0, declaredTotal: 0, actualTotal: 0 };
   for (const bytes of contents) {
     const isZip = bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b &&
       ((bytes[2] === 0x03 && bytes[3] === 0x04) || (bytes[2] === 0x05 && bytes[3] === 0x06) || (bytes[2] === 0x07 && bytes[3] === 0x08));
-    if (isZip) jsonTexts.push(...await readZip(bytes));
+    if (isZip) jsonTexts.push(...await readZip(bytes, budget));
     else {
       if (bytes.length > MAX_CONVERSATION_BYTES) throw limitError("mỗi tệp conversation");
       try { jsonTexts.push(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); }

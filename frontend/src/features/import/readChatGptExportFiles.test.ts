@@ -69,6 +69,37 @@ describe("ChatGPT export file discovery", () => {
     await expect(readChatGptExportFiles([new File([unsupported], "unsupported.zip")])).rejects.toThrow("ZIP");
   });
 
+  it("checks declared input size before reading file bytes", async () => {
+    let reads = 0;
+    const oversized = {
+      size: 20 * 1024 * 1024 + 1,
+      arrayBuffer: async () => { reads += 1; return new ArrayBuffer(0); },
+    } as unknown as File;
+    await expect(readChatGptExportFiles([oversized])).rejects.toThrow("giới hạn");
+    expect(reads).toBe(0);
+  });
+
+  it("applies the entry limit across multiple ZIP inputs", async () => {
+    const makeArchive = (offset: number) => zipFile(Object.fromEntries([
+      ["conversations.json", JSON.stringify([conversation(`aggregate-${offset}`)])],
+      ...Array.from({ length: 300 }, (_, index) => [`assets/${offset}-${index}.bin`, new Uint8Array([index])]),
+    ]));
+    await expect(readChatGptExportFiles([makeArchive(1), makeArchive(2)])).rejects.toThrow("số lượng entry");
+  });
+
+  it("rejects truncated archives, local-header mismatches, and CRC corruption", async () => {
+    const source = new Uint8Array(await zipFile({ "conversations.json": JSON.stringify([conversation("crc")]) }).arrayBuffer());
+    await expect(readChatGptExportFiles([new File([source.slice(0, -1)], "truncated.zip")])).rejects.toThrow("ZIP");
+    const localMismatch = source.slice();
+    const local = localMismatch.findIndex((value, index) => value === 0x50 && localMismatch[index + 1] === 0x4b && localMismatch[index + 2] === 0x03 && localMismatch[index + 3] === 0x04);
+    localMismatch[local + 8] ^= 8;
+    await expect(readChatGptExportFiles([new File([localMismatch], "mismatch.zip")])).rejects.toThrow("ZIP");
+    const crc = source.slice();
+    const central = crc.findIndex((value, index) => value === 0x50 && crc[index + 1] === 0x4b && crc[index + 2] === 0x01 && crc[index + 3] === 0x02);
+    crc[central + 16] ^= 1;
+    await expect(readChatGptExportFiles([new File([crc], "crc.zip")])).rejects.toThrow("ZIP");
+  });
+
   it("reads multiple selected JSON inputs locally", async () => {
     const files = [
       new File([JSON.stringify([conversation("one")])], "conversations.json", { type: "application/json" }),
