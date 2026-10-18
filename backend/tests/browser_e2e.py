@@ -519,7 +519,10 @@ def browser_synthetic_chat() -> None:
                 expect(page.get_by_text("Đã đọc 2 cuộc hội thoại", exact=False)).to_be_visible(timeout=12000)
                 assert zip_transfer_posts == [], "ZIP discovery must not POST transfer data"
                 thread_picker = page.get_by_label("Chọn chính xác cuộc hội thoại cần nhập")
-                thread_picker.select_option(label=re.compile("ZIP selected 125"))
+                selected_option = page.get_by_role("option", name=re.compile("ZIP selected 125"))
+                selected_value = selected_option.get_attribute("value")
+                assert selected_value is not None
+                thread_picker.select_option(value=selected_value)
                 page.get_by_role("button", name="Xem trước thread này").click()
                 expect(page.get_by_text("Tìm thấy 125 cặp", exact=False)).to_be_visible(timeout=12000)
                 assert len(zip_transfer_posts) == 1
