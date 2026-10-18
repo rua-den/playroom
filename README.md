@@ -27,6 +27,8 @@ Trọng tâm là quản lý context qua nhiều chương: lưu hồ sơ, cảnh,
 
 **Follow-up import/review 18/10:** [PR #36](https://github.com/rua-den/playroom/pull/36) đã merge tại `1a726d0`, chặn kết quả bất đồng bộ của file cũ và reset xác nhận khi đổi snapshot, hiển thị hồ sơ/cảnh/phạm vi biết cùng metadata nguồn đầy đủ hơn. Exact PR-head [CI #39119446749](https://github.com/rua-den/playroom/actions/runs/39119446749) và merged-main [CI #39119578290](https://github.com/rua-den/playroom/actions/runs/39119578290) đều PASS attempt 1: **356 backend, 109 frontend / 3 skipped**, build/typecheck và hai kịch bản Chromium. Hai lần Chromium lỗi local vẫn được ghi trong handoff; diagnostics đã bổ sung, **chưa coi #20 là đã sửa**.
 
+**ZIP/JSON cục bộ 18/10:** [PR #38](https://github.com/rua-den/playroom/pull/38) đã merge tại `fe8f888`. Final PR-head [CI #39141630371](https://github.com/rua-den/playroom/actions/runs/39141630371) và merged-main [CI #39141771466](https://github.com/rua-den/playroom/actions/runs/39141771466) đều PASS attempt 1: **357 backend, 136 frontend / 3 skipped**, build/typecheck/compile và hai kịch bản Chromium. Test ZIP giữ 125 lượt gốc, reload/duyệt, chặn request vượt budget trước provider, tự viết summary có nguồn rồi chủ động Gửi mới bằng fake provider. CI đầu tiên của head cũ đã lỗi ở mock recovery; bản sửa giữ route mock tồn tại suốt test, không đổi logic recovery của app. [Handoff](docs/handoff/2026-10-18-chatgpt-zip.md) giữ đầy đủ thất bại và giới hạn; #27 và #20 vẫn mở.
+
 ## Đọc theo thứ tự
 
 1. [Thiết kế sản phẩm và context](docs/superpowers/specs/2026-10-12-personal-playroom-design.md).

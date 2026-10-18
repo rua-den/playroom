@@ -21,8 +21,8 @@ The owner supplied the same local Legacy bundle as before. Controlled shape insp
 - [x] Local guarded ZIP/JSON reader and regression tests; owner `issue27_zip_reader`.
 - [x] ChatGPT importer integration and deferred-result regressions; owner `issue27_zip_ui`.
 - [x] 125-turn restart/idempotency and real Chromium ZIP import/review/owner-summary/new-fake-Send acceptance; owner `issue27_zip_acceptance`.
-- [x] Independent production diff/security review and parent full checks; final harness review and exact PR/merged-code CI tracked below.
-- [ ] Update release evidence and current README/handoff pointer.
+- [x] Independent production/harness diff review, parent full checks and exact PR/merged-code CI.
+- [x] Update release evidence and current README/handoff pointer.
 
 The reader produces `readChatGptExportFiles(files: File[]): Promise<ChatGptConversation[]>`; the UI consumes it without a backend contract change. The browser gate consumes the built UI and existing authenticated JSON API. The three workers own disjoint files; all commits use explicit paths and never amend shared history.
 
@@ -66,4 +66,12 @@ At `eea12d1`, the test keeps all four synthetic route handlers registered, each 
 
 Independent Sol review of `38b4b18..eea12d1`: no blocking findings; all four injections remain asserted, later requests forward, observer preserves lifespan and excludes bodies/headers/query values/credentials, and the by-key diagnostic is read-only. Reviewer compile/raw diff checks passed; reviewer did not rerun Chromium.
 
-Final exact PR-head and merged-code CI remain pending. Record them below after verification rather than relabel the initial failed run.
+## Release evidence
+
+[PR #38](https://github.com/rua-den/playroom/pull/38), final head `88c4a1dd7227d7e98629c585f65fa188a3f7ccd3`, passed [CI #39141630371 attempt 1](https://github.com/rua-den/playroom/actions/runs/39141630371): backend **357 passed**, frontend **136 passed / 3 skipped**, typecheck/build/compile and both synthetic/live-local Chromium flows. This is a new commit after the routing change, not a rerun of the initial failed head.
+
+Merged code: `fe8f888a5a70cdc27ab31c2ae8d83499259fa5ad`. Parent fetched GitHub main and verified its complete tree equals the reviewed PR head. Exact merged-code [CI #39141771466 attempt 1](https://github.com/rua-den/playroom/actions/runs/39141771466) **PASS**: backend **357 passed**, frontend **136 passed / 3 skipped**, typecheck/build/compile and both synthetic/live-local Chromium flows.
+
+The release-evidence follow-up changes only this handoff and README. Application workflows intentionally exclude these documentation paths; verify local links, raw diff and unchanged application tree rather than claim another app CI run for a docs-only commit. Primary checkout sync must preserve its pre-existing untracked `playroom/` and ignored private data.
+
+Next checkpoint: design durable bounded chunk/resume for #27 against the existing immutable archive, idempotency and review lock; do not infer universal compatibility without an actual sanitized export fixture. Keep #20 open for further recovery evidence, and #9 for real authenticated model/physical phone/deployment acceptance with separate authorization. No private bundle or real provider was used in this ZIP acceptance.
