@@ -87,6 +87,9 @@ export interface CampaignProjection {
       paired_turns?: number;
       skipped_messages?: number | null;
       source_conversation_id?: string;
+      source_provenance?: { format?: string; schema_version?: string; is_app_export?: boolean; can_roundtrip_app_export?: boolean; title?: string };
+      resume_checkpoint?: { chapter_last_completed?: number; next_chapter_number?: number; next_chapter_written?: boolean; focus_scene?: { scene_id?: string; location?: string; relative_time?: string | null; present_character_ids?: string[] } };
+      review_queue?: Array<{ issue?: string; policy?: string }>;
     };
 }
 

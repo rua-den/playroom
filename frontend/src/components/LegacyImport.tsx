@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api/client";
 
 type LegacyPreview = Awaited<ReturnType<typeof api.previewLegacyImport>>;
@@ -14,9 +14,19 @@ export function LegacyImport({ onImported, onCancel }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const keyRef = useRef(globalThis.crypto.randomUUID());
+  const epochRef = useRef(0);
+  const mountedRef = useRef(true);
+  const importingRef = useRef(false);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   async function loadFile(event: ChangeEvent<HTMLInputElement>) {
+    const epoch = ++epochRef.current;
     setBundle(null); setPreview(null); setConfirmed(false); setError(null);
+    setBusy(false);
     keyRef.current = globalThis.crypto.randomUUID();
     const file = event.target.files?.[0];
     if (!file) return;
@@ -29,34 +39,51 @@ export function LegacyImport({ onImported, onCancel }: {
           (data as Record<string, unknown>).format !== "playroom_legacy_story_bundle") {
         throw new Error("Đây không phải file playroom_legacy_story_bundle. Hãy dùng Nhập ChatGPT cho conversations.json.");
       }
+      if (!mountedRef.current || epoch !== epochRef.current) return;
       setBundle(data as Record<string, unknown>);
     } catch (cause) {
+      if (!mountedRef.current || epoch !== epochRef.current) return;
       setError(cause instanceof Error ? cause.message : "Không đọc được file legacy.");
     }
   }
 
   async function doPreview() {
     if (!bundle || busy) return;
+    const epoch = epochRef.current;
+    const selectedBundle = bundle;
     setBusy(true); setError(null);
     try {
-      setPreview(await api.previewLegacyImport(bundle));
+      const result = await api.previewLegacyImport(selectedBundle);
+      if (!mountedRef.current || epoch !== epochRef.current) return;
+      setPreview(result);
     } catch (cause) {
+      if (!mountedRef.current || epoch !== epochRef.current) return;
       setPreview(null);
       setError(cause instanceof ApiError ? cause.message : "Bundle không hợp lệ hoặc không thể xem trước.");
-    } finally { setBusy(false); }
+    } finally {
+      if (mountedRef.current && epoch === epochRef.current) setBusy(false);
+    }
   }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!bundle || !preview || !confirmed || busy) return;
+    if (!bundle || !preview || !confirmed || busy || importingRef.current) return;
+    const epoch = epochRef.current;
+    const selectedBundle = bundle;
+    importingRef.current = true;
     setBusy(true); setError(null);
     try {
-      const saved = await api.importLegacyBundle(bundle, keyRef.current);
+      const saved = await api.importLegacyBundle(selectedBundle, keyRef.current);
+      if (!mountedRef.current || epoch !== epochRef.current) return;
       const now = new Date().toISOString();
-      onImported({ id: saved.campaign_id, title: String((bundle.campaign_create_payload as {title: string}).title), created_at: now, updated_at: now, archived_at: null });
+      onImported({ id: saved.campaign_id, title: String((selectedBundle.campaign_create_payload as {title: string}).title), created_at: now, updated_at: now, archived_at: null });
     } catch (cause) {
+      if (!mountedRef.current || epoch !== epochRef.current) return;
       setError(cause instanceof ApiError ? cause.message : "Không thể lưu bundle. Dữ liệu trên thiết bị không bị thay đổi.");
-    } finally { setBusy(false); }
+    } finally {
+      importingRef.current = false;
+      if (mountedRef.current && epoch === epochRef.current) setBusy(false);
+    }
   }
 
   return <section className="create-card" aria-labelledby="legacy-import-title">

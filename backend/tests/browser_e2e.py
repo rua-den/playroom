@@ -120,7 +120,11 @@ def _project(page, origin: str, campaign_id: str, branch_id: str) -> dict:
     return response.json()
 
 
-def _print_generation_diagnostics(page, origin: str, campaign_id: str, branch_id: str, campaign_calls: list[dict]) -> None:
+def _redact_browser_url(url: str) -> str:
+    return re.sub(r"[0-9a-f]{8}-[0-9a-f-]{27,36}", "<uuid>", url)
+
+
+def _print_generation_diagnostics(page, origin: str, campaign_id: str, branch_id: str, campaign_calls: list[dict], trace_events: list[dict], stale_route_hits: int) -> None:
     """Print redacted state only when a browser gate assertion fails."""
     try:
         projection = _project(page, origin, campaign_id, branch_id)
@@ -130,7 +134,14 @@ def _print_generation_diagnostics(page, origin: str, campaign_id: str, branch_id
     alerts = page.locator("[role=alert]").all_text_contents()
     compose = page.locator("#generation-action")
     send = page.locator(".generation-composer button[type=submit]")
-    print(json.dumps({"jobs": jobs, "alerts": alerts, "composer": {"visible": compose.is_visible(), "value_length": len(compose.input_value())}, "send_disabled": send.is_disabled(), "provider_call_count": len(campaign_calls)}, ensure_ascii=False))
+    receipts = page.evaluate("""() => Object.keys(localStorage).filter((key) => key.startsWith('playroom:generation:')).map((key) => {
+      try {
+        const value = JSON.parse(localStorage.getItem(key) || '{}');
+        return { key: key.replace(/playroom:generation:[^:]+:/, 'playroom:generation:<owner>:'), checkpointId: value.checkpointId, previewId: value.previewId, jobId: value.jobId, actionLength: typeof value.action === 'string' ? value.action.length : null };
+      } catch { return { key: '<unparseable>' }; }
+    })""")
+    details = page.locator(".generation-details")
+    print(json.dumps({"jobs": jobs, "alerts": alerts, "composer": {"visible": compose.is_visible(), "value_length": len(compose.input_value())}, "send": {"disabled": send.is_disabled(), "text": send.inner_text()}, "generation_details": details.all_text_contents(), "receipts": receipts, "provider_call_count": len(campaign_calls), "stale_route_hits": stale_route_hits, "browser_trace": trace_events}, ensure_ascii=False))
 
 
 def _assert_mobile(page, width: int) -> None:
@@ -163,6 +174,31 @@ def browser_synthetic_chat() -> None:
                 )
                 page = context.new_page()
                 outbound = []
+                trace_events: list[dict] = []
+                trace_started = time.monotonic()
+
+                def trace(kind: str, **fields: object) -> None:
+                    if len(trace_events) >= 100:
+                        trace_events.pop(0)
+                    trace_events.append({"ms": round((time.monotonic() - trace_started) * 1000), "kind": kind, **fields})
+
+                def trace_request(request) -> None:
+                    if "/api/" in request.url:
+                        trace("request", method=request.method, url=_redact_browser_url(request.url))
+
+                def trace_response(response) -> None:
+                    if "/api/" in response.url:
+                        trace("response", status=response.status, url=_redact_browser_url(response.url))
+
+                def trace_request_failed(request) -> None:
+                    if "/api/" in request.url:
+                        trace("requestfailed", method=request.method, url=_redact_browser_url(request.url), failure=request.failure)
+
+                page.on("request", trace_request)
+                page.on("response", trace_response)
+                page.on("requestfailed", trace_request_failed)
+                page.on("console", lambda message: trace("console", type=message.type, text=message.text[:300]))
+                page.on("pageerror", lambda error: trace("pageerror", text=str(error)[:300]))
                 page.on("request", lambda r: outbound.append(r.url) if not r.url.startswith(origin) else None)
                 page.goto(origin, wait_until="domcontentloaded")
                 expect(page.get_by_role("heading", name="Đăng nhập Playroom")).to_be_visible()
@@ -251,16 +287,23 @@ def browser_synthetic_chat() -> None:
                 # A rejected stale checkpoint (409) followed by by-key 404
                 # is a definite pre-reservation conflict: reload authority,
                 # retain player input, await a *new explicit* Send.
+                stale_route_hits = 0
                 def stale_once(route):
+                    nonlocal stale_route_hits
+                    stale_route_hits += 1
+                    trace("stale_route_hit", count=stale_route_hits)
                     route.fulfill(status=409, content_type="application/json", body=json.dumps({"detail": "Generation checkpoint is stale"}))
                 page.route("**/api/campaigns/*/generate", stale_once, times=1)
                 fifth = "Cậu thấy lượt bóng vừa rồi chứ?"
                 compose.fill(fifth)
+                trace("stale_click_before")
                 page.get_by_role("button", name="Gửi", exact=True).click()
+                trace("stale_click_after")
                 try:
                     expect(page.get_by_text("Tác vụ đã thay đổi.", exact=False)).to_be_visible(timeout=12000)
                 except (PlaywrightTimeoutError, AssertionError):
-                    _print_generation_diagnostics(page, origin, campaign_id, branch_id, campaign.calls)
+                    trace("stale_assertion_timeout", button_disabled=page.locator(".generation-composer button[type=submit]").is_disabled(), button_text=page.locator(".generation-composer button[type=submit]").inner_text())
+                    _print_generation_diagnostics(page, origin, campaign_id, branch_id, campaign.calls, trace_events, stale_route_hits)
                     raise
                 expect(compose).to_have_value(fifth)
                 assert len(campaign.calls) == 4
