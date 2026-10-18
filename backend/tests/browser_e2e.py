@@ -9,11 +9,13 @@ and cannot invoke real providers. No user data or API credentials are used.
 from __future__ import annotations
 
 import json
+import io
 import re
 import socket
 import tempfile
 import threading
 import time
+import zipfile
 from pathlib import Path
 from urllib.request import urlopen
 from uuid import uuid4
@@ -28,6 +30,49 @@ from playroom.provider import ProviderResult
 REPO = Path(__file__).resolve().parents[2]
 EMAIL = "synthetic-b3@example.test"
 PASSWORD = "synthetic fixture password only"
+
+
+class _BoundedASGIObserver:
+    """Test-only ASGI boundary trace that delegates the app unchanged."""
+
+    def __init__(self, app, limit: int = 100):
+        self.app = app
+        self.limit = limit
+        self.events: list[dict] = []
+        self._lock = threading.Lock()
+        self._started = time.monotonic()
+
+    def _record(self, kind: str, scope, **fields: object) -> None:
+        if scope.get("type") != "http" or not scope.get("path", "").startswith("/api/"):
+            return
+        event = {"ms": round((time.monotonic() - self._started) * 1000),
+                 "kind": kind, "method": scope.get("method"),
+                 "path": scope.get("path"), **fields}
+        with self._lock:
+            if len(self.events) >= self.limit:
+                self.events.pop(0)
+            self.events.append(event)
+
+    def snapshot(self) -> list[dict]:
+        with self._lock:
+            return list(self.events)
+
+    async def __call__(self, scope, receive, send):
+        self._record("request_enter", scope)
+
+        async def observed_send(message):
+            message_type = message.get("type")
+            if message_type == "http.response.start":
+                self._record("response_start", scope, status=message.get("status"))
+            elif message_type == "http.response.body" and not message.get("more_body", False):
+                self._record("response_body_final", scope)
+            await send(message)
+
+        try:
+            await self.app(scope, receive, observed_send)
+        except Exception as cause:
+            self._record("exception", scope, exception_type=type(cause).__name__)
+            raise
 NARRATION = "Ánh sáng dịu lan qua căn phòng, và câu chuyện tiếp tục mở ra."
 
 
@@ -42,8 +87,10 @@ def _start_demo(data_dir: Path):
     if not (dist / "index.html").is_file():
         raise RuntimeError("Build frontend first: npm ci && npm run build")
     app, _ = create_demo_app(data_dir, email=EMAIL, password=PASSWORD, frontend_dist=dist)
+    observer = _BoundedASGIObserver(app)
+    app.state.browser_asgi_observer = observer
     port = _free_loopback_port()
-    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
+    server = uvicorn.Server(uvicorn.Config(observer, host="127.0.0.1", port=port, log_level="error"))
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
     origin = f"http://127.0.0.1:{port}"
@@ -124,11 +171,33 @@ def _redact_browser_url(url: str) -> str:
     return re.sub(r"[0-9a-f]{8}-[0-9a-f-]{27,36}", "<uuid>", url)
 
 
-def _print_generation_diagnostics(page, origin: str, campaign_id: str, branch_id: str, campaign_calls: list[dict], trace_events: list[dict], stale_route_hits: int) -> None:
+def _print_generation_diagnostics(page, origin: str, campaign_id: str, branch_id: str, campaign_calls: list[dict], trace_events: list[dict], stale_route_hits: int, server_events=None) -> None:
     """Print redacted state only when a browser gate assertion fails."""
+    direct_probe = None
+    try:
+        receipts_for_probe = page.evaluate("""() => Object.keys(localStorage).filter((key) => key.startsWith('playroom:generation:')).map((key) => {
+          try { const value = JSON.parse(localStorage.getItem(key) || '{}'); return { branchId: key.split(':').at(-1), idempotencyKey: value.idempotencyKey }; } catch { return null; }
+        }).filter(Boolean)""")
+        probe_receipt = next((receipt for receipt in receipts_for_probe if receipt.get("branchId") == branch_id and receipt.get("idempotencyKey")), None)
+        if probe_receipt:
+            response = page.context.request.get(
+                f"{origin}/api/generation/jobs/by-key",
+                params={"branch_id": branch_id, "idempotency_key": probe_receipt["idempotencyKey"]},
+            )
+            direct_probe = {"status": response.status, "ok": response.ok}
+        else:
+            direct_probe = {"status": None, "ok": None, "error": "no_receipt"}
+    except Exception as cause:
+        direct_probe = {"error": type(cause).__name__}
     try:
         projection = _project(page, origin, campaign_id, branch_id)
-        jobs = [{"id": job.get("id"), "status": job.get("status"), "attempt_counts_by_stage": job.get("attempt_counts_by_stage")} for job in projection.get("jobs", [])]
+        jobs = []
+        for job in projection.get("jobs", []):
+            detail = page.context.request.get(f"{origin}/api/generation/jobs/{job.get('id')}")
+            detail_json = detail.json() if detail.ok else {}
+            jobs.append({"id": job.get("id"), "status": job.get("status"),
+                         "attempt_counts_by_stage": job.get("attempt_counts_by_stage"),
+                         "failure": detail_json.get("failure")})
     except Exception as cause:
         jobs = [{"diagnostic_error": type(cause).__name__}]
     alerts = page.locator("[role=alert]").all_text_contents()
@@ -137,11 +206,27 @@ def _print_generation_diagnostics(page, origin: str, campaign_id: str, branch_id
     receipts = page.evaluate("""() => Object.keys(localStorage).filter((key) => key.startsWith('playroom:generation:')).map((key) => {
       try {
         const value = JSON.parse(localStorage.getItem(key) || '{}');
-        return { key: key.replace(/playroom:generation:[^:]+:/, 'playroom:generation:<owner>:'), checkpointId: value.checkpointId, previewId: value.previewId, jobId: value.jobId, actionLength: typeof value.action === 'string' ? value.action.length : null };
+        const match = key.match(/^playroom:generation:[^:]+:([^:]+):([^:]+)$/);
+        return { key: key.replace(/playroom:generation:[^:]+:/, 'playroom:generation:<owner>:'), campaignId: match?.[1], branchId: match?.[2], checkpointId: value.checkpointId, previewId: value.previewId, jobId: value.jobId, actionLength: typeof value.action === 'string' ? value.action.length : null };
       } catch { return { key: '<unparseable>' }; }
     })""")
+    preview_budget = None
+    campaign_receipts = [receipt for receipt in receipts if receipt.get("campaignId") == campaign_id and receipt.get("branchId") == branch_id]
+    for receipt in campaign_receipts:
+        preview_id = receipt.get("previewId")
+        if not preview_id:
+            continue
+        preview_response = page.context.request.get(f"{origin}/api/context/previews/{preview_id}")
+        if preview_response.ok:
+            preview = preview_response.json()
+            budget = preview.get("budget") or {}
+            preview_budget = {"status": preview.get("status"), "failure": preview.get("failure"),
+                              "input_tokens": budget.get("input_tokens"), "input_cap": budget.get("input_cap"),
+                              "context_window": budget.get("context_window"), "output_reserve": budget.get("output_reserve")}
+            break
     details = page.locator(".generation-details")
-    print(json.dumps({"jobs": jobs, "alerts": alerts, "composer": {"visible": compose.is_visible(), "value_length": len(compose.input_value())}, "send": {"disabled": send.is_disabled(), "text": send.inner_text()}, "generation_details": details.all_text_contents(), "receipts": receipts, "provider_call_count": len(campaign_calls), "stale_route_hits": stale_route_hits, "browser_trace": trace_events}, ensure_ascii=False))
+    server_trace = server_events.snapshot() if hasattr(server_events, "snapshot") else (server_events or [])
+    print(json.dumps({"jobs": jobs, "preview_budget": preview_budget, "alerts": alerts, "composer": {"visible": compose.is_visible(), "value_length": len(compose.input_value())}, "send": {"disabled": send.is_disabled(), "text": send.inner_text()}, "generation_details": details.all_text_contents(), "receipts": receipts, "provider_call_count": len(campaign_calls), "stale_route_hits": stale_route_hits, "browser_trace": trace_events, "server_trace": server_trace, "direct_by_key_probe": direct_probe}, ensure_ascii=True))
 
 
 def _assert_mobile(page, width: int) -> None:
@@ -161,6 +246,39 @@ def _assert_mobile(page, width: int) -> None:
         expect(details).not_to_be_visible()
 
 
+def _browser_zip_conversations() -> bytes:
+    def message(message_id: str, role: str, text: str) -> dict:
+        return {"id": message_id, "author": {"role": role}, "recipient": "all",
+                "content": {"content_type": "text", "parts": [text]}}
+
+    mapping = {"root": {"id": "root", "parent": None, "message": None}}
+    parent = "root"
+    for index in range(125):
+        user_id = f"zip-user-{index:03d}-é"
+        assistant_id = f"zip-assistant-{index:03d}-☃"
+        mapping[user_id] = {"id": user_id, "parent": parent, "message": message(
+            user_id, "user", f"ZIP người chơi {index:03d}\nDòng phụ {index:03d}")}
+        mapping[assistant_id] = {"id": assistant_id, "parent": user_id, "message": message(
+            assistant_id, "assistant", f"ZIP AI {index:03d} — 💙")}
+        parent = assistant_id
+    mapping["zip-alt"] = {"id": "zip-alt", "parent": "zip-user-000-é", "message": message(
+        "zip-alt", "assistant", "ALT NOT PLAYABLE")}
+    selected = {"id": "zip-selected-125", "title": "ZIP selected 125 — Unicode",
+                "mapping": mapping, "current_node": parent}
+    unselected = {"id": "zip-unselected", "title": "Do not import this thread",
+                  "mapping": {"root": {"id": "root", "parent": None, "message": None},
+                              "u": {"id": "u", "parent": "root", "message": message("u", "user", "EXTERNAL UNSELECTED SOURCE")},
+                              "a": {"id": "a", "parent": "u", "message": message("a", "assistant", "EXTERNAL UNSELECTED SOURCE")}},
+                  "current_node": "a"}
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("nested/conversations.json", json.dumps([unselected], ensure_ascii=False))
+        archive.writestr("nested/conversations-1.json", json.dumps([selected], ensure_ascii=False))
+        archive.writestr("account_metadata.json", json.dumps({"email": "synthetic@example.test"}))
+        archive.writestr("attachments/private-note.txt", "ATTACHMENT MUST BE IGNORED")
+    return buffer.getvalue()
+
+
 def browser_synthetic_chat() -> None:
     with tempfile.TemporaryDirectory(prefix="playroom-b3-") as tmp:
         app, server, thread, origin = _start_demo(Path(tmp))
@@ -174,6 +292,8 @@ def browser_synthetic_chat() -> None:
                 )
                 page = context.new_page()
                 outbound = []
+                capture_zip_transfers = False
+                zip_transfer_posts: list[dict] = []
                 trace_events: list[dict] = []
                 trace_started = time.monotonic()
 
@@ -194,7 +314,15 @@ def browser_synthetic_chat() -> None:
                     if "/api/" in request.url:
                         trace("requestfailed", method=request.method, url=_redact_browser_url(request.url), failure=request.failure)
 
+                def capture_zip_transfer(request) -> None:
+                    if not capture_zip_transfers or request.method != "POST" or "/api/transfers/chatgpt/" not in request.url:
+                        return
+                    body = request.post_data_json
+                    assert isinstance(body, dict)
+                    zip_transfer_posts.append({"url": request.url, "body": body})
+
                 page.on("request", trace_request)
+                page.on("request", capture_zip_transfer)
                 page.on("response", trace_response)
                 page.on("requestfailed", trace_request_failed)
                 page.on("console", lambda message: trace("console", type=message.type, text=message.text[:300]))
@@ -262,24 +390,36 @@ def browser_synthetic_chat() -> None:
                 intercepted = {"count": 0}
                 def drop_post(route):
                     intercepted["count"] += 1
+                    if intercepted["count"] > 1:
+                        route.continue_()
+                        return
                     response = route.fetch()
                     assert response.status == 201
                     route.abort("failed")
-                page.route("**/api/campaigns/*/generate", drop_post, times=1)
+                # Keep this route registered after its one synthetic failure.
+                # Playwright 1.56 can race auto-removal with a follow-up fetch:
+                # https://github.com/microsoft/playwright/issues/41802
+                page.route("**/api/campaigns/*/generate", drop_post)
                 _send_and_wait(page, "**Henn gật đầu**", 3)
                 assert intercepted["count"] == 1
                 assert len(campaign.calls) == 3
 
                 # Definite rejection has no reserved job and must not block
                 # the next *explicit* Send; no automatic paid retry.
+                rejected = {"count": 0}
                 def reject_once(route):
+                    rejected["count"] += 1
+                    if rejected["count"] > 1:
+                        route.continue_()
+                        return
                     route.fulfill(status=422, content_type="application/json", body=json.dumps({"detail": "Rejected before reservation"}))
-                page.route("**/api/campaigns/*/generate", reject_once, times=1)
+                page.route("**/api/campaigns/*/generate", reject_once)
                 draft = "Chúng ta cùng bắt đầu."
                 page.get_by_role("textbox", name="Hành động tiếp theo").fill(draft)
                 page.get_by_role("button", name="Gửi", exact=True).click()
                 expect(page.get_by_role("alert")).to_be_visible(timeout=10000)
                 expect(page.get_by_role("textbox", name="Hành động tiếp theo")).to_have_value(draft)
+                assert rejected["count"] == 1
                 assert len(campaign.calls) == 3
                 _send_and_wait(page, draft, 4)
                 assert len(campaign.calls) == 4
@@ -291,9 +431,12 @@ def browser_synthetic_chat() -> None:
                 def stale_once(route):
                     nonlocal stale_route_hits
                     stale_route_hits += 1
+                    if stale_route_hits > 1:
+                        route.continue_()
+                        return
                     trace("stale_route_hit", count=stale_route_hits)
                     route.fulfill(status=409, content_type="application/json", body=json.dumps({"detail": "Generation checkpoint is stale"}))
-                page.route("**/api/campaigns/*/generate", stale_once, times=1)
+                page.route("**/api/campaigns/*/generate", stale_once)
                 fifth = "Cậu thấy lượt bóng vừa rồi chứ?"
                 compose.fill(fifth)
                 trace("stale_click_before")
@@ -303,8 +446,9 @@ def browser_synthetic_chat() -> None:
                     expect(page.get_by_text("Tác vụ đã thay đổi.", exact=False)).to_be_visible(timeout=12000)
                 except (PlaywrightTimeoutError, AssertionError):
                     trace("stale_assertion_timeout", button_disabled=page.locator(".generation-composer button[type=submit]").is_disabled(), button_text=page.locator(".generation-composer button[type=submit]").inner_text())
-                    _print_generation_diagnostics(page, origin, campaign_id, branch_id, campaign.calls, trace_events, stale_route_hits)
+                    _print_generation_diagnostics(page, origin, campaign_id, branch_id, campaign.calls, trace_events, stale_route_hits, app.state.browser_asgi_observer)
                     raise
+                assert stale_route_hits == 1
                 expect(compose).to_have_value(fifth)
                 assert len(campaign.calls) == 4
                 _send_and_wait(page, fifth, 5)
@@ -313,14 +457,20 @@ def browser_synthetic_chat() -> None:
                 # The candidate may be committed but the parent projection
                 # refresh can fail. The same job must be retried for commit,
                 # never paid/reserved as another generation.
+                projection_failures = {"count": 0}
                 def fail_projection_once(route):
+                    projection_failures["count"] += 1
+                    if projection_failures["count"] > 1:
+                        route.continue_()
+                        return
                     route.fulfill(status=503, content_type="application/json", body=json.dumps({"detail": "Synthetic refresh outage"}))
-                page.route("**/api/campaigns/*/projection*", fail_projection_once, times=1)
+                page.route("**/api/campaigns/*/projection*", fail_projection_once)
                 sixth = "Cứ tiếp tục thôi, Yuna."
                 compose.fill(sixth)
                 page.get_by_role("button", name="Gửi", exact=True).click()
                 expect(page.get_by_text("Không thể lưu lượt kể hoàn chỉnh", exact=False)).to_be_visible(timeout=20000)
                 expect(compose).to_have_value(sixth)
+                assert projection_failures["count"] == 1
                 assert len(campaign.calls) == 6
                 # A retried commit of the same candidate only refreshes UI.
                 page.get_by_role("button", name="Gửi", exact=True).click()
@@ -459,6 +609,135 @@ def browser_synthetic_chat() -> None:
                 expect(page.locator(".generation-composer")).to_be_visible(timeout=12000)
                 _assert_mobile(page, 360)
 
+                # Issue #27 ZIP slice: the archive is generated in memory and
+                # contains nested numbered conversations plus ignored metadata
+                # and attachment noise. Only the owner-selected 125-pair
+                # thread may cross the preview/import endpoints.
+                page.set_viewport_size({"width": 1280, "height": 900})
+                before_zip_calls = len(campaign.calls)
+                zip_bytes = _browser_zip_conversations()
+                capture_zip_transfers = True
+                page.get_by_role("button", name="Nhập ChatGPT").click()
+                page.get_by_label("Tệp xuất từ ChatGPT").set_input_files({
+                    "name": "chatgpt-export.zip", "mimeType": "application/zip", "buffer": zip_bytes,
+                })
+                expect(page.get_by_text("Đã đọc 2 cuộc hội thoại", exact=False)).to_be_visible(timeout=12000)
+                assert zip_transfer_posts == [], "ZIP discovery must not POST transfer data"
+                thread_picker = page.get_by_label("Chọn chính xác cuộc hội thoại cần nhập")
+                selected_option = page.get_by_role("option", name=re.compile("ZIP selected 125"))
+                selected_value = selected_option.get_attribute("value")
+                assert selected_value is not None
+                thread_picker.select_option(value=selected_value)
+                page.get_by_role("button", name="Xem trước thread này").click()
+                expect(page.get_by_text("Tìm thấy 125 cặp", exact=False)).to_be_visible(timeout=12000)
+                assert len(zip_transfer_posts) == 1
+                preview_post = zip_transfer_posts[0]
+                assert preview_post["url"].endswith("/api/transfers/chatgpt/preview")
+                preview_conversation = preview_post["body"]["conversation"]
+                assert preview_conversation["id"] == "zip-selected-125"
+                preview_text = json.dumps(preview_conversation, ensure_ascii=False)
+                assert "ALT NOT PLAYABLE" in preview_text
+                assert "EXTERNAL UNSELECTED SOURCE" not in preview_text
+                assert "account_metadata" not in preview_text and "ATTACHMENT MUST BE IGNORED" not in preview_text
+                assert len(campaign.calls) == before_zip_calls, "Preview must not call the provider"
+                page.get_by_label("Tôi đã xem đúng thread", exact=False).check()
+                page.get_by_role("button", name="Nhập và mở chiến dịch").click()
+                expect(page.get_by_role("heading", name="ZIP selected 125 — Unicode")).to_be_visible(timeout=12000)
+                expect(page.locator(".story-turn")).to_have_count(125, timeout=25000)
+                expect(page.locator(".generation-composer")).to_have_count(0)
+                zip_campaigns = page.context.request.get(f"{origin}/api/campaigns").json()
+                zip_campaign = next(c for c in zip_campaigns if c["title"] == "ZIP selected 125 — Unicode")
+                zip_detail = page.context.request.get(f"{origin}/api/campaigns/{zip_campaign['id']}").json()
+                zip_projection = _project(page, origin, zip_campaign["id"], zip_detail["branch_id"])
+                assert len(zip_projection["transcript"]) == 125
+                assert zip_projection["transcript"][0]["action_text"] == "ZIP người chơi 000\nDòng phụ 000"
+                assert zip_projection["transcript"][-1]["narrative_text"] == "ZIP AI 124 — 💙"
+                assert all("ALT NOT PLAYABLE" not in json.dumps(turn, ensure_ascii=False) for turn in zip_projection["transcript"])
+                assert all("EXTERNAL UNSELECTED SOURCE" not in json.dumps(turn, ensure_ascii=False) for turn in zip_projection["transcript"])
+                assert len(zip_transfer_posts) == 2
+                import_post = zip_transfer_posts[1]
+                assert import_post["url"].endswith("/api/transfers/chatgpt/import")
+                import_conversation = import_post["body"]["conversation"]
+                assert import_conversation == preview_conversation
+                assert "ALT NOT PLAYABLE" in json.dumps(import_conversation, ensure_ascii=False)
+                assert "EXTERNAL UNSELECTED SOURCE" not in json.dumps(import_conversation, ensure_ascii=False)
+                assert "ATTACHMENT MUST BE IGNORED" not in json.dumps(import_conversation, ensure_ascii=False)
+                assert len(campaign.calls) == before_zip_calls, "Import must not call the provider"
+                page.reload(wait_until="domcontentloaded")
+                expect(page.locator(".generation-composer")).to_have_count(0)
+                expect(page.get_by_text("125 cặp lượt đã nhập", exact=False)).to_be_visible(timeout=12000)
+                zip_checks = page.locator(".create-card input[type=checkbox]")
+                expect(zip_checks).to_have_count(4)
+                for index in range(4):
+                    zip_checks.nth(index).check()
+                page.get_by_role("button", name=re.compile("Duy.*Send")).click()
+                expect(page.locator(".generation-composer")).to_be_visible(timeout=12000)
+                try:
+                    zip_action = "ZIP lượt tiếp theo"
+                    compose = page.get_by_role("textbox", name="Hành động tiếp theo")
+                    compose.fill(zip_action)
+                    page.get_by_role("button", name="Gửi", exact=True).click()
+                    expect(page.locator(".generation-details")).to_contain_text("Giai đoạn: failed", timeout=25000)
+                    failed_projection = _project(page, origin, zip_campaign["id"], zip_detail["branch_id"])
+                    failed_jobs = [job for job in failed_projection["jobs"] if job.get("status") == "failed"]
+                    assert len(failed_jobs) == 1, failed_projection["jobs"]
+                    failed_job = page.context.request.get(f"{origin}/api/generation/jobs/{failed_jobs[0]['id']}")
+                    assert failed_job.ok
+                    failure = failed_job.json()["failure"]
+                    assert failure == {"code": "STATE_CONFLICT", "message": "Required narrator context exceeds the configured input budget"}
+                    expect(page.locator(".story-turn")).to_have_count(125, timeout=1000)
+                    expect(compose).to_have_value(zip_action)
+                    assert len(campaign.calls) == before_zip_calls
+                except AssertionError:
+                    _print_generation_diagnostics(
+                        page, origin, zip_campaign["id"], zip_detail["branch_id"],
+                        campaign.calls, trace_events, stale_route_hits,
+                    )
+                    raise
+
+                # The imported transcript remains intact while the owner adds
+                # a concise, source-linked summary for the earlier 117 turns.
+                # This is the existing Memory UI approval path, followed by a
+                # new explicit Send of the same action after the checkpoint
+                # refresh.
+                page.get_by_role("button", name="Mở hồ sơ và ký ức").click()
+                dialog = page.get_by_role("dialog", name="Hồ sơ và ký ức")
+                dialog.get_by_role("button", name="Ký ức", exact=True).click()
+                expect(dialog.get_by_label("Loại")).to_be_visible(timeout=12000)
+                summary_text = "Các lượt 000–116 gồm lời người chơi và phản hồi AI theo thứ tự nguồn; nội dung này chỉ là tóm tắt truy hồi."
+                revision_ids = [turn["revision_id"] for turn in zip_projection["transcript"]]
+                dialog.get_by_label("Loại").select_option("summary")
+                dialog.get_by_role("textbox", name="Nội dung", exact=True).fill(summary_text)
+                dialog.get_by_label("Revision bắt đầu").select_option(revision_ids[0])
+                dialog.get_by_label("Revision kết thúc").select_option(revision_ids[116])
+                dialog.get_by_label("Phạm vi kiến thức").select_option("narrator_only")
+                dialog.get_by_role("button", name="Thêm ký ức").click()
+                expect(dialog.get_by_text(summary_text, exact=True)).to_be_visible(timeout=12000)
+                summary_source = dialog.get_by_text(re.compile("Khoảng nguồn:"), exact=False)
+                expect(summary_source).to_be_visible()
+                memory_response = page.context.request.get(f"{origin}/api/campaigns/{zip_campaign['id']}/memory?branch_id={zip_detail['branch_id']}")
+                assert memory_response.ok
+                summaries = [item for item in memory_response.json() if item.get("text") == summary_text]
+                assert len(summaries) == 1
+                assert summaries[0]["origin"] == "user"
+                assert summaries[0]["status"] == "approved"
+                assert summaries[0]["knowledge_scope"] == "narrator_only"
+                assert summaries[0]["source_revision_ids"] == revision_ids[:117]
+                dialog.get_by_role("button", name="Đóng hồ sơ và ký ức").click()
+                expect(page.get_by_role("button", name="Gửi", exact=True)).to_be_visible(timeout=12000)
+                summary_projection = _project(page, origin, zip_campaign["id"], zip_detail["branch_id"])
+                assert [turn["revision_id"] for turn in summary_projection["transcript"]] == revision_ids
+                assert len(summary_projection["transcript"]) == 125
+                assert len(campaign.calls) == before_zip_calls
+                _send_and_wait(page, "ZIP lượt tiếp theo", 126)
+                assert len(campaign.calls) == before_zip_calls + 1
+                zip_projection = _project(page, origin, zip_campaign["id"], zip_detail["branch_id"])
+                assert zip_projection["transcript"][-1]["action_text"] == "ZIP lượt tiếp theo"
+                assert zip_projection["transcript"][-1]["narrative_text"] == NARRATION
+                capture_zip_transfers = False
+                page.reload(wait_until="domcontentloaded")
+                expect(page.locator(".story-turn")).to_have_count(126, timeout=12000)
+
                 # Issue #29: owner-selected synthetic structured legacy source.
                 # No private material, no historical turn fabrication, no model call on import.
                 from test_legacy_import import synthetic_bundle
@@ -482,7 +761,7 @@ def browser_synthetic_chat() -> None:
                 assert legacy_projection["transcript"] == []
                 assert legacy_projection["import_review"]["required"] is True
                 assert legacy_projection["import_review"]["source_kind"] == "legacy_bundle"
-                assert len(campaign.calls) == 8
+                assert len(campaign.calls) == 9
                 blocked = page.context.request.post(f"{origin}/api/campaigns/{imported_legacy['id']}/generate", data=json.dumps({
                     "branch_id": legacy_detail["branch_id"], "action": "*Lan chờ.*",
                     "idempotency_key": str(uuid4()), "checkpoint_id": legacy_projection["branch"]["checkpoint_id"],
@@ -497,7 +776,7 @@ def browser_synthetic_chat() -> None:
                 page.get_by_role("button", name=re.compile("Duy.*Send")).click()
                 expect(page.locator(".generation-composer")).to_be_visible(timeout=12000)
                 _send_and_wait(page, "*Lan hỏi Vy về tờ giấy.*", 1)
-                assert len(campaign.calls) == 9
+                assert len(campaign.calls) == 10
                 page.reload(wait_until="domcontentloaded")
                 expect(page.locator(".story-turn")).to_have_count(1)
                 browser.close()
