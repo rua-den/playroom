@@ -19,7 +19,7 @@ const preview = {
   format: "playroom_legacy_story_bundle",
   schema_version: "1.0.0",
   title: "Synthetic story",
-  turn_count: 1,
+  turn_count: 0,
   missing_history: true,
   counts: { characters: 1, canon_facts: 1, relationships: 0, timeline_events: 1, player_excerpts: 1 },
   checkpoint: { last_completed_chapter: 1, next_chapter: 2, next_chapter_written: false, present_character_count: 1 },
@@ -88,6 +88,31 @@ describe("LegacyImport async ownership", () => {
 
     await user.click(screen.getByRole("button", { name: /Xem/i }));
     await waitFor(() => expect(api.previewLegacyImport).toHaveBeenCalledTimes(2));
+    secondPreview.resolve(preview);
+    await screen.findByRole("status");
+    expect(screen.getByRole("status")).toHaveTextContent("playroom_legacy_story_bundle");
+  });
+
+  it("ignores a delayed successful preview from the replaced file", async () => {
+    const firstPreview = deferred<typeof preview>();
+    const secondPreview = deferred<typeof preview>();
+    vi.mocked(api.previewLegacyImport)
+      .mockReturnValueOnce(firstPreview.promise)
+      .mockReturnValueOnce(secondPreview.promise);
+
+    render(<LegacyImport onImported={vi.fn()} onCancel={vi.fn()} />);
+    const input = screen.getByLabelText(/Bundle JSON/i);
+    const user = userEvent.setup();
+    await user.upload(input, bundleFile("first"));
+    await user.click(screen.getByRole("button", { name: /Xem/i }));
+    await waitFor(() => expect(api.previewLegacyImport).toHaveBeenCalledTimes(1));
+
+    await user.upload(input, bundleFile("second"));
+    firstPreview.resolve(preview);
+    await Promise.resolve();
+    expect(screen.queryByRole("status")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: /Xem/i }));
     secondPreview.resolve(preview);
     await screen.findByRole("status");
     expect(screen.getByRole("status")).toHaveTextContent("playroom_legacy_story_bundle");
