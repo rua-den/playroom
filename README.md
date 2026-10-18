@@ -25,6 +25,8 @@ Trọng tâm là quản lý context qua nhiều chương: lưu hồ sơ, cảnh,
 
 **Legacy bundle #29 đã merge:** [PR #34](https://github.com/rua-den/playroom/pull/34) tại `2975dc1`, hỗ trợ nhập `playroom_legacy_story_bundle` vào chiến dịch cần duyệt, chuyển canon/sự kiện/quan hệ thành ký ức nguồn chờ duyệt, giữ riêng toàn bộ source và không tạo 156 lượt giả. Exact PR-head [CI #39051072648](https://github.com/rua-den/playroom/actions/runs/39051072648) và merged-main [CI #39051194140](https://github.com/rua-den/playroom/actions/runs/39051194140) đều PASS backend/frontend/Chromium synthetic. **File riêng đã qua nghiệm thu kỹ thuật import/review/reload trên ứng dụng loopback bằng DB tạm ngày 18/10; chưa duyệt checkpoint, chưa chia sẻ với model, chưa deploy**; xem [handoff 18/10](docs/handoff/2026-10-18-legacy-acceptance-followup.md).
 
+**Follow-up import/review 18/10:** [PR #36](https://github.com/rua-den/playroom/pull/36) đã merge tại `1a726d0`, chặn kết quả bất đồng bộ của file cũ và reset xác nhận khi đổi snapshot, hiển thị hồ sơ/cảnh/phạm vi biết cùng metadata nguồn đầy đủ hơn. Exact PR-head [CI #39119446749](https://github.com/rua-den/playroom/actions/runs/39119446749) và merged-main [CI #39119578290](https://github.com/rua-den/playroom/actions/runs/39119578290) đều PASS attempt 1: **356 backend, 109 frontend / 3 skipped**, build/typecheck và hai kịch bản Chromium. Hai lần Chromium lỗi local vẫn được ghi trong handoff; diagnostics đã bổ sung, **chưa coi #20 là đã sửa**.
+
 ## Đọc theo thứ tự
 
 1. [Thiết kế sản phẩm và context](docs/superpowers/specs/2026-10-12-personal-playroom-design.md).
