@@ -143,7 +143,7 @@ def _print_generation_diagnostics(page, origin: str, campaign_id: str, branch_id
       } catch { return { key: '<unparseable>' }; }
     })""")
     details = page.locator(".generation-details")
-    print(json.dumps({"jobs": jobs, "alerts": alerts, "composer": {"visible": compose.is_visible(), "value_length": len(compose.input_value())}, "send": {"disabled": send.is_disabled(), "text": send.inner_text()}, "generation_details": details.all_text_contents(), "receipts": receipts, "provider_call_count": len(campaign_calls), "stale_route_hits": stale_route_hits, "browser_trace": trace_events}, ensure_ascii=False))
+    print(json.dumps({"jobs": jobs, "alerts": alerts, "composer": {"visible": compose.is_visible(), "value_length": len(compose.input_value())}, "send": {"disabled": send.is_disabled(), "text": send.inner_text()}, "generation_details": details.all_text_contents(), "receipts": receipts, "provider_call_count": len(campaign_calls), "stale_route_hits": stale_route_hits, "browser_trace": trace_events}, ensure_ascii=True))
 
 
 def _assert_mobile(page, width: int) -> None:
