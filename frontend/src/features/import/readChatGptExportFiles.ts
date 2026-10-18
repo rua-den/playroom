@@ -101,7 +101,8 @@ function parseZipEntries(data: Uint8Array): ZipEntry[] {
     const localOffset = readU32(data, at + 42);
     const nameBytes = data.subarray(at + 46, at + 46 + nameLength);
     const next = at + 46 + nameLength + extraLength + commentLength;
-    if (next > end || (flags & 0x1) !== 0 || (flags & 0x8) !== 0 || (flags & ~0x800) !== 0 ||
+    if (next > end || (flags & 0x1) !== 0 || (flags & 0x8) !== 0 || (flags & ~(0x806)) !== 0 ||
+        (compression === 0 && (flags & 0x6) !== 0) ||
         disk !== 0 || compressedSize === 0xffffffff || uncompressedSize === 0xffffffff ||
         (compression !== 0 && compression !== 8) || (externalAttributes >>> 16 & 0xf000) === 0xa000) throw invalidArchive();
     const name = decodeName(nameBytes);

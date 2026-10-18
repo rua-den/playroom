@@ -17,6 +17,27 @@ const zipFile = (entries: Record<string, Uint8Array | string>) => new File([
   ])) as Record<string, Uint8Array>, { level: 6 })),
 ], "export.zip", { type: "application/zip" });
 
+const signature = (data: Uint8Array, a: number, b: number, c: number, d: number) =>
+  data.findIndex((value, index) => value === a && data[index + 1] === b && data[index + 2] === c && data[index + 3] === d);
+const putU32 = (data: Uint8Array, at: number, value: number) => {
+  data[at] = value & 0xff;
+  data[at + 1] = (value >>> 8) & 0xff;
+  data[at + 2] = (value >>> 16) & 0xff;
+  data[at + 3] = (value >>> 24) & 0xff;
+};
+const putU16 = (data: Uint8Array, at: number, value: number) => {
+  data[at] = value & 0xff;
+  data[at + 1] = (value >>> 8) & 0xff;
+};
+const mutateEntry = (data: Uint8Array, name: string, mutate: (central: number, local: number) => void) => {
+  const central = signature(data, 0x50, 0x4b, 0x01, 0x02);
+  const nameLength = data[central + 28] | (data[central + 29] << 8);
+  const decoded = new TextDecoder().decode(data.subarray(central + 46, central + 46 + nameLength));
+  if (decoded !== name) throw new Error(`unexpected fixture entry ${decoded}`);
+  const local = data[central + 42] | (data[central + 43] << 8) | (data[central + 44] << 16) | (data[central + 45] << 24);
+  mutate(central, local);
+};
+
 describe("ChatGPT export file discovery", () => {
   it("reads conversations.json and numbered conversation files while ignoring attachments", async () => {
     const result = await readChatGptExportFiles([zipFile({
@@ -97,7 +118,70 @@ describe("ChatGPT export file discovery", () => {
     const crc = source.slice();
     const central = crc.findIndex((value, index) => value === 0x50 && crc[index + 1] === 0x4b && crc[index + 2] === 0x01 && crc[index + 3] === 0x02);
     crc[central + 16] ^= 1;
+    const crcLocal = crc.findIndex((value, index) => value === 0x50 && crc[index + 1] === 0x4b && crc[index + 2] === 0x03 && crc[index + 3] === 0x04);
+    crc[crcLocal + 14] ^= 1;
     await expect(readChatGptExportFiles([new File([crc], "crc.zip")])).rejects.toThrow("ZIP");
+  });
+
+  it("accepts standard DEFLATE fast/max option bits when central and local flags match", async () => {
+    const data = new Uint8Array(await zipFile({ "conversations.json": JSON.stringify([conversation("flags")]) }).arrayBuffer());
+    mutateEntry(data, "conversations.json", (central, local) => {
+      putU16(data, central + 8, 0x806);
+      putU16(data, local + 6, 0x806);
+    });
+    expect((await readChatGptExportFiles([new File([data], "flags.zip")]))[0].id).toBe("flags");
+  });
+
+  it("rejects DEFLATE option bits on stored entries", async () => {
+    const stored = new Uint8Array(await new File([new Uint8Array(zipSync({
+      "conversations.json": new Uint8Array(strToU8(JSON.stringify([conversation("stored")]))),
+    }, { level: 0 }))], "stored.zip").arrayBuffer());
+    mutateEntry(stored, "conversations.json", (central, local) => {
+      putU16(stored, central + 8, 0x806);
+      putU16(stored, local + 6, 0x806);
+    });
+    await expect(readChatGptExportFiles([new File([stored], "stored.zip")])).rejects.toThrow("ZIP");
+  });
+
+  it("rejects symlink metadata and a false small uncompressed size after actual inflation", async () => {
+    const symlink = new Uint8Array(await zipFile({ "conversations.json": JSON.stringify([conversation("link")]) }).arrayBuffer());
+    mutateEntry(symlink, "conversations.json", central => putU32(symlink, central + 38, 0xa0000000));
+    await expect(readChatGptExportFiles([new File([symlink], "symlink.zip")])).rejects.toThrow("ZIP");
+    const large = JSON.stringify([conversation("bomb", "x".repeat(2 * 1024 * 1024))]);
+    const bomb = new Uint8Array(await zipFile({ "conversations.json": large }).arrayBuffer());
+    mutateEntry(bomb, "conversations.json", (central, local) => {
+      putU32(bomb, central + 24, 1);
+      putU32(bomb, local + 22, 1);
+    });
+    await expect(readChatGptExportFiles([new File([bomb], "bomb.zip")])).rejects.toThrow("giới hạn");
+  });
+
+  it("rejects declared output totals across ZIP inputs and EOCD count mismatches", async () => {
+    const makeArchive = async (id: string) => new Uint8Array(await zipFile({
+      "account.json": "{}",
+      "conversations.json": JSON.stringify([conversation(id)]),
+    }).arrayBuffer());
+    const first = await makeArchive("declared-one");
+    const second = await makeArchive("declared-two");
+    mutateEntry(first, "account.json", (central, local) => {
+      putU32(first, central + 24, 40 * 1024 * 1024);
+      putU32(first, local + 22, 40 * 1024 * 1024);
+    });
+    mutateEntry(second, "account.json", (central, local) => {
+      putU32(second, central + 24, 40 * 1024 * 1024);
+      putU32(second, local + 22, 40 * 1024 * 1024);
+    });
+    await expect(readChatGptExportFiles([new File([first], "one.zip"), new File([second], "two.zip")])).rejects.toThrow("dung lượng");
+    const count = new Uint8Array(await zipFile({ "conversations.json": JSON.stringify([conversation("count")]) }).arrayBuffer());
+    const end = count.length - 22;
+    putU16(count, end + 8, 0);
+    await expect(readChatGptExportFiles([new File([count], "count.zip")])).rejects.toThrow("ZIP");
+  });
+
+  it("supports Unicode and newlines in stored conversation JSON", async () => {
+    const json = JSON.stringify([conversation("unicode", "Xin chào\n世界")]);
+    const bytes = new Uint8Array(zipSync({ "conversations.json": new Uint8Array(strToU8(json)) }, { level: 0 }));
+    expect((await readChatGptExportFiles([new File([bytes], "stored-unicode.zip")]))[0].title).toBe("Xin chào\n世界");
   });
 
   it("reads multiple selected JSON inputs locally", async () => {
