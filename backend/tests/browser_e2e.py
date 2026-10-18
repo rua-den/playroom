@@ -644,6 +644,7 @@ def browser_synthetic_chat() -> None:
                 summary_projection = _project(page, origin, zip_campaign["id"], zip_detail["branch_id"])
                 assert [turn["revision_id"] for turn in summary_projection["transcript"]] == revision_ids
                 assert len(summary_projection["transcript"]) == 125
+                assert len(campaign.calls) == before_zip_calls
                 _send_and_wait(page, "ZIP lượt tiếp theo", 126)
                 assert len(campaign.calls) == before_zip_calls + 1
                 zip_projection = _project(page, origin, zip_campaign["id"], zip_detail["branch_id"])
