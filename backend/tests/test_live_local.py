@@ -288,14 +288,22 @@ def _health_app():
 def test_serve_with_browser_opens_only_after_real_health_and_stops_cleanly(monkeypatch):
     app = _health_app()
     opened = []
+    opened_event = threading.Event()
 
     def open_browser(url):
         opened.append(url)
-        app.state.local_server.should_exit = True
+        opened_event.set()
         return True
 
     monkeypatch.setattr("webbrowser.open", open_browser)
-    serve_with_browser(app, "127.0.0.1", _free_port())
+    thread = threading.Thread(target=serve_with_browser, args=(app, "127.0.0.1", _free_port()), daemon=True)
+    thread.start()
+    assert opened_event.wait(timeout=5)
+    time.sleep(6)
+    assert thread.is_alive()
+    app.state.local_server.should_exit = True
+    thread.join(timeout=5)
+    assert not thread.is_alive()
 
     assert len(opened) == 1
     assert opened[0].endswith("/")
@@ -382,6 +390,33 @@ def test_serve_with_browser_handles_keyboard_interrupt_during_join(monkeypatch):
 
     app = _health_app()
     serve_with_browser(app, "127.0.0.1", _free_port())
+    assert app.state.local_server.should_exit is True
+
+
+def test_serve_with_browser_cleans_server_when_browser_open_fails(monkeypatch):
+    app = _health_app()
+    opened = threading.Event()
+
+    def fail_open(url):
+        opened.set()
+        raise RuntimeError("synthetic browser failure")
+
+    monkeypatch.setattr("webbrowser.open", fail_open)
+    errors = []
+
+    def run():
+        try:
+            serve_with_browser(app, "127.0.0.1", _free_port())
+        except BaseException as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    assert opened.wait(timeout=5)
+    thread.join(timeout=5)
+
+    assert not thread.is_alive()
+    assert len(errors) == 1 and isinstance(errors[0], RuntimeError)
     assert app.state.local_server.should_exit is True
 
 

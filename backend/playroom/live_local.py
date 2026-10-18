@@ -196,8 +196,7 @@ def serve_with_browser(app, host: str, port: int) -> None:
                     pass
             time.sleep(0.1)
         else:
-            server.should_exit = True
-            _join_server(thread, server)
+            _stop_server(thread, server)
             startup_error = getattr(app.state, "local_server_error", None)
             if startup_error is not None:
                 raise RuntimeError(f"Playroom server failed to start at {url}") from startup_error
@@ -207,17 +206,29 @@ def serve_with_browser(app, host: str, port: int) -> None:
         if startup_error is not None:
             raise RuntimeError(f"Playroom server failed to start at {url}") from startup_error
     except KeyboardInterrupt:
-        server.should_exit = True
-        _join_server(thread, server)
+        _stop_server(thread, server)
+    except BaseException:
+        _stop_server(thread, server)
+        raise
 
 
 def _join_server(thread: threading.Thread, server) -> None:
+    while thread.is_alive():
+        try:
+            thread.join(timeout=0.2)
+        except KeyboardInterrupt:
+            server.should_exit = True
+            raise
+
+
+def _stop_server(thread: threading.Thread, server) -> None:
+    server.should_exit = True
     deadline = time.monotonic() + 5
     while thread.is_alive() and time.monotonic() < deadline:
         try:
             thread.join(timeout=0.2)
         except KeyboardInterrupt:
-            server.should_exit = True
+            continue
     if thread.is_alive():
         server.should_exit = True
         try:
