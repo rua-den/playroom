@@ -6,7 +6,7 @@ Trọng tâm là quản lý context qua nhiều chương: lưu hồ sơ, cảnh,
 
 ## Trạng thái — 17/10/2026
 
-**Chuyển giao hiện hành:** Đọc [handoff mới nhất](docs/handoff/2026-10-18-legacy-acceptance-followup.md) và [AGENTS.md](AGENTS.md) trước khi code; áp dụng chỉ dẫn routing mới nhất của owner trong chat (checkpoint 18/10: Luna medium code, Sol review). `main` của GitHub là source of truth. Bài viết/các SHAs bên dưới là bằng chứng tại từng mốc, không thay cho CI của commit tương lai.
+**Chuyển giao hiện hành:** Đọc [handoff mới nhất](docs/handoff/2026-10-18-chatgpt-zip.md) và [AGENTS.md](AGENTS.md) trước khi code; áp dụng chỉ dẫn routing mới nhất của owner trong chat (checkpoint 18/10: Luna medium code, Sol review). `main` của GitHub là source of truth. Bài viết/các SHAs bên dưới là bằng chứng tại từng mốc, không thay cho CI của commit tương lai.
 
 - **B1–B3**: Send/reconnect, narrator JSON/cast/version và Chromium synthetic gameplay PASS ([PR #3](https://github.com/rua-den/playroom/pull/3), [#5](https://github.com/rua-den/playroom/pull/5), [#7](https://github.com/rua-den/playroom/pull/7), [#8](https://github.com/rua-den/playroom/pull/8)).
 - **Ngân sách**: opt-in cumulative/per-send spending grants qua [PR #11](https://github.com/rua-den/playroom/pull/11), Free-first UI qua [PR #13](https://github.com/rua-den/playroom/pull/13), Gemma4 Cloud starter `gemma4:31b` qua [PR #16](https://github.com/rua-den/playroom/pull/16), cơ chế chặn rủi ro trừ credits mua thêm qua [PR #18](https://github.com/rua-den/playroom/pull/18). Giá/giới hạn nội bộ là dự toán, không phải bảo đảm hóa đơn provider.
@@ -17,7 +17,7 @@ Trọng tâm là quản lý context qua nhiều chương: lưu hồ sơ, cảnh,
 
 **Cập nhật review gate:** [PR #28](https://github.com/rua-den/playroom/pull/28) đã merge với bước duyệt checkpoint riêng, khóa Send bền trong SQLite và kiểm tra lại ngay trước provider dispatch, kể cả job cũ sau restart. Giao diện hiển thị hồ sơ/cảnh/ký ức, phạm vi biết và phần nguồn bị bỏ qua trước khi duyệt. Kiểm chứng độc lập local: **320 backend, 94 frontend PASS / 3 skipped, typecheck/build/Chromium PASS**. Main CI chỉ xanh sau rerun Chromium do [#20](https://github.com/rua-den/playroom/issues/20), nên vẫn giữ #20 trong release checklist. [Handoff kiểm chứng](docs/handoff/2026-10-16-import-review-gate.md) ghi RED/GREEN và giới hạn của slice JSON.
 
-**Ưu tiên tiếp theo:** ZIP/lịch sử dài #27 → khắc phục recovery #20 → nghiệm thu app thật #9 và phê duyệt riêng cho triển khai điện thoại. Nghiệm thu kỹ thuật bundle riêng trên loopback 18/10 đã đạt; owner vẫn cần tự duyệt canon và đồng ý chia sẻ dữ liệu trước Send. Các race đã tái hiện ở #20 và runner #30 đã có PR merge; timeout lost-POST cũ và flake stale-409 mới vẫn nằm trong release checklist. [Handoff 18/10](docs/handoff/2026-10-18-legacy-acceptance-followup.md) ghi kết quả, các lần Chromium lỗi và giới hạn dữ liệu/model/VPS.
+**Ưu tiên tiếp theo:** chunk/resume và export thật #27 → khắc phục recovery #20 → nghiệm thu app thật #9 và phê duyệt riêng cho triển khai điện thoại. ZIP/JSON được đọc cục bộ theo [checkpoint ZIP 18/10](docs/handoff/2026-10-18-chatgpt-zip.md); #27 chưa đóng vì chưa có resume bền hay fixture export thật đã ẩn danh. Nghiệm thu kỹ thuật bundle Legacy riêng đã đạt; owner vẫn cần tự duyệt canon và đồng ý chia sẻ dữ liệu trước Send. Timeout lost-POST và stale-409 vẫn nằm trong release checklist; không coi các lần Chromium chạy lại thành công là bản sửa #20.
 
 **Cập nhật reconnect:** [PR #31](https://github.com/rua-den/playroom/pull/31) đã merge tại `3e9d23a711b59f379e1728e94900175102a4dad2`: giữ bản nháp khi phản hồi commit/poll/recovery đến muộn và chặn cập nhật nhầm chiến dịch. Exact PR và merged-main CI đều xanh ngay attempt 1. Local: **320 backend, 102 frontend PASS / 3 skipped**, typecheck/build/Chromium PASS. #20 vẫn mở cho timeout lost-POST cũ chưa được tái hiện cùng nguyên nhân.
 
@@ -62,6 +62,12 @@ Canon do người chơi chốt không bị AI âm thầm ghi đè. Transcript g�
 Caddy là thông tin mới nhất do người dùng xác nhận. Tài liệu Nginx/Certbot cũ của `wedding-online` chỉ dùng tham khảo lịch sử; không copy làm cấu hình Playroom.
 
 Domain, model/API, tài nguyên và cấu hình VPS thực tế cần xác minh trước khi nối/deploy. Chất lượng kể chuyện và giữ mạch phải được kiểm chứng bằng phiên chơi thật, ngoài các test dữ liệu.
+
+## Nhập ChatGPT ZIP/JSON (Issue #27)
+
+Trong màn hình chiến dịch, chọn **Nhập ChatGPT**, rồi chọn ZIP hoặc các JSON conversation được đánh số. Tổng tệp đầu vào và riêng thread đã chọn tối đa **20 MiB**. ZIP được đọc trên thiết bị, có giới hạn **512 entry / 60 MiB giải nén**; chỉ một thread bạn chọn mới được gửi tới server Playroom đang mở để preview/import. Nội dung account và attachment không được nhập; bước này không gọi AI. Nếu ZIP của bản export dùng định dạng chưa hỗ trợ, giải nén bản export tin cậy trên thiết bị rồi chọn `conversations.json` hoặc các JSON đánh số.
+
+Kiểm tra ID/thread, các lượt đầu/cuối, phần bị bỏ qua, persona và cast trước khi nhập; chiến dịch mới vẫn khóa Send đến khi duyệt checkpoint riêng. Lịch sử dài có thể vượt budget narrator: vào **Hồ sơ và ký ức → Ký ức → Tóm tắt**, chọn khoảng revision và tự viết/duyệt summary có nguồn trước khi chủ động Gửi lại. Transcript và source gốc vẫn được giữ nguyên; app không tự cắt lịch sử hoặc gọi AI để tóm tắt. Đây chưa phải import theo chunk/resume hay xác nhận tương thích mọi export ChatGPT; xem [giới hạn và bằng chứng](docs/handoff/2026-10-18-chatgpt-zip.md).
 
 ## Nhập Legacy Story Bundle (Issue #29)
 
