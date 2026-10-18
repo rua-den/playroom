@@ -172,7 +172,28 @@ def test_legacy_staging_is_atomic_durable_nonreplayable_and_review_locked(tmp_pa
     memories = list_memory_library(reopened, saved["campaign_id"], saved["branch_id"], None, owner_id=owner.id)
     assert len(memories) == 3 and all(x.status == "approved" and x.origin == "import" for x in memories)
     assert [m for m in memories if m.knowledge_scope == "known_by"][0].known_by == (source["campaign_create_payload"]["characters"][0]["id"],)
+
+    metadata = import_review(reopened, owner.id, saved["campaign_id"])
+    assert metadata["source_provenance"] == {"format": "playroom_legacy_story_bundle", "schema_version": "1.0.0", "is_app_export": False, "can_roundtrip_app_export": False, "title": "Fictional lanterns"}
+    assert metadata["resume_checkpoint"] == {"chapter_last_completed": 4, "next_chapter_number": 5, "next_chapter_written": False, "focus_scene": {"scene_id": source["resume_checkpoint"]["focus_scene"]["scene_id"], "location": "market", "present_character_ids": source["resume_checkpoint"]["focus_scene"]["present_character_ids"]}}
+    assert metadata["review_queue"] == [{"issue": "chapter not present", "policy": "do not invent"}]
     assert reopened.execute("SELECT COUNT(*) FROM turns WHERE campaign_id=?", (saved["campaign_id"],)).fetchone()[0] == 0
+
+
+def test_legacy_review_metadata_drops_non_text_gap_fields(tmp_path):
+    from uuid import uuid4
+    from playroom.auth import create_owner
+    from playroom.chatgpt_import import import_review
+    from playroom.db import connect, migrate
+    from playroom.legacy_import import import_legacy_bundle
+
+    conn = connect(tmp_path / "metadata.sqlite3"); migrate(conn)
+    owner = create_owner(conn, "metadata-legacy@example.test", "synthetic long password")
+    source = synthetic_bundle()
+    source["gaps_and_review_queue"][0]["issue"] = {"private": "object"}
+    saved = import_legacy_bundle(conn, owner.id, source, str(uuid4()))
+    metadata = import_review(conn, owner.id, saved["campaign_id"])
+    assert metadata["review_queue"] == [{"policy": "do not invent"}]
 
 
 def test_legacy_import_invalid_payload_and_idempotency_do_not_duplicate_campaign(tmp_path):

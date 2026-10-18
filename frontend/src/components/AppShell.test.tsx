@@ -15,8 +15,8 @@ vi.mock("./SettingsPanel", () => ({ SettingsPanel: () => <div data-testid="setti
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("recoverable job summary", () => {
-  function reviewProjection(checkpoint = "checkpoint", campaign = "imported") {
-    return { campaign: { id: campaign, title: campaign, created_at: "2026-01-01", updated_at: "2026-01-01", archived_at: null }, branch: { id: "branch", name: "main", state_version: 1, checkpoint_id: checkpoint }, checkpoint: { id: checkpoint, state_version: 1, parent_checkpoint_id: null, selected_revision_ids: [], retrieval_policy: "auto" as const }, profiles: {}, scene: null, transcript: [], jobs: [], import_review: { required: true, approved: false, review: {} } };
+  function reviewProjection(checkpoint = "checkpoint", campaign = "imported", branch = "branch", sourceConversationId?: string) {
+    return { campaign: { id: campaign, title: campaign, created_at: "2026-01-01", updated_at: "2026-01-01", archived_at: null }, branch: { id: branch, name: "main", state_version: 1, checkpoint_id: checkpoint }, checkpoint: { id: checkpoint, state_version: 1, parent_checkpoint_id: null, selected_revision_ids: [], retrieval_policy: "auto" as const }, profiles: {}, scene: null, transcript: [], jobs: [], import_review: { required: true, approved: false, review: {}, source_conversation_id: sourceConversationId } };
   }
 
   function mockReviewSnapshot() {
@@ -108,6 +108,22 @@ describe("recoverable job summary", () => {
     expect(screen.getAllByRole("checkbox").every((checkbox) => (checkbox as HTMLInputElement).disabled)).toBe(true);
   });
 
+  it("shows structured profile, scene, and knowledge references with readable labels and IDs", async () => {
+    vi.spyOn(api, "listMemory").mockResolvedValue([{ memory_id: "memory-1", id: "version-1", version: 1, kind: "lore", text: "A sealed note", origin: "import", status: "pending", pinned: false, source_revision_ids: [], entity_ids: ["npc-1"], knowledge_scope: "known_by", known_by: ["npc-1"] }]);
+    vi.spyOn(api, "getScene").mockResolvedValue({ focus_scene_id: "scene-1", scenes: { "scene-1": { id: "scene-1", name: "Market", present_ids: ["npc-1"], role: "watcher", notes: "Rainy" } } });
+    const projection = { ...reviewProjection(), profiles: {
+      persona: { profile_key: "persona", kind: "persona", version: 1, data: { id: "persona-1", name: "Lan", traits: { agency: "player" } } },
+      "character:npc-1": { profile_key: "character:npc-1", kind: "character", version: 1, data: { id: "npc-1", name: "Vy", role: "scout", notes: "Quiet voice" } },
+    } };
+    render(<ImportReviewPanel projection={projection as never} onApproved={() => undefined} />);
+    expect(await screen.findByText("Lan")).toBeInTheDocument();
+    expect(screen.getByText("persona-1")).toBeInTheDocument();
+    expect(screen.getAllByText(/Vy \(npc-1\)/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Nhân vật biết: Vy \(npc-1\)/)).toBeInTheDocument();
+    expect(screen.getAllByText("role").length).toBeGreaterThan(0);
+    expect(screen.getByText(/Rainy/)).toBeInTheDocument();
+  });
+
   it("resets every acknowledgement when the checkpoint changes", async () => {
     mockReviewSnapshot();
     const { rerender } = render(<ImportReviewPanel projection={reviewProjection("checkpoint-a") as never} onApproved={() => undefined} />);
@@ -118,6 +134,33 @@ describe("recoverable job summary", () => {
     rerender(<ImportReviewPanel projection={reviewProjection("checkpoint-b") as never} onApproved={() => undefined} />);
     await waitFor(() => expect(screen.getAllByRole("checkbox").every((checkbox) => !(checkbox as HTMLInputElement).checked)).toBe(true));
     expect(screen.getByRole("button", { name: /Duyệt checkpoint/ })).toBeDisabled();
+  });
+
+  it("resets acknowledgements when campaign, branch, or source changes with the same checkpoint", async () => {
+    mockReviewSnapshot();
+    const { rerender } = render(<ImportReviewPanel projection={reviewProjection("same-checkpoint", "campaign-a", "branch-a", "source-a") as never} onApproved={() => undefined} />);
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getAllByRole("checkbox")[0]).toBeEnabled());
+    for (const checkbox of screen.getAllByRole("checkbox")) await user.click(checkbox);
+    expect(screen.getByRole("button", { name: /Duyệt checkpoint/ })).toBeEnabled();
+    rerender(<ImportReviewPanel projection={reviewProjection("same-checkpoint", "campaign-b", "branch-b", "source-b") as never} onApproved={() => undefined} />);
+    await waitFor(() => expect(screen.getAllByRole("checkbox").every((checkbox) => !(checkbox as HTMLInputElement).checked)).toBe(true));
+    expect(screen.getByRole("button", { name: /Duyệt checkpoint/ })).toBeDisabled();
+  });
+
+  it("does not let an old snapshot enable a changed source identity", async () => {
+    let resolveOldMemory: (value: never[]) => void = () => undefined;
+    let resolveOldScene: (value: { focus_scene_id: null; scenes: Record<string, never> }) => void = () => undefined;
+    vi.spyOn(api, "listMemory").mockImplementationOnce(() => new Promise((resolve) => { resolveOldMemory = resolve; }))
+      .mockResolvedValue([]);
+    vi.spyOn(api, "getScene").mockImplementationOnce(() => new Promise((resolve) => { resolveOldScene = resolve; }))
+      .mockResolvedValue({ focus_scene_id: null, scenes: {} });
+    const { rerender } = render(<ImportReviewPanel projection={reviewProjection("same-checkpoint", "campaign-a", "branch-a", "source-a") as never} onApproved={() => undefined} />);
+    rerender(<ImportReviewPanel projection={reviewProjection("same-checkpoint", "campaign-a", "branch-a", "source-b") as never} onApproved={() => undefined} />);
+    resolveOldMemory([]);
+    resolveOldScene({ focus_scene_id: null, scenes: {} });
+    expect(screen.getByRole("button", { name: /Duyệt checkpoint/ })).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent("Đang tải snapshot");
   });
 
   it("ignores a delayed approval after the campaign identity changes", async () => {

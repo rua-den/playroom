@@ -25,7 +25,7 @@ MAX_TURNS = 1500
 def import_review(connection: sqlite3.Connection, owner_id: str, campaign_id: str, current_checkpoint_id: str | None = None) -> dict:
     source = connection.execute("SELECT source_conversation_id, paired_turns, warnings_json, skipped_messages FROM chatgpt_import_sources WHERE owner_id=? AND campaign_id=?", (owner_id, campaign_id)).fetchone()
     legacy = connection.execute(
-        "SELECT canon_count, event_count, excerpt_count, warnings_json FROM legacy_import_sources WHERE owner_id=? AND campaign_id=?",
+        "SELECT canon_count, event_count, excerpt_count, warnings_json, selected_source_json FROM legacy_import_sources WHERE owner_id=? AND campaign_id=?",
         (owner_id, campaign_id),
     ).fetchone()
     source_meta = {}
@@ -39,6 +39,38 @@ def import_review(connection: sqlite3.Connection, owner_id: str, campaign_id: st
             "skipped_messages": None, "warnings": legacy_warnings,
             "legacy_counts": {"canon_facts": legacy["canon_count"], "timeline_events": legacy["event_count"], "player_excerpts": legacy["excerpt_count"]},
         }
+        try:
+            selected = json.loads(legacy["selected_source_json"] or "{}")
+        except (TypeError, ValueError):
+            selected = {}
+        if isinstance(selected, dict):
+            source_meta["source_provenance"] = {
+                key: selected.get(key) for key in ("format", "schema_version", "is_app_export", "can_roundtrip_app_export", "title")
+                if key in selected
+            }
+            checkpoint = selected.get("resume_checkpoint")
+            focus = checkpoint.get("focus_scene") if isinstance(checkpoint, dict) else None
+            if isinstance(checkpoint, dict):
+                source_meta["resume_checkpoint"] = {
+                    key: checkpoint.get(key) for key in ("chapter_last_completed", "next_chapter_number", "next_chapter_written")
+                    if key in checkpoint
+                }
+                if isinstance(focus, dict):
+                    source_meta["resume_checkpoint"]["focus_scene"] = {
+                        key: focus.get(key) for key in ("scene_id", "location", "relative_time", "present_character_ids")
+                        if key in focus
+                    }
+            queue = selected.get("gaps_and_review_queue")
+            if isinstance(queue, list):
+                source_meta["review_queue"] = []
+                for item in queue[:500]:
+                    if not isinstance(item, dict):
+                        continue
+                    clean_item = {
+                        key: item[key] for key in ("issue", "policy")
+                        if isinstance(item.get(key), str) and len(item[key]) <= 2000
+                    }
+                    source_meta["review_queue"].append(clean_item)
     if source:
         try:
             warnings = json.loads(source["warnings_json"] or "[]")

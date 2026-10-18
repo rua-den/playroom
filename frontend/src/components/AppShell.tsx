@@ -15,6 +15,25 @@ const RECOVERABLE_JOB_STATUSES = new Set(["queued", "running", "cancelling", "in
 export function recoverableJobCount(jobs: Array<{ status?: string }>) { return jobs.filter((job) => RECOVERABLE_JOB_STATUSES.has(job.status ?? "")).length; }
 export function recoverableJobSummary(count: number) { return `Có thể khôi phục trong danh sách (tối đa 20 việc): ${count}`; }
 
+function profileName(profiles: Record<string, { data: Record<string, unknown> }>, id: string) {
+  const profile = Object.values(profiles).find((candidate) => candidate.data.id === id);
+  const name = profile?.data.name;
+  return typeof name === "string" && name ? `${name} (${id})` : id;
+}
+
+function safeStructuredValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value == null) return "—";
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  try { return JSON.stringify(value); } catch { return "[không thể hiển thị]"; }
+}
+
+function StructuredFields({ data, profiles, idFields = [] }: { data: Record<string, unknown>; profiles: Record<string, { data: Record<string, unknown> }>; idFields?: string[] }) {
+  const entries = Object.entries(data).filter(([key]) => !["name", "description", ...idFields].includes(key));
+  if (!entries.length) return null;
+  return <details><summary>Chi tiết cấu trúc</summary><dl>{entries.map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{idFields.includes(key) && Array.isArray(value) ? value.map((id) => <span key={String(id)}>{profileName(profiles, String(id))} </span>) : safeStructuredValue(value)}</dd></div>)}</dl></details>;
+}
+
 interface AppShellProps { owner: Owner; onLogout: () => void; notice?: string | null; }
 type CharacterDraft = { id: string; name: string; aliases: string };
 type CreateDraft = { title: string; worldName: string; worldDescription: string; personaName: string; personaDescription: string; characters: CharacterDraft[] };
@@ -149,28 +168,31 @@ export function ImportReviewPanel({ projection, onApproved }: { projection: Camp
   const [snapshotError, setSnapshotError] = useState<string | null>(null);
   const [snapshotLoading, setSnapshotLoading] = useState(true);
   const checkpointId = projection.branch.checkpoint_id;
+  const sourceIdentity = `${projection.import_review?.source_kind ?? "unknown"}:${projection.import_review?.source_conversation_id ?? ""}`;
+  const reviewIdentity = `${projection.campaign.id}:${projection.branch.id}:${checkpointId}:${sourceIdentity}`;
   const checkpointRef = useRef(checkpointId);
-  const identityRef = useRef(`${projection.campaign.id}:${projection.branch.id}:${checkpointId}`);
+  const identityRef = useRef(reviewIdentity);
   const mountedRef = useRef(true);
-  identityRef.current = `${projection.campaign.id}:${projection.branch.id}:${checkpointId}`;
+  identityRef.current = reviewIdentity;
   useEffect(() => {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
   }, []);
-  useEffect(() => { checkpointRef.current = checkpointId; setReview({ persona: false, npc_voice_presence: false, canon_known_by_narrator_only: false, missing_history: false }); setDataConsent(false); setBusy(false); setError(null); }, [checkpointId]);
+  useEffect(() => { checkpointRef.current = checkpointId; setReview({ persona: false, npc_voice_presence: false, canon_known_by_narrator_only: false, missing_history: false }); setDataConsent(false); setBusy(false); setError(null); }, [reviewIdentity, checkpointId]);
   useEffect(() => {
     let active = true;
+    const targetIdentity = reviewIdentity;
     setSnapshotLoading(true); setSnapshotError(null); setMemory(null); setScene(null); setProposals(null);
     Promise.all([api.listMemory(projection.campaign.id, projection.branch.id), api.getScene(projection.campaign.id, projection.branch.id), projection.import_review?.source_kind === "legacy_bundle" ? api.listProposals(projection.campaign.id, projection.branch.id) : Promise.resolve([] as import("../api/types").MemoryVersion[])])
-      .then(([nextMemory, nextScene, nextProposals]) => { if (active) { setMemory(nextMemory); setScene(nextScene); setProposals(nextProposals); setSnapshotLoading(false); } })
+      .then(([nextMemory, nextScene, nextProposals]) => { if (active && identityRef.current === targetIdentity) { setMemory(nextMemory); setScene(nextScene); setProposals(nextProposals); setSnapshotLoading(false); } })
       .catch(() => { if (active) { setSnapshotError("Không thể tải đầy đủ ký ức và cảnh hiện tại. Hãy tải lại rồi kiểm tra lại trước khi duyệt."); setSnapshotLoading(false); } });
     return () => { active = false; };
-  }, [projection.campaign.id, projection.branch.id, checkpointId]);
+  }, [projection.campaign.id, projection.branch.id, checkpointId, reviewIdentity]);
   const submit = async () => {
     if (snapshotLoading || snapshotError || !memory || !scene) return;
     const targetCheckpointId = checkpointId;
-    const targetIdentity = `${projection.campaign.id}:${projection.branch.id}:${targetCheckpointId}`;
-    if (checkpointRef.current !== targetCheckpointId) return;
+    const targetIdentity = reviewIdentity;
+    if (checkpointRef.current !== targetCheckpointId || identityRef.current !== targetIdentity) return;
     setBusy(true); setError(null);
     try {
       await api.approveChatGptImport(projection.campaign.id, { branch_id: projection.branch.id, checkpoint_id: projection.branch.checkpoint_id, review: projection.import_review?.source_kind === "legacy_bundle" ? { ...review, provider_data: dataConsent } : review });
@@ -195,12 +217,12 @@ export function ImportReviewPanel({ projection, onApproved }: { projection: Camp
     {snapshotError && <div role="alert" className="form-error">{snapshotError}</div>}
     {error && <div role="alert" className="form-error">{error}</div>}
     <div className="import-review-snapshot" aria-label="Snapshot checkpoint nhập">
-      <section><h3>Persona người chơi</h3><p><strong>{String(persona?.name ?? "Chưa có tên")}</strong></p><p>{String(persona?.description ?? "Chưa có mô tả.")}</p></section>
-      <section><h3>NPC, giọng nói và hiện diện</h3>{characters.length ? characters.map(([key, profile]) => <p key={key}><strong>{String(profile.data.name ?? key)}</strong>: {String(profile.data.description ?? "Chưa có mô tả giọng nói.")}</p>) : <p>Chưa có NPC trong hồ sơ.</p>}</section>
-      <section><h3>Cảnh hiện tại</h3>{sceneItems.length ? sceneItems.map((item) => <p key={item.id}><strong>{String(item.name ?? "Cảnh chưa đặt tên")}</strong>{item.id === scene?.focus_scene_id ? " · đang diễn ra" : ""} · Có mặt: {item.present_ids.length ? item.present_ids.map((id) => String(projection.profiles[`character:${id}`]?.data.name ?? id)).join(", ") : "chưa ghi nhận"}</p>) : <p>Chưa có cảnh nào được ghi nhận.</p>}</section>
-      <section><h3>Ký ức và phạm vi biết</h3>{memory?.length ? memory.map((item) => <p key={`${item.memory_id}-${item.version}`}><strong>{item.knowledge_scope === "narrator_only" ? "Chỉ người kể" : item.knowledge_scope === "known_by" ? `Nhân vật biết: ${(item.known_by ?? []).join(", ") || "chưa ghi rõ"}` : "Công khai"}</strong>: {item.text}</p>) : <p>Chưa có ký ức đã lưu.</p>}</section>
-      <section><h3>Đề xuất ký ức từ nguồn, chưa xác nhận</h3>{proposals?.length ? <><p className="form-error">{proposals.length} mục nguồn đang chờ duyệt. Nếu bạn xác nhận checkpoint Legacy, các đề xuất import còn chờ sẽ được phê duyệt hàng loạt; hãy rà soát từng mục hoặc từ chối các mục không đúng trước khi duyệt.</p>{proposals.map((item) => <p key={`${item.memory_id}-${item.version}`}><strong>{item.kind} / {item.knowledge_scope}</strong>: {item.text}</p>)}</> : <p>Không có đề xuất nhập nào đang chờ.</p>}</section>
-      <section><h3>Lịch sử và nguồn</h3><p>{projection.import_review?.paired_turns ?? projection.transcript.length} cặp lượt đã nhập (Legacy Bundle có 0 cặp vì chỉ là sự kiện/tóm tắt). Mã nguồn: {projection.import_review?.source_conversation_id ?? "không có"}.</p><p>{projection.import_review?.skipped_messages == null ? "Chưa xác định số tin nhắn bị bỏ qua." : `${projection.import_review.skipped_messages} tin nhắn bị bỏ qua vì không đủ dữ liệu nhập.`}</p>{warnings.length ? warnings.map((warning) => <p className="form-error" key={warning}>{warning}</p>) : projection.import_review?.skipped_messages ? <p className="form-error">Có khoảng trống trong lịch sử; hãy xem kỹ trước khi coi nội dung là canon.</p> : <p>Không có cảnh báo nguồn.</p>}</section>
+      <section><h3>Persona người chơi</h3><p><strong>{String(persona?.name ?? "Chưa có tên")}</strong>{persona?.id ? ` · ID: ${String(persona.id)}` : ""}</p><p>{String(persona?.description ?? "Chưa có mô tả.")}</p>{persona && <StructuredFields data={persona} profiles={projection.profiles} />}</section>
+      <section><h3>NPC, giọng nói và hiện diện</h3>{characters.length ? characters.map(([key, profile]) => <div key={key}><p><strong>{String(profile.data.name ?? key)}</strong>{profile.data.id ? ` · ID: ${String(profile.data.id)}` : ""}: {String(profile.data.description ?? "Chưa có mô tả giọng nói.")}</p><StructuredFields data={profile.data} profiles={projection.profiles} /></div>) : <p>Chưa có NPC trong hồ sơ.</p>}</section>
+      <section><h3>Cảnh hiện tại</h3>{sceneItems.length ? sceneItems.map((item) => <div key={item.id}><p><strong>{String(item.name ?? "Cảnh chưa đặt tên")}</strong>{item.id === scene?.focus_scene_id ? " · đang diễn ra" : ""} · Có mặt: {item.present_ids.length ? item.present_ids.map((id) => profileName(projection.profiles, String(id))).join(", ") : "chưa ghi nhận"}</p><StructuredFields data={item} profiles={projection.profiles} idFields={["present_ids", "participant_ids"]} /></div>) : <p>Chưa có cảnh nào được ghi nhận.</p>}</section>
+      <section><h3>Ký ức và phạm vi biết</h3>{memory?.length ? memory.map((item) => <div key={`${item.memory_id}-${item.version}`}><p><strong>{item.knowledge_scope === "narrator_only" ? "Chỉ người kể" : item.knowledge_scope === "known_by" ? `Nhân vật biết: ${(item.known_by ?? []).map((id) => profileName(projection.profiles, id)).join(", ") || "chưa ghi rõ"}` : "Công khai"}</strong>: {item.text}</p><p>Entity: {(item.entity_ids ?? []).map((id) => profileName(projection.profiles, id)).join(", ") || "—"} · ID memory: {item.memory_id}</p></div>) : <p>Chưa có ký ức đã lưu.</p>}</section>
+      <section><h3>Đề xuất ký ức từ nguồn, chưa xác nhận</h3>{proposals?.length ? <><p className="form-error">{proposals.length} mục nguồn đang chờ duyệt. Nếu bạn xác nhận checkpoint Legacy, các đề xuất import còn chờ sẽ được phê duyệt hàng loạt; hãy rà soát từng mục hoặc từ chối các mục không đúng trước khi duyệt.</p>{proposals.map((item) => <div key={`${item.memory_id}-${item.version}`}><p><strong>{item.kind} / {item.knowledge_scope}</strong>: {item.text}</p><p>Known by: {(item.known_by ?? []).map((id) => profileName(projection.profiles, id)).join(", ") || "—"} · Entity: {(item.entity_ids ?? []).map((id) => profileName(projection.profiles, id)).join(", ") || "—"} · ID: {item.memory_id}</p></div>)}</> : <p>Không có đề xuất nhập nào đang chờ.</p>}</section>
+      <section><h3>Lịch sử và nguồn</h3><p>{projection.import_review?.paired_turns ?? projection.transcript.length} cặp lượt đã nhập (Legacy Bundle có 0 cặp vì chỉ là sự kiện/tóm tắt). Mã nguồn: {projection.import_review?.source_conversation_id ?? "không có"}.</p><p>{projection.import_review?.skipped_messages == null ? "Chưa xác định số tin nhắn bị bỏ qua." : `${projection.import_review.skipped_messages} tin nhắn bị bỏ qua vì không đủ dữ liệu nhập.`}</p>{projection.import_review?.source_provenance && <details><summary>Nguồn Legacy và checkpoint tiếp tục</summary><p>{projection.import_review.source_provenance.title ?? "Không có tiêu đề nguồn"} · {projection.import_review.source_provenance.format ?? "Không rõ định dạng"} · schema {projection.import_review.source_provenance.schema_version ?? "?"}</p>{projection.import_review.resume_checkpoint && <p>Đã hoàn tất chương {projection.import_review.resume_checkpoint.chapter_last_completed ?? "?"}; chương tiếp theo {projection.import_review.resume_checkpoint.next_chapter_number ?? "?"}; đã viết: {String(projection.import_review.resume_checkpoint.next_chapter_written ?? false)}.</p>}{projection.import_review.review_queue?.map((item, index) => <p key={`${item.issue ?? "gap"}-${index}`}>Khoảng trống: {item.issue ?? "không mô tả"} · Chính sách: {item.policy ?? "không mô tả"}</p>)}</details>}{warnings.length ? warnings.map((warning) => <p className="form-error" key={warning}>{warning}</p>) : projection.import_review?.skipped_messages ? <p className="form-error">Có khoảng trống trong lịch sử; hãy xem kỹ trước khi coi nội dung là canon.</p> : <p>Không có cảnh báo nguồn.</p>}</section>
     </div>
     <label><input type="checkbox" checked={review.persona} disabled={!ready} onChange={(event) => setReview((current) => ({ ...current, persona: event.target.checked }))} /> Persona đúng và người chơi vẫn tự quyết định lời nói, hành động.</label>
     <label><input type="checkbox" checked={review.npc_voice_presence} disabled={!ready} onChange={(event) => setReview((current) => ({ ...current, npc_voice_presence: event.target.checked }))} /> Hồ sơ, giọng nói và nhân vật đang có mặt đã đúng.</label>
