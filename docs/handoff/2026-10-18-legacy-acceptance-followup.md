@@ -39,4 +39,14 @@ Full synthetic Chromium **failed two parent follow-up runs** before either impor
 
 Parent then ran the exact locked browser command once with persistent trace instrumentation and once at final diagnostic commit `6c3233f`; **both passed both full scenarios**, including import/review/fake Send and real local assembly with fake override/reload. The root cause remains unresolved; no timeout increase or passing rerun is counted as a fix. The retained bounded diagnostics are for the next failure investigation, and #20 remains open. Import changes do not modify generation behavior.
 
-No new PR has been merged for this checkpoint. Record final diagnosis, exact commit checks and PR/merged-main CI before release. Remaining order: #27 official ZIP/long/resumable source; unresolved #20 recovery cases; #9 authenticated live Gemma4, then separately authorized phone/VPS/Caddy deployment. No real provider, physical device or infrastructure work occurred here.
+## Release evidence
+
+[PR #36](https://github.com/rua-den/playroom/pull/36) merged at `1a726d0477f421ced6a1cde227e7357437661b4a` from exact PR head `b2613f02975c63ad024e4dde53bc742ac7ec882e`.
+
+- Final independent Sol review of `0b722e0..b2613f0`: no actionable correctness/security findings; legacy backend **22 passed**, focused frontend **17 passed**, typecheck and raw full-range diff check passed, clean worktree.
+- Exact PR-head [CI #39119446749](https://github.com/rua-den/playroom/actions/runs/39119446749): **PASS, attempt 1**. Linux/Python 3.12 backend **356 passed**; frontend **109 passed / 3 skipped**, typecheck/build; both complete synthetic Chromium scenarios passed.
+- Exact merged-main [CI #39119578290](https://github.com/rua-den/playroom/actions/runs/39119578290): **PASS, attempt 1**. Backend **356 passed**, frontend **109 passed / 3 skipped**, compile/typecheck/build and both complete synthetic Chromium scenarios passed. The frontend/backend/workflow trees match the verified PR head.
+
+The release-evidence follow-up changes documentation only; application CI claims above refer to the exact code commits, not a later docs SHA. Earlier local failures remain recorded above and #20 remains open.
+
+Remaining order: #27 official ZIP/long/resumable source; unresolved #20 recovery cases; #9 authenticated live Gemma4, then separately authorized phone/VPS/Caddy deployment. No real provider, physical device or infrastructure work occurred here.

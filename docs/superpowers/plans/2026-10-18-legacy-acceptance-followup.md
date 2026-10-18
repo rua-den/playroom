@@ -42,7 +42,7 @@ Owner: parent/Sol reviewer; no implementation writes by parent.
 - [x] Fetch latest main and read latest handoff/PR #34. Pure validation of the owner-selected local bundle passed with zero transcript turns and review required; only booleans were printed.
 - [x] Parent runs the actual local file through authenticated loopback import into a temporary DB, inspects pending memory/scene/profile/source preservation and reload lock, and confirms zero model dispatch and no approval. Print only controlled pass/fail labels; clean the temporary data.
 - [x] Independently run locked sync, backend/frontend suites, compileall, typecheck/build, synthetic Chromium and raw full-range whitespace checks. No private source in automated regression fixtures.
-- [ ] Push feature PR, attach it, require exact PR-head CI, merge at expected head and verify exact merged-main CI. Record first failures separately from passing reruns. Keep old worktrees and the primary checkout's untracked data intact.
+- [x] Push feature PR, attach it, require exact PR-head CI, merge at expected head and verify exact merged-main CI. PR #36 head `b2613f0` CI `39119446749` and merge `1a726d0` CI `39119578290` both passed attempt 1. Local first failures remain recorded separately; #20 stays open. Keep old worktrees and the primary checkout's untracked data intact.
 - [x] Update handoff/README with exact evidence, remaining owner approval/live-model limits and next #27 ZIP/long-source checkpoint. Do not claim #27/#9 complete.
 
 ## Self-review
