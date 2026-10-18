@@ -621,9 +621,19 @@ def browser_synthetic_chat() -> None:
                 expect(dialog.get_by_text(summary_text, exact=True)).to_be_visible(timeout=12000)
                 summary_source = dialog.get_by_text(re.compile("Khoảng nguồn:"), exact=False)
                 expect(summary_source).to_be_visible()
+                memory_response = page.context.request.get(f"{origin}/api/campaigns/{zip_campaign['id']}/memory?branch_id={zip_detail['branch_id']}")
+                assert memory_response.ok
+                summaries = [item for item in memory_response.json() if item.get("text") == summary_text]
+                assert len(summaries) == 1
+                assert summaries[0]["origin"] == "user"
+                assert summaries[0]["status"] == "approved"
+                assert summaries[0]["knowledge_scope"] == "narrator_only"
+                assert summaries[0]["source_revision_ids"] == revision_ids[:117]
                 dialog.get_by_role("button", name="Đóng hồ sơ và ký ức").click()
                 expect(page.get_by_role("button", name="Gửi", exact=True)).to_be_visible(timeout=12000)
-                assert len(_project(page, origin, zip_campaign["id"], zip_detail["branch_id"])["transcript"]) == 125
+                summary_projection = _project(page, origin, zip_campaign["id"], zip_detail["branch_id"])
+                assert [turn["revision_id"] for turn in summary_projection["transcript"]] == revision_ids
+                assert len(summary_projection["transcript"]) == 125
                 _send_and_wait(page, "ZIP lượt tiếp theo", 126)
                 assert len(campaign.calls) == before_zip_calls + 1
                 zip_projection = _project(page, origin, zip_campaign["id"], zip_detail["branch_id"])
