@@ -130,7 +130,13 @@ def _print_generation_diagnostics(page, origin: str, campaign_id: str, branch_id
     """Print redacted state only when a browser gate assertion fails."""
     try:
         projection = _project(page, origin, campaign_id, branch_id)
-        jobs = [{"id": job.get("id"), "status": job.get("status"), "attempt_counts_by_stage": job.get("attempt_counts_by_stage")} for job in projection.get("jobs", [])]
+        jobs = []
+        for job in projection.get("jobs", []):
+            detail = page.context.request.get(f"{origin}/api/generation/jobs/{job.get('id')}")
+            detail_json = detail.json() if detail.ok else {}
+            jobs.append({"id": job.get("id"), "status": job.get("status"),
+                         "attempt_counts_by_stage": job.get("attempt_counts_by_stage"),
+                         "failure": detail_json.get("failure")})
     except Exception as cause:
         jobs = [{"diagnostic_error": type(cause).__name__}]
     alerts = page.locator("[role=alert]").all_text_contents()
@@ -142,8 +148,21 @@ def _print_generation_diagnostics(page, origin: str, campaign_id: str, branch_id
         return { key: key.replace(/playroom:generation:[^:]+:/, 'playroom:generation:<owner>:'), checkpointId: value.checkpointId, previewId: value.previewId, jobId: value.jobId, actionLength: typeof value.action === 'string' ? value.action.length : null };
       } catch { return { key: '<unparseable>' }; }
     })""")
+    preview_budget = None
+    for receipt in receipts:
+        preview_id = receipt.get("previewId")
+        if not preview_id:
+            continue
+        preview_response = page.context.request.get(f"{origin}/api/context/previews/{preview_id}")
+        if preview_response.ok:
+            preview = preview_response.json()
+            budget = preview.get("budget") or {}
+            preview_budget = {"status": preview.get("status"), "failure": preview.get("failure"),
+                              "input_tokens": budget.get("input_tokens"), "input_cap": budget.get("input_cap"),
+                              "context_window": budget.get("context_window"), "output_reserve": budget.get("output_reserve")}
+            break
     details = page.locator(".generation-details")
-    print(json.dumps({"jobs": jobs, "alerts": alerts, "composer": {"visible": compose.is_visible(), "value_length": len(compose.input_value())}, "send": {"disabled": send.is_disabled(), "text": send.inner_text()}, "generation_details": details.all_text_contents(), "receipts": receipts, "provider_call_count": len(campaign_calls), "stale_route_hits": stale_route_hits, "browser_trace": trace_events}, ensure_ascii=True))
+    print(json.dumps({"jobs": jobs, "preview_budget": preview_budget, "alerts": alerts, "composer": {"visible": compose.is_visible(), "value_length": len(compose.input_value())}, "send": {"disabled": send.is_disabled(), "text": send.inner_text()}, "generation_details": details.all_text_contents(), "receipts": receipts, "provider_call_count": len(campaign_calls), "stale_route_hits": stale_route_hits, "browser_trace": trace_events}, ensure_ascii=True))
 
 
 def _assert_mobile(page, width: int) -> None:
