@@ -1,0 +1,61 @@
+name: B4 one-shot synthetic Ollama local app trial
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/b4-local-app-live-once.yml"
+      - "backend/tests/live_ollama_app_trial.py"
+      - "backend/tests/test_live_ollama_app_trial.py"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/b4-local-app-live-once.yml"
+      - "backend/tests/live_ollama_app_trial.py"
+      - "backend/tests/test_live_ollama_app_trial.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: b4-2026-10-18-one-shot-local-app-trial
+  cancel-in-progress: false
+
+jobs:
+  offline-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Python and uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: Verify offline app-trial contract with no credential or network
+        run: |
+          uv sync --locked --extra test
+          PYTHONPATH=backend uv run --locked --extra test pytest backend/tests/test_live_ollama_app_trial.py -q
+          PYTHONPATH=backend B4_DRY_RUN=1 uv run --locked --extra test python backend/tests/live_ollama_app_trial.py
+
+  one-shot-live-app:
+    if: >-
+      ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && startsWith(github.event.head_commit.message, 'ci(ollama): run one synthetic app trial 2026-10-18') }}
+    needs: offline-contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+      B4_LOCAL_APP_APPROVAL: B4_LOCAL_APP_TRIAL_2026_10_18
+      GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+      PYTHONPATH: backend
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Python and uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: Install locked dependencies
+        run: uv sync --locked --extra test
+      - name: Run one authenticated synthetic app trial
+        run: uv run --locked --extra test python backend/tests/live_ollama_app_trial.py
