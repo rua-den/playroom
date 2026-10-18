@@ -586,14 +586,45 @@ def browser_synthetic_chat() -> None:
                     zip_checks.nth(index).check()
                 page.get_by_role("button", name=re.compile("Duy.*Send")).click()
                 expect(page.locator(".generation-composer")).to_be_visible(timeout=12000)
+                failed_zip_send = False
                 try:
                     _send_and_wait(page, "ZIP lượt tiếp theo", 126)
                 except Exception:
+                    failed_zip_send = True
                     _print_generation_diagnostics(
                         page, origin, zip_campaign["id"], zip_detail["branch_id"],
                         campaign.calls, trace_events, stale_route_hits,
                     )
-                    raise
+                assert failed_zip_send, "The 125-turn Send must fail closed before summary coverage is approved"
+                failed_projection = _project(page, origin, zip_campaign["id"], zip_detail["branch_id"])
+                failed_jobs = [job for job in failed_projection["jobs"] if job.get("status") == "failed"]
+                assert failed_jobs, failed_projection["jobs"]
+                assert len(campaign.calls) == before_zip_calls
+
+                # The imported transcript remains intact while the owner adds
+                # a concise, source-linked summary for the earlier 117 turns.
+                # This is the existing Memory UI approval path, followed by a
+                # new explicit Send of the same action after the checkpoint
+                # refresh.
+                page.get_by_role("button", name="Mở hồ sơ và ký ức").click()
+                dialog = page.get_by_role("dialog", name="Hồ sơ và ký ức")
+                dialog.get_by_role("button", name="Ký ức").click()
+                expect(dialog.get_by_label("Loại")).to_be_visible(timeout=12000)
+                summary_text = "Các lượt 000–116 gồm lời người chơi và phản hồi AI theo thứ tự nguồn; nội dung này chỉ là tóm tắt truy hồi."
+                revision_ids = [turn["revision_id"] for turn in zip_projection["transcript"]]
+                dialog.get_by_label("Loại").select_option("summary")
+                dialog.get_by_label("Nội dung").fill(summary_text)
+                dialog.get_by_label("Revision bắt đầu").select_option(revision_ids[0])
+                dialog.get_by_label("Revision kết thúc").select_option(revision_ids[116])
+                dialog.get_by_label("Phạm vi kiến thức").select_option("narrator_only")
+                dialog.get_by_role("button", name="Thêm ký ức").click()
+                expect(dialog.get_by_text(summary_text, exact=True)).to_be_visible(timeout=12000)
+                summary_source = dialog.get_by_text(re.compile("Khoảng nguồn:"), exact=False)
+                expect(summary_source).to_be_visible()
+                dialog.get_by_role("button", name="Đóng hồ sơ và ký ức").click()
+                expect(page.get_by_role("button", name="Gửi", exact=True)).to_be_visible(timeout=12000)
+                assert len(_project(page, origin, zip_campaign["id"], zip_detail["branch_id"])["transcript"]) == 125
+                _send_and_wait(page, "ZIP lượt tiếp theo", 126)
                 assert len(campaign.calls) == before_zip_calls + 1
                 zip_projection = _project(page, origin, zip_campaign["id"], zip_detail["branch_id"])
                 assert zip_projection["transcript"][-1]["action_text"] == "ZIP lượt tiếp theo"
