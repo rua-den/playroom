@@ -608,7 +608,7 @@ def browser_synthetic_chat() -> None:
                 # refresh.
                 page.get_by_role("button", name="Mở hồ sơ và ký ức").click()
                 dialog = page.get_by_role("dialog", name="Hồ sơ và ký ức")
-                dialog.get_by_role("button", name="Ký ức").click()
+                dialog.get_by_role("button", name="Ký ức", exact=True).click()
                 expect(dialog.get_by_label("Loại")).to_be_visible(timeout=12000)
                 summary_text = "Các lượt 000–116 gồm lời người chơi và phản hồi AI theo thứ tự nguồn; nội dung này chỉ là tóm tắt truy hồi."
                 revision_ids = [turn["revision_id"] for turn in zip_projection["transcript"]]
