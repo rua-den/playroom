@@ -125,7 +125,7 @@ export function ChatGptImport({ onImported, onCancel }: Props) {
 
   return <section className="create-card" aria-labelledby="chatgpt-import-title">
     <div className="section-heading"><div><p className="eyebrow">LỊCH SỬ CỦA BẠN</p><h2 id="chatgpt-import-title">Nhập hội thoại ChatGPT</h2></div><button type="button" className="quiet-button touch-target" onClick={onCancel}>Đóng</button></div>
-    <p>Đọc ZIP và JSON trên thiết bị; chỉ thread bạn chọn mới được gửi tới Playroom để xem trước và nhập. Không có lượt gọi AI ở bước này.</p>
+    <p>Đọc ZIP và JSON trên thiết bị; tổng tệp đầu vào và thread được chọn mỗi loại tối đa 20 MiB. Nếu lớn hơn, hãy tách riêng thread hoặc tệp trước khi nhập. Chỉ thread bạn chọn mới được gửi tới Playroom để xem trước và nhập. Không có lượt gọi AI ở bước này.</p>
     {error && <div role="alert" className="form-error">{error}</div>}
     {notice && <p role="status">{notice}</p>}
     <div className="campaign-form">
@@ -147,7 +147,7 @@ export function ChatGptImport({ onImported, onCancel }: Props) {
         <label htmlFor="import-persona">Persona người chơi</label><input id="import-persona" required value={persona} onChange={(event) => setPersona(event.target.value)} />
         <label htmlFor="import-cast">Nhân vật đã xác nhận (cách nhau dấu phẩy)</label><input id="import-cast" value={cast} onChange={(event) => setCast(event.target.value)} placeholder="Yuna, Gi A, Yoongi" />
         <p>Import giữ nguyên lời người chơi và AI cũ; chưa tự tạo trí nhớ/canon, chưa tự xác định NPC nào đang có mặt. Kiểm tra Hồ sơ / Cảnh trước khi chơi tiếp, nhất là quy tắc không tự điều khiển Henn.</p>
-        <label><input type="checkbox" checked={approved} onChange={(event) => setApproved(event.target.checked)} /> Tôi đã xem đúng thread và muốn tạo chiến dịch tạm khóa để duyệt riêng.</label>
+        <label><input type="checkbox" checked={approved} onChange={(event) => setApproved(event.target.checked)} /> Tôi đã xem đúng thread, hiểu phần bị bỏ qua và muốn tạo chiến dịch tạm khóa để duyệt riêng.</label>
         <button className="primary-button touch-target" type="submit" disabled={!approved || busy || importing}>{busy ? "Đang nhập…" : "Nhập và mở chiến dịch"}</button>
       </form>}
     </div>
