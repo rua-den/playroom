@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import sqlite3
 import threading
 import time
 import urllib.error
@@ -122,22 +123,42 @@ def _validate_cli(args: argparse.Namespace) -> None:
         raise ValueError("port must be between 1 and 65535")
 
 
-def setup_owner_if_needed(data_dir: str | Path) -> bool:
+def setup_owner_if_needed(data_dir: str | Path, *, input_fn=None, password_fn=None) -> bool:
     """Create the first owner interactively, without changing an existing owner."""
+    input_fn = input if input_fn is None else input_fn
+    password_fn = getpass.getpass if password_fn is None else password_fn
     root = Path(data_dir).expanduser()
-    connection = connect(root / "playroom.sqlite3")
+    connection = None
+    for attempt in range(20):
+        try:
+            connection = connect(root / "playroom.sqlite3")
+            migrate(connection)
+            break
+        except sqlite3.OperationalError as exc:
+            if connection is not None:
+                connection.close()
+                connection = None
+            if "locked" not in str(exc).casefold() or attempt == 19:
+                raise
+            time.sleep(0.05)
+    assert connection is not None
     try:
-        migrate(connection)
         if connection.execute("SELECT 1 FROM owners LIMIT 1").fetchone() is not None:
             return False
-        email = input("Owner email: ").strip()
-        password = getpass.getpass("Owner password (minimum 12 characters): ")
-        confirmation = getpass.getpass("Confirm owner password: ")
+        email = input_fn("Owner email: ").strip()
+        password = password_fn("Owner password (minimum 12 characters): ")
+        confirmation = password_fn("Confirm owner password: ")
         if password != confirmation:
             raise ValueError("Passwords do not match")
+        # Another launcher may have completed setup while this terminal was prompting.
+        if connection.execute("SELECT 1 FROM owners LIMIT 1").fetchone() is not None:
+            return False
         try:
             owner = create_owner(connection, email, password)
         except ValidationError as exc:
+            # The unique owner constraint is the final atomic guard for two launchers.
+            if "already exists" in str(exc) and connection.execute("SELECT 1 FROM owners LIMIT 1").fetchone() is not None:
+                return False
             raise ValueError(str(exc)) from exc
         print(f"Created owner {owner.email}", flush=True)
         return True
@@ -150,7 +171,17 @@ def serve_with_browser(app, host: str, port: int) -> None:
     import uvicorn
 
     server = uvicorn.Server(uvicorn.Config(app, host=host, port=port))
-    thread = threading.Thread(target=server.run, name="playroom-local-server", daemon=True)
+    app.state.local_server = server
+
+    def run_server():
+        try:
+            server.run()
+        except BaseException as exc:
+            # Uvicorn uses SystemExit for bind/startup failures. The caller observes
+            # the stopped thread and raises a bounded, actionable RuntimeError.
+            app.state.local_server_error = exc
+
+    thread = threading.Thread(target=run_server, name="playroom-local-server", daemon=True)
     thread.start()
     url = f"http://{host}:{port}/"
     deadline = time.monotonic() + 30
