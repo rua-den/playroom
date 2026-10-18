@@ -613,7 +613,7 @@ def browser_synthetic_chat() -> None:
                 summary_text = "Các lượt 000–116 gồm lời người chơi và phản hồi AI theo thứ tự nguồn; nội dung này chỉ là tóm tắt truy hồi."
                 revision_ids = [turn["revision_id"] for turn in zip_projection["transcript"]]
                 dialog.get_by_label("Loại").select_option("summary")
-                dialog.get_by_label("Nội dung").fill(summary_text)
+                dialog.get_by_role("textbox", name="Nội dung", exact=True).fill(summary_text)
                 dialog.get_by_label("Revision bắt đầu").select_option(revision_ids[0])
                 dialog.get_by_label("Revision kết thúc").select_option(revision_ids[116])
                 dialog.get_by_label("Phạm vi kiến thức").select_option("narrator_only")
