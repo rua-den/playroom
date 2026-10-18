@@ -9,11 +9,13 @@ and cannot invoke real providers. No user data or API credentials are used.
 from __future__ import annotations
 
 import json
+import io
 import re
 import socket
 import tempfile
 import threading
 import time
+import zipfile
 from pathlib import Path
 from urllib.request import urlopen
 from uuid import uuid4
@@ -159,6 +161,37 @@ def _assert_mobile(page, width: int) -> None:
         expect(details).to_be_visible()
         page.get_by_role("button", name="Đóng hồ sơ và ký ức").click()
         expect(details).not_to_be_visible()
+
+
+def _browser_zip_conversations() -> bytes:
+    def message(message_id: str, role: str, text: str) -> dict:
+        return {"id": message_id, "author": {"role": role}, "recipient": "all",
+                "content": {"content_type": "text", "parts": [text]}}
+
+    mapping = {"root": {"id": "root", "parent": None, "message": None}}
+    parent = "root"
+    for index in range(125):
+        user_id = f"zip-user-{index:03d}-é"
+        assistant_id = f"zip-assistant-{index:03d}-☃"
+        mapping[user_id] = {"id": user_id, "parent": parent, "message": message(
+            user_id, "user", f"ZIP người chơi {index:03d}\nDòng phụ {index:03d}")}
+        mapping[assistant_id] = {"id": assistant_id, "parent": user_id, "message": message(
+            assistant_id, "assistant", f"ZIP AI {index:03d} — 💙")}
+        parent = assistant_id
+    selected = {"id": "zip-selected-125", "title": "ZIP selected 125 — Unicode",
+                "mapping": mapping, "current_node": parent}
+    unselected = {"id": "zip-unselected", "title": "Do not import this thread",
+                  "mapping": {"root": {"id": "root", "parent": None, "message": None},
+                              "u": {"id": "u", "parent": "root", "message": message("u", "user", "UNSELECTED SOURCE")},
+                              "a": {"id": "a", "parent": "u", "message": message("a", "assistant", "UNSELECTED SOURCE")}},
+                  "current_node": "a"}
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("nested/conversations.json", json.dumps([unselected], ensure_ascii=False))
+        archive.writestr("nested/conversations-1.json", json.dumps([selected], ensure_ascii=False))
+        archive.writestr("account_metadata.json", json.dumps({"email": "synthetic@example.test"}))
+        archive.writestr("attachments/private-note.txt", "PRIVATE ATTACHMENT MUST BE IGNORED")
+    return buffer.getvalue()
 
 
 def browser_synthetic_chat() -> None:
@@ -458,6 +491,52 @@ def browser_synthetic_chat() -> None:
                 page.reload(wait_until="domcontentloaded")
                 expect(page.locator(".generation-composer")).to_be_visible(timeout=12000)
                 _assert_mobile(page, 360)
+
+                # Issue #27 ZIP slice: the archive is generated in memory and
+                # contains nested numbered conversations plus ignored metadata
+                # and attachment noise. Only the owner-selected 125-pair
+                # thread may cross the preview/import endpoints.
+                page.set_viewport_size({"width": 1280, "height": 900})
+                before_zip_calls = len(campaign.calls)
+                zip_bytes = _browser_zip_conversations()
+                page.get_by_role("button", name="Nhập ChatGPT").click()
+                page.get_by_label("Tệp xuất từ ChatGPT").set_input_files({
+                    "name": "chatgpt-export.zip", "mimeType": "application/zip", "buffer": zip_bytes,
+                })
+                expect(page.get_by_text("Đã đọc 2 cuộc hội thoại", exact=False)).to_be_visible(timeout=12000)
+                thread_picker = page.get_by_label("Chọn chính xác cuộc hội thoại cần nhập")
+                thread_picker.select_option(label=re.compile("ZIP selected 125"))
+                page.get_by_role("button", name="Xem trước thread này").click()
+                expect(page.get_by_text("Tìm thấy 125 cặp", exact=False)).to_be_visible(timeout=12000)
+                expect(page.get_by_text("UNSELECTED SOURCE", exact=False)).to_have_count(0)
+                assert len(campaign.calls) == before_zip_calls, "Preview must not call the provider"
+                page.get_by_label("Tôi đã xem đúng thread", exact=False).check()
+                page.get_by_role("button", name="Nhập và mở chiến dịch").click()
+                expect(page.get_by_role("heading", name="ZIP selected 125 — Unicode")).to_be_visible(timeout=12000)
+                expect(page.locator(".story-turn")).to_have_count(125, timeout=25000)
+                expect(page.locator(".generation-composer")).to_have_count(0)
+                zip_campaigns = page.context.request.get(f"{origin}/api/campaigns").json()
+                zip_campaign = next(c for c in zip_campaigns if c["title"] == "ZIP selected 125 — Unicode")
+                zip_detail = page.context.request.get(f"{origin}/api/campaigns/{zip_campaign['id']}").json()
+                zip_projection = _project(page, origin, zip_campaign["id"], zip_detail["branch_id"])
+                assert len(zip_projection["transcript"]) == 125
+                assert zip_projection["transcript"][0]["action_text"] == "ZIP người chơi 000\nDòng phụ 000"
+                assert zip_projection["transcript"][-1]["narrative_text"] == "ZIP AI 124 — 💙"
+                assert all("UNSELECTED SOURCE" not in json.dumps(turn, ensure_ascii=False) for turn in zip_projection["transcript"])
+                assert len(campaign.calls) == before_zip_calls, "Import must not call the provider"
+                page.reload(wait_until="domcontentloaded")
+                expect(page.locator(".generation-composer")).to_have_count(0)
+                expect(page.get_by_text("125 cặp lượt đã nhập", exact=False)).to_be_visible(timeout=12000)
+                zip_checks = page.locator(".create-card input[type=checkbox]")
+                expect(zip_checks).to_have_count(4)
+                for index in range(4):
+                    zip_checks.nth(index).check()
+                page.get_by_role("button", name=re.compile("Duy.*Send")).click()
+                expect(page.locator(".generation-composer")).to_be_visible(timeout=12000)
+                _send_and_wait(page, "ZIP lượt tiếp theo", 126)
+                assert len(campaign.calls) == before_zip_calls + 1
+                page.reload(wait_until="domcontentloaded")
+                expect(page.locator(".story-turn")).to_have_count(126, timeout=12000)
 
                 # Issue #29: owner-selected synthetic structured legacy source.
                 # No private material, no historical turn fabrication, no model call on import.

@@ -1,6 +1,7 @@
 """ChatGPT JSON source-import contract. All fixture text is invented."""
 from __future__ import annotations
 
+import json
 from uuid import uuid4
 
 import pytest
@@ -30,6 +31,38 @@ def fixture_conversation():
         },
         "current_node": "reply2",
     }
+
+
+def large_fixture_conversation(pair_count=125):
+    """A deterministic export-shaped thread with one noisy alternate branch."""
+    mapping = {"root": {"id": "root", "parent": None, "message": None}}
+    parent = "root"
+    expected = []
+    for index in range(pair_count):
+        user_id = f"user-{index:03d}-é\n"
+        assistant_id = f"assistant-{index:03d}-\u2603"
+        action = f"Người chơi lượt {index:03d}\nDòng thứ hai {index:03d}"
+        narrative = f"AI trả lời lượt {index:03d} — Unicode 💙"
+        mapping[user_id] = {"id": user_id, "parent": parent, "message": {
+            "id": user_id, "author": {"role": "user"}, "recipient": "all",
+            "create_time": 1700000000 + index, "content": {"content_type": "text", "parts": [action]},
+        }}
+        mapping[assistant_id] = {"id": assistant_id, "parent": user_id, "message": {
+            "id": assistant_id, "author": {"role": "assistant"}, "recipient": "all",
+            "create_time": 1700000000 + index + 0.5, "content": {"content_type": "text", "parts": [narrative]},
+        }}
+        expected.append((action, narrative))
+        parent = assistant_id
+    mapping["unselected-alt"] = {"id": "unselected-alt", "parent": "user-000-é\n", "message": {
+        "id": "unselected-alt", "author": {"role": "assistant"}, "recipient": "all",
+        "content": {"content_type": "text", "parts": ["UNSELECTED ALTERNATE MUST NEVER PERSIST"]},
+    }}
+    return {
+        "id": "large-selected-☃",
+        "title": "125 lượt — Unicode",
+        "mapping": mapping,
+        "current_node": parent,
+    }, expected
 
 
 def test_selected_current_path_not_alternate_or_internal_messages():
@@ -88,6 +121,45 @@ def test_import_preserves_selected_story_and_is_idempotent_and_owner_scoped(tmp_
     with pytest.raises(ValidationError, match="key|payload|different"):
         import_conversation(db, owner.id, {**source, "title": "changed"}, config, key)
     db.close()
+
+
+def test_selected_125_pair_archive_semantics_are_durable_and_idempotent(tmp_path):
+    from playroom.chatgpt_import import import_conversation, import_review
+
+    path = tmp_path / "large-selected.sqlite3"
+    db = connect(path)
+    migrate(db)
+    owner = create_owner(db, "large-selected@example.test", "synthetic strong password")
+    source, expected = large_fixture_conversation()
+    config = {"title": "125 lượt Unicode", "world": {"name": "Synthetic"},
+              "persona": {"name": "Lan"}, "characters": []}
+    key = str(uuid4())
+
+    first = import_conversation(db, owner.id, source, config, key)
+    assert first["turn_count"] == 125
+    assert db.execute("SELECT COUNT(*) FROM campaigns WHERE owner_id=?", (owner.id,)).fetchone()[0] == 1
+    assert db.execute("SELECT COUNT(*) FROM generation_jobs").fetchone()[0] == 0
+    assert db.execute("SELECT COUNT(*) FROM provider_attempts").fetchone()[0] == 0
+    transcript = get_campaign_projection(db, owner.id, first["campaign_id"], first["branch_id"])["transcript"]
+    assert [(turn["action_text"], turn["narrative_text"]) for turn in transcript] == expected
+    assert all("UNSELECTED ALTERNATE" not in json.dumps(turn, ensure_ascii=False) for turn in transcript)
+    stored = db.execute("SELECT selected_source_json FROM chatgpt_import_sources WHERE campaign_id=?", (first["campaign_id"],)).fetchone()[0]
+    assert json.loads(stored) == source
+
+    db.close()
+    reopened = connect(path)
+    migrate(reopened)
+    review = import_review(reopened, owner.id, first["campaign_id"])
+    assert review["required"] is True
+    assert review["paired_turns"] == 125
+    again = import_conversation(reopened, owner.id, source, config, key)
+    assert again["already_imported"] is True
+    assert again["campaign_id"] == first["campaign_id"]
+    assert reopened.execute("SELECT COUNT(*) FROM campaigns WHERE owner_id=?", (owner.id,)).fetchone()[0] == 1
+    assert reopened.execute("SELECT COUNT(*) FROM chatgpt_import_sources WHERE owner_id=?", (owner.id,)).fetchone()[0] == 1
+    assert reopened.execute("SELECT COUNT(*) FROM generation_jobs").fetchone()[0] == 0
+    assert reopened.execute("SELECT COUNT(*) FROM provider_attempts").fetchone()[0] == 0
+    reopened.close()
 
 
 def test_legacy_import_skip_count_is_explicitly_unknown_after_reload(tmp_path):
