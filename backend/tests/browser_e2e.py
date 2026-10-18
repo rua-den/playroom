@@ -178,19 +178,21 @@ def _browser_zip_conversations() -> bytes:
         mapping[assistant_id] = {"id": assistant_id, "parent": user_id, "message": message(
             assistant_id, "assistant", f"ZIP AI {index:03d} — 💙")}
         parent = assistant_id
+    mapping["zip-alt"] = {"id": "zip-alt", "parent": "zip-user-000-é", "message": message(
+        "zip-alt", "assistant", "ALT NOT PLAYABLE")}
     selected = {"id": "zip-selected-125", "title": "ZIP selected 125 — Unicode",
                 "mapping": mapping, "current_node": parent}
     unselected = {"id": "zip-unselected", "title": "Do not import this thread",
                   "mapping": {"root": {"id": "root", "parent": None, "message": None},
-                              "u": {"id": "u", "parent": "root", "message": message("u", "user", "UNSELECTED SOURCE")},
-                              "a": {"id": "a", "parent": "u", "message": message("a", "assistant", "UNSELECTED SOURCE")}},
+                              "u": {"id": "u", "parent": "root", "message": message("u", "user", "EXTERNAL UNSELECTED SOURCE")},
+                              "a": {"id": "a", "parent": "u", "message": message("a", "assistant", "EXTERNAL UNSELECTED SOURCE")}},
                   "current_node": "a"}
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("nested/conversations.json", json.dumps([unselected], ensure_ascii=False))
         archive.writestr("nested/conversations-1.json", json.dumps([selected], ensure_ascii=False))
         archive.writestr("account_metadata.json", json.dumps({"email": "synthetic@example.test"}))
-        archive.writestr("attachments/private-note.txt", "PRIVATE ATTACHMENT MUST BE IGNORED")
+        archive.writestr("attachments/private-note.txt", "ATTACHMENT MUST BE IGNORED")
     return buffer.getvalue()
 
 
@@ -207,6 +209,8 @@ def browser_synthetic_chat() -> None:
                 )
                 page = context.new_page()
                 outbound = []
+                capture_zip_transfers = False
+                zip_transfer_posts: list[dict] = []
                 trace_events: list[dict] = []
                 trace_started = time.monotonic()
 
@@ -227,7 +231,15 @@ def browser_synthetic_chat() -> None:
                     if "/api/" in request.url:
                         trace("requestfailed", method=request.method, url=_redact_browser_url(request.url), failure=request.failure)
 
+                def capture_zip_transfer(request) -> None:
+                    if not capture_zip_transfers or request.method != "POST" or "/api/transfers/chatgpt/" not in request.url:
+                        return
+                    body = request.post_data_json
+                    assert isinstance(body, dict)
+                    zip_transfer_posts.append({"url": request.url, "body": body})
+
                 page.on("request", trace_request)
+                page.on("request", capture_zip_transfer)
                 page.on("response", trace_response)
                 page.on("requestfailed", trace_request_failed)
                 page.on("console", lambda message: trace("console", type=message.type, text=message.text[:300]))
@@ -499,16 +511,26 @@ def browser_synthetic_chat() -> None:
                 page.set_viewport_size({"width": 1280, "height": 900})
                 before_zip_calls = len(campaign.calls)
                 zip_bytes = _browser_zip_conversations()
+                capture_zip_transfers = True
                 page.get_by_role("button", name="Nhập ChatGPT").click()
                 page.get_by_label("Tệp xuất từ ChatGPT").set_input_files({
                     "name": "chatgpt-export.zip", "mimeType": "application/zip", "buffer": zip_bytes,
                 })
                 expect(page.get_by_text("Đã đọc 2 cuộc hội thoại", exact=False)).to_be_visible(timeout=12000)
+                assert zip_transfer_posts == [], "ZIP discovery must not POST transfer data"
                 thread_picker = page.get_by_label("Chọn chính xác cuộc hội thoại cần nhập")
                 thread_picker.select_option(label=re.compile("ZIP selected 125"))
                 page.get_by_role("button", name="Xem trước thread này").click()
                 expect(page.get_by_text("Tìm thấy 125 cặp", exact=False)).to_be_visible(timeout=12000)
-                expect(page.get_by_text("UNSELECTED SOURCE", exact=False)).to_have_count(0)
+                assert len(zip_transfer_posts) == 1
+                preview_post = zip_transfer_posts[0]
+                assert preview_post["url"].endswith("/api/transfers/chatgpt/preview")
+                preview_conversation = preview_post["body"]["conversation"]
+                assert preview_conversation["id"] == "zip-selected-125"
+                preview_text = json.dumps(preview_conversation, ensure_ascii=False)
+                assert "ALT NOT PLAYABLE" in preview_text
+                assert "EXTERNAL UNSELECTED SOURCE" not in preview_text
+                assert "account_metadata" not in preview_text and "ATTACHMENT MUST BE IGNORED" not in preview_text
                 assert len(campaign.calls) == before_zip_calls, "Preview must not call the provider"
                 page.get_by_label("Tôi đã xem đúng thread", exact=False).check()
                 page.get_by_role("button", name="Nhập và mở chiến dịch").click()
@@ -522,7 +544,16 @@ def browser_synthetic_chat() -> None:
                 assert len(zip_projection["transcript"]) == 125
                 assert zip_projection["transcript"][0]["action_text"] == "ZIP người chơi 000\nDòng phụ 000"
                 assert zip_projection["transcript"][-1]["narrative_text"] == "ZIP AI 124 — 💙"
-                assert all("UNSELECTED SOURCE" not in json.dumps(turn, ensure_ascii=False) for turn in zip_projection["transcript"])
+                assert all("ALT NOT PLAYABLE" not in json.dumps(turn, ensure_ascii=False) for turn in zip_projection["transcript"])
+                assert all("EXTERNAL UNSELECTED SOURCE" not in json.dumps(turn, ensure_ascii=False) for turn in zip_projection["transcript"])
+                assert len(zip_transfer_posts) == 2
+                import_post = zip_transfer_posts[1]
+                assert import_post["url"].endswith("/api/transfers/chatgpt/import")
+                import_conversation = import_post["body"]["conversation"]
+                assert import_conversation == preview_conversation
+                assert "ALT NOT PLAYABLE" in json.dumps(import_conversation, ensure_ascii=False)
+                assert "EXTERNAL UNSELECTED SOURCE" not in json.dumps(import_conversation, ensure_ascii=False)
+                assert "ATTACHMENT MUST BE IGNORED" not in json.dumps(import_conversation, ensure_ascii=False)
                 assert len(campaign.calls) == before_zip_calls, "Import must not call the provider"
                 page.reload(wait_until="domcontentloaded")
                 expect(page.locator(".generation-composer")).to_have_count(0)
@@ -535,6 +566,10 @@ def browser_synthetic_chat() -> None:
                 expect(page.locator(".generation-composer")).to_be_visible(timeout=12000)
                 _send_and_wait(page, "ZIP lượt tiếp theo", 126)
                 assert len(campaign.calls) == before_zip_calls + 1
+                zip_projection = _project(page, origin, zip_campaign["id"], zip_detail["branch_id"])
+                assert zip_projection["transcript"][-1]["action_text"] == "ZIP lượt tiếp theo"
+                assert zip_projection["transcript"][-1]["narrative_text"] == NARRATION
+                capture_zip_transfers = False
                 page.reload(wait_until="domcontentloaded")
                 expect(page.locator(".story-turn")).to_have_count(126, timeout=12000)
 
