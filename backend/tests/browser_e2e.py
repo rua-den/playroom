@@ -656,7 +656,7 @@ def browser_synthetic_chat() -> None:
                 assert legacy_projection["transcript"] == []
                 assert legacy_projection["import_review"]["required"] is True
                 assert legacy_projection["import_review"]["source_kind"] == "legacy_bundle"
-                assert len(campaign.calls) == 8
+                assert len(campaign.calls) == 9
                 blocked = page.context.request.post(f"{origin}/api/campaigns/{imported_legacy['id']}/generate", data=json.dumps({
                     "branch_id": legacy_detail["branch_id"], "action": "*Lan chờ.*",
                     "idempotency_key": str(uuid4()), "checkpoint_id": legacy_projection["branch"]["checkpoint_id"],
@@ -671,7 +671,7 @@ def browser_synthetic_chat() -> None:
                 page.get_by_role("button", name=re.compile("Duy.*Send")).click()
                 expect(page.locator(".generation-composer")).to_be_visible(timeout=12000)
                 _send_and_wait(page, "*Lan hỏi Vy về tờ giấy.*", 1)
-                assert len(campaign.calls) == 9
+                assert len(campaign.calls) == 10
                 page.reload(wait_until="domcontentloaded")
                 expect(page.locator(".story-turn")).to_have_count(1)
                 browser.close()
