@@ -567,7 +567,14 @@ def browser_synthetic_chat() -> None:
                     zip_checks.nth(index).check()
                 page.get_by_role("button", name=re.compile("Duy.*Send")).click()
                 expect(page.locator(".generation-composer")).to_be_visible(timeout=12000)
-                _send_and_wait(page, "ZIP lượt tiếp theo", 126)
+                try:
+                    _send_and_wait(page, "ZIP lượt tiếp theo", 126)
+                except Exception:
+                    _print_generation_diagnostics(
+                        page, origin, zip_campaign["id"], zip_detail["branch_id"],
+                        campaign.calls, trace_events, stale_route_hits,
+                    )
+                    raise
                 assert len(campaign.calls) == before_zip_calls + 1
                 zip_projection = _project(page, origin, zip_campaign["id"], zip_detail["branch_id"])
                 assert zip_projection["transcript"][-1]["action_text"] == "ZIP lượt tiếp theo"
