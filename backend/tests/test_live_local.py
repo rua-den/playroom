@@ -14,7 +14,7 @@ from playroom.auth import create_owner
 from playroom.db import connect, migrate
 from playroom.provider import default_provider_factory
 from playroom.model_profiles import persist_model_profile
-from playroom.live_local import create_live_local_app, main
+from playroom.live_local import create_live_local_app, main, setup_owner_if_needed
 
 
 def _dist(tmp_path, *, index="<html>live</html>"):
@@ -204,6 +204,58 @@ def test_live_cli_forwards_loopback_host_and_port(tmp_path, monkeypatch, capsys)
     main()
     assert calls == [{"host": "127.0.0.1", "port": 8123}]
     assert capsys.readouterr().out == ""
+
+
+def test_live_setup_prompts_once_and_creates_first_owner(tmp_path, monkeypatch):
+    prompts = iter(["owner@example.test"])
+    passwords = iter(["a secure owner password", "a secure owner password"])
+    monkeypatch.setattr("builtins.input", lambda prompt: next(prompts))
+    monkeypatch.setattr("getpass.getpass", lambda prompt: next(passwords))
+
+    assert setup_owner_if_needed(tmp_path / "data") is True
+    connection = connect(tmp_path / "data" / "playroom.sqlite3")
+    try:
+        assert connection.execute("SELECT email FROM owners").fetchone()["email"] == "owner@example.test"
+    finally:
+        connection.close()
+
+
+def test_live_setup_existing_owner_does_not_prompt_or_reset(tmp_path, monkeypatch):
+    connection = connect(tmp_path / "data" / "playroom.sqlite3")
+    migrate(connection)
+    create_owner(connection, "owner@example.test", "a secure owner password")
+    connection.close()
+    monkeypatch.setattr("builtins.input", lambda prompt: pytest.fail("email prompt must not run"))
+    monkeypatch.setattr("getpass.getpass", lambda prompt: pytest.fail("password prompt must not run"))
+
+    assert setup_owner_if_needed(tmp_path / "data") is False
+
+
+@pytest.mark.parametrize("values", [("owner@example.test", "short", "short"), ("owner@example.test", "a secure owner password", "different password")])
+def test_live_setup_invalid_or_mismatched_password_creates_no_owner(tmp_path, monkeypatch, values):
+    prompts = iter([values[0]])
+    passwords = iter(values[1:])
+    monkeypatch.setattr("builtins.input", lambda prompt: next(prompts))
+    monkeypatch.setattr("getpass.getpass", lambda prompt: next(passwords))
+
+    with pytest.raises(ValueError):
+        setup_owner_if_needed(tmp_path / "data")
+    connection = connect(tmp_path / "data" / "playroom.sqlite3")
+    try:
+        assert connection.execute("SELECT COUNT(*) FROM owners").fetchone()[0] == 0
+    finally:
+        connection.close()
+
+
+def test_live_cli_open_browser_waits_for_server_ready(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setitem(sys.modules, "uvicorn", types.SimpleNamespace(run=lambda *args, **kwargs: pytest.fail("run shortcut must not be used")))
+    monkeypatch.setattr("playroom.live_local.serve_with_browser", lambda app, host, port: calls.append((app, host, port)))
+    monkeypatch.setattr(sys, "argv", ["playroom-live-local", "--data-dir", str(tmp_path / "data"), "--frontend-dist", str(_dist(tmp_path)), "--port", "8123", "--open-browser"])
+
+    main()
+
+    assert calls and calls[0][1:] == ("127.0.0.1", 8123)
 
 
 def test_fresh_live_start_does_not_invoke_provider_factory(tmp_path, monkeypatch):

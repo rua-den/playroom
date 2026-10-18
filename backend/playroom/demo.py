@@ -22,6 +22,7 @@ from .db import connect, migrate
 from .model_profiles import persist_model_profile
 from .provider import FakeProvider, ProviderResult
 from .settings import save_owner_settings
+from .live_local import serve_with_browser
 
 
 @dataclass(frozen=True)
@@ -134,8 +135,9 @@ def main() -> None:
     parser.add_argument("--email", default="demo@localhost")
     parser.add_argument("--password", help="Owner password (minimum 12 characters); generated and shown once when omitted")
     parser.add_argument("--host", default="127.0.0.1", help="Loopback by default")
-    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--port", type=int, default=8001)
     parser.add_argument("--frontend-dist")
+    parser.add_argument("--open-browser", action="store_true", help="Open the synthetic demo after the server is ready")
     args = parser.parse_args()
     _validate_loopback_host(args.host)
     install = _ensure_install(Path(args.data_dir), args.email, args.password)
@@ -143,8 +145,11 @@ def main() -> None:
         print(f"Demo owner: {install.email}", flush=True)
         print(f"Demo password (show once): {install.password}", flush=True)
     app, _ = create_demo_app(Path(args.data_dir), email=args.email, password=args.password, frontend_dist=args.frontend_dist)
-    import uvicorn
-    uvicorn.run(app, host=args.host, port=args.port)
+    if args.open_browser:
+        serve_with_browser(app, args.host, args.port)
+    else:
+        import uvicorn
+        uvicorn.run(app, host=args.host, port=args.port)
 
 
 if __name__ == "__main__":
