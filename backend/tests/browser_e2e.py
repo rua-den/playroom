@@ -145,11 +145,13 @@ def _print_generation_diagnostics(page, origin: str, campaign_id: str, branch_id
     receipts = page.evaluate("""() => Object.keys(localStorage).filter((key) => key.startsWith('playroom:generation:')).map((key) => {
       try {
         const value = JSON.parse(localStorage.getItem(key) || '{}');
-        return { key: key.replace(/playroom:generation:[^:]+:/, 'playroom:generation:<owner>:'), checkpointId: value.checkpointId, previewId: value.previewId, jobId: value.jobId, actionLength: typeof value.action === 'string' ? value.action.length : null };
+        const match = key.match(/^playroom:generation:[^:]+:([^:]+):([^:]+)$/);
+        return { key: key.replace(/playroom:generation:[^:]+:/, 'playroom:generation:<owner>:'), campaignId: match?.[1], branchId: match?.[2], checkpointId: value.checkpointId, previewId: value.previewId, jobId: value.jobId, actionLength: typeof value.action === 'string' ? value.action.length : null };
       } catch { return { key: '<unparseable>' }; }
     })""")
     preview_budget = None
-    for receipt in receipts:
+    campaign_receipts = [receipt for receipt in receipts if receipt.get("campaignId") == campaign_id and receipt.get("branchId") == branch_id]
+    for receipt in campaign_receipts:
         preview_id = receipt.get("previewId")
         if not preview_id:
             continue
