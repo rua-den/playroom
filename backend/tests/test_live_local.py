@@ -7,6 +7,7 @@ import sys
 import threading
 import time
 import types
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import pytest
@@ -233,6 +234,12 @@ def test_live_setup_existing_owner_does_not_prompt_or_reset(tmp_path, monkeypatc
     monkeypatch.setattr("getpass.getpass", lambda prompt: pytest.fail("password prompt must not run"))
 
     assert setup_owner_if_needed(tmp_path / "data") is False
+    connection = connect(tmp_path / "data" / "playroom.sqlite3")
+    try:
+        from playroom.auth import verify_owner_password
+        assert verify_owner_password(connection, "owner@example.test", "a secure owner password").email == "owner@example.test"
+    finally:
+        connection.close()
 
 
 @pytest.mark.parametrize("values", [("owner@example.test", "short", "short"), ("owner@example.test", "a secure owner password", "different password")])
@@ -308,7 +315,7 @@ def test_serve_with_browser_rejects_occupied_port_without_opening(monkeypatch):
     opened = []
     monkeypatch.setattr("webbrowser.open", lambda url: opened.append(url))
     try:
-        with pytest.raises(RuntimeError, match="did not become ready"):
+        with pytest.raises(RuntimeError, match="failed to start|did not become ready"):
             serve_with_browser(_health_app(), "127.0.0.1", port)
     finally:
         holder.should_exit = True
@@ -317,24 +324,65 @@ def test_serve_with_browser_rejects_occupied_port_without_opening(monkeypatch):
 
 
 def test_serve_with_browser_startup_failure_exits_without_waiting_full_timeout(monkeypatch):
-    import uvicorn
+    @asynccontextmanager
+    async def failing_lifespan(app):
+        raise RuntimeError("synthetic startup failure")
+        yield
 
-    port = _free_port()
-    holder = uvicorn.Server(uvicorn.Config(_health_app(), host="127.0.0.1", port=port, log_level="error"))
-    thread = threading.Thread(target=holder.run, daemon=True)
-    thread.start()
-    deadline = time.monotonic() + 5
-    while not holder.started and time.monotonic() < deadline:
-        time.sleep(0.01)
-    assert holder.started
+    app = FastAPI(lifespan=failing_lifespan)
+    app.add_api_route("/health", lambda: {"status": "ok"}, methods=["GET"])
+    opened = []
+    monkeypatch.setattr("webbrowser.open", lambda url: opened.append(url))
     started = time.monotonic()
-    try:
-        with pytest.raises(RuntimeError):
-            serve_with_browser(_health_app(), "127.0.0.1", port)
-    finally:
-        holder.should_exit = True
-        thread.join(timeout=5)
+    with pytest.raises(RuntimeError, match="failed to start|did not become ready"):
+        serve_with_browser(app, "127.0.0.1", _free_port())
     assert time.monotonic() - started < 5
+    assert opened == []
+
+
+def test_serve_with_browser_handles_keyboard_interrupt_during_join(monkeypatch):
+    class FakeThread:
+        def __init__(self, target, **kwargs):
+            self.alive = True
+            self.join_calls = 0
+
+        def start(self):
+            return None
+
+        def is_alive(self):
+            return self.alive
+
+        def join(self, timeout=None):
+            self.join_calls += 1
+            if self.join_calls == 1:
+                raise KeyboardInterrupt
+            self.alive = False
+
+    class FakeServer:
+        def __init__(self, config):
+            self.started = True
+            self.should_exit = False
+
+        def run(self):
+            return None
+
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+    monkeypatch.setattr("playroom.live_local.threading.Thread", FakeThread)
+    monkeypatch.setitem(sys.modules, "uvicorn", types.SimpleNamespace(Server=FakeServer, Config=lambda *args, **kwargs: object()))
+    monkeypatch.setattr("playroom.live_local.urllib.request.urlopen", lambda *args, **kwargs: FakeResponse())
+    monkeypatch.setattr("webbrowser.open", lambda url: (_ for _ in ()).throw(KeyboardInterrupt))
+
+    app = _health_app()
+    serve_with_browser(app, "127.0.0.1", _free_port())
+    assert app.state.local_server.should_exit is True
 
 
 def test_two_first_live_setup_attempts_leave_only_one_owner(tmp_path):
@@ -343,19 +391,22 @@ def test_two_first_live_setup_attempts_leave_only_one_owner(tmp_path):
 
     def setup():
         def email(_):
-            barrier.wait()
-            return "owner@example.test"
+            barrier.wait(timeout=5)
+            return f"owner-{threading.current_thread().name}@example.test"
 
         try:
             outcomes.append(setup_owner_if_needed(tmp_path / "data", input_fn=email, password_fn=lambda _: "a secure owner password"))
-        except ValueError as exc:
-            outcomes.append(str(exc))
+        except BaseException as exc:
+            outcomes.append(exc)
 
     threads = [threading.Thread(target=setup) for _ in range(2)]
     for thread in threads:
         thread.start()
     for thread in threads:
         thread.join(timeout=10)
+        assert not thread.is_alive()
+    assert len(outcomes) == 2
+    assert all(isinstance(outcome, bool) for outcome in outcomes), outcomes
     assert sorted(outcomes, key=str) == [False, True]
     connection = connect(tmp_path / "data" / "playroom.sqlite3")
     try:

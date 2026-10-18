@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, JSONResponse
 
 from .app import create_app
 from .auth import create_owner
-from .db import connect, migrate
+from .db import connect, migrate, transaction
 from .domain import ValidationError
 
 
@@ -150,16 +150,15 @@ def setup_owner_if_needed(data_dir: str | Path, *, input_fn=None, password_fn=No
         confirmation = password_fn("Confirm owner password: ")
         if password != confirmation:
             raise ValueError("Passwords do not match")
-        # Another launcher may have completed setup while this terminal was prompting.
-        if connection.execute("SELECT 1 FROM owners LIMIT 1").fetchone() is not None:
-            return False
-        try:
-            owner = create_owner(connection, email, password)
-        except ValidationError as exc:
-            # The unique owner constraint is the final atomic guard for two launchers.
-            if "already exists" in str(exc) and connection.execute("SELECT 1 FROM owners LIMIT 1").fetchone() is not None:
+        with transaction(connection):
+            # Serialize the final check and insert so two terminals cannot each
+            # create a different owner after prompting concurrently.
+            if connection.execute("SELECT 1 FROM owners LIMIT 1").fetchone() is not None:
                 return False
-            raise ValueError(str(exc)) from exc
+            try:
+                owner = create_owner(connection, email, password)
+            except ValidationError as exc:
+                raise ValueError(str(exc)) from exc
         print(f"Created owner {owner.email}", flush=True)
         return True
     finally:
@@ -198,13 +197,33 @@ def serve_with_browser(app, host: str, port: int) -> None:
             time.sleep(0.1)
         else:
             server.should_exit = True
-            thread.join(timeout=5)
+            _join_server(thread, server)
+            startup_error = getattr(app.state, "local_server_error", None)
+            if startup_error is not None:
+                raise RuntimeError(f"Playroom server failed to start at {url}") from startup_error
             raise RuntimeError(f"Playroom server did not become ready at {url}")
-        thread.join()
-    except BaseException:
+        _join_server(thread, server)
+        startup_error = getattr(app.state, "local_server_error", None)
+        if startup_error is not None:
+            raise RuntimeError(f"Playroom server failed to start at {url}") from startup_error
+    except KeyboardInterrupt:
         server.should_exit = True
-        thread.join(timeout=5)
-        raise
+        _join_server(thread, server)
+
+
+def _join_server(thread: threading.Thread, server) -> None:
+    deadline = time.monotonic() + 5
+    while thread.is_alive() and time.monotonic() < deadline:
+        try:
+            thread.join(timeout=0.2)
+        except KeyboardInterrupt:
+            server.should_exit = True
+    if thread.is_alive():
+        server.should_exit = True
+        try:
+            thread.join(timeout=0.2)
+        except KeyboardInterrupt:
+            return
 
 
 def main() -> None:

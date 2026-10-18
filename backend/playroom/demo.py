@@ -135,7 +135,7 @@ def main() -> None:
     parser.add_argument("--email", default="demo@localhost")
     parser.add_argument("--password", help="Owner password (minimum 12 characters); generated and shown once when omitted")
     parser.add_argument("--host", default="127.0.0.1", help="Loopback by default")
-    parser.add_argument("--port", type=int, default=8001)
+    parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--frontend-dist")
     parser.add_argument("--open-browser", action="store_true", help="Open the synthetic demo after the server is ready")
     args = parser.parse_args()
