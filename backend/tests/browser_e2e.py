@@ -586,20 +586,28 @@ def browser_synthetic_chat() -> None:
                     zip_checks.nth(index).check()
                 page.get_by_role("button", name=re.compile("Duy.*Send")).click()
                 expect(page.locator(".generation-composer")).to_be_visible(timeout=12000)
-                failed_zip_send = False
                 try:
-                    _send_and_wait(page, "ZIP lượt tiếp theo", 126)
-                except Exception:
-                    failed_zip_send = True
+                    zip_action = "ZIP lượt tiếp theo"
+                    compose = page.get_by_role("textbox", name="Hành động tiếp theo")
+                    compose.fill(zip_action)
+                    page.get_by_role("button", name="Gửi", exact=True).click()
+                    expect(page.locator(".generation-details")).to_contain_text("Giai đoạn: failed", timeout=25000)
+                    failed_projection = _project(page, origin, zip_campaign["id"], zip_detail["branch_id"])
+                    failed_jobs = [job for job in failed_projection["jobs"] if job.get("status") == "failed"]
+                    assert len(failed_jobs) == 1, failed_projection["jobs"]
+                    failed_job = page.context.request.get(f"{origin}/api/generation/jobs/{failed_jobs[0]['id']}")
+                    assert failed_job.ok
+                    failure = failed_job.json()["failure"]
+                    assert failure == {"code": "STATE_CONFLICT", "message": "Required narrator context exceeds the configured input budget"}
+                    expect(page.locator(".story-turn")).to_have_count(125, timeout=1000)
+                    expect(compose).to_have_value(zip_action)
+                    assert len(campaign.calls) == before_zip_calls
+                except AssertionError:
                     _print_generation_diagnostics(
                         page, origin, zip_campaign["id"], zip_detail["branch_id"],
                         campaign.calls, trace_events, stale_route_hits,
                     )
-                assert failed_zip_send, "The 125-turn Send must fail closed before summary coverage is approved"
-                failed_projection = _project(page, origin, zip_campaign["id"], zip_detail["branch_id"])
-                failed_jobs = [job for job in failed_projection["jobs"] if job.get("status") == "failed"]
-                assert failed_jobs, failed_projection["jobs"]
-                assert len(campaign.calls) == before_zip_calls
+                    raise
 
                 # The imported transcript remains intact while the owner adds
                 # a concise, source-linked summary for the earlier 117 turns.
