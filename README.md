@@ -31,6 +31,10 @@ Trọng tâm là quản lý context qua nhiều chương: lưu hồ sơ, cảnh,
 
 **ZIP/JSON cục bộ 18/10:** [PR #38](https://github.com/rua-den/playroom/pull/38) đã merge tại `fe8f888`. Final PR-head [CI #39141630371](https://github.com/rua-den/playroom/actions/runs/39141630371) và merged-main [CI #39141771466](https://github.com/rua-den/playroom/actions/runs/39141771466) đều PASS attempt 1: **357 backend, 136 frontend / 3 skipped**, build/typecheck/compile và hai kịch bản Chromium. Test ZIP giữ 125 lượt gốc, reload/duyệt, chặn request vượt budget trước provider, tự viết summary có nguồn rồi chủ động Gửi mới bằng fake provider. CI đầu tiên của head cũ đã lỗi ở mock recovery; bản sửa giữ route mock tồn tại suốt test, không đổi logic recovery của app. [Handoff](docs/handoff/2026-10-18-chatgpt-zip.md) giữ đầy đủ thất bại và giới hạn; #27 và #20 vẫn mở.
 
+**Bản test Windows 19/10:** [PR #40](https://github.com/rua-den/playroom/pull/40) đã merge tại `e598e3f`; [PR CI #39189856947](https://github.com/rua-den/playroom/actions/runs/39189856947) và [main CI #39190075223](https://github.com/rua-den/playroom/actions/runs/39190075223) đều PASS attempt 1: **368 backend, 136 frontend / 3 skipped** và cả hai luồng Chromium. `Start Playroom.cmd` tạo tài khoản lần đầu qua mật khẩu ẩn và mở bản thật; `Try Playroom Demo.cmd` mở demo fake riêng. Cả hai tự build giao diện và mở trình duyệt khi server sẵn sàng. Xem [bắt đầu](BAT-DAU.md) và [bằng chứng/giới hạn thử AI thật](docs/handoff/2026-10-18-local-test-product.md).
+
+**AI thật 19/10:** Lượt đầu dừng với `SCHEMA_INVALID`; sau sửa dữ liệu test, [lượt kiểm chứng riêng #39192040860](https://github.com/rua-den/playroom/actions/runs/39192040860) PASS: đăng nhập app, tạo và lưu một lượt truyện giả, tải lại vẫn còn. Tổng hai lượt gọi model, mỗi lượt đúng một request, không tự retry. Đây là kiểm tra luồng API bằng dữ liệu giả; key Actions không tự chuyển sang local. Dữ liệu truyện riêng vẫn chờ chủ sở hữu duyệt và quyết định cho phép gửi tới provider.
+
 ## Đọc theo thứ tự
 
 1. [Thiết kế sản phẩm và context](docs/superpowers/specs/2026-10-12-personal-playroom-design.md).
