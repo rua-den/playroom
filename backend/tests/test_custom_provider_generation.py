@@ -72,6 +72,7 @@ def test_custom_provider_authenticated_generation_commits_and_reloads(
             http_client=http_client,
         )
 
+    resolver_calls: list[tuple[str, str | None]] = []
     app = create_app(
         database_url=f"sqlite:///{database}",
         allowed_hosts={"testserver"},
@@ -79,6 +80,14 @@ def test_custom_provider_authenticated_generation_commits_and_reloads(
         credential_root=tmp_path / "secrets",
         generation_provider_factory=factory,
     )
+    original_resolver = app.state.generation_credential_resolver
+    if keyed:
+        def recording_resolver(owner_id, version):
+            resolver_calls.append((owner_id, version))
+            return original_resolver(owner_id, version)
+        app.state.generation_credential_resolver = recording_resolver
+    else:
+        app.state.generation_credential_resolver = lambda *_args: (_ for _ in ()).throw(AssertionError("keyless custom resolver was called"))
     headers = {"origin": "https://testserver"}
     with TestClient(app, base_url="https://testserver") as client:
         login = client.post("/api/auth/login", json={"email": owner.email, "password": "password-custom-generation"}, headers=headers)
@@ -117,9 +126,6 @@ def test_custom_provider_authenticated_generation_commits_and_reloads(
         assert settings.status_code == 200, settings.text
         assert settings.json()["roles"]["narrator"]["version"] == profile["version"]
 
-        if not keyed:
-            app.state.generation_credential_resolver = lambda *_args: (_ for _ in ()).throw(AssertionError("keyless custom resolver was called"))
-
         preview_response = client.post(
             f"/api/campaigns/{campaign.id}/context/previews",
             json={"branch_id": campaign.initial_branch_id, "action": "Read the paper", "profile_id": profile["id"]},
@@ -128,6 +134,7 @@ def test_custom_provider_authenticated_generation_commits_and_reloads(
         assert preview_response.status_code == 201, preview_response.text
         preview = preview_response.json()
         assert preview["status"] == "ready"
+        assert calls == []
 
         generate_response = client.post(
             f"/api/campaigns/{campaign.id}/generate",
@@ -144,7 +151,9 @@ def test_custom_provider_authenticated_generation_commits_and_reloads(
         job = _poll_terminal(client, generate_response.json()["id"])
         assert job["status"] == "candidate", job
         assert job["cost_ledger"]["reserved_total_usd"] is None
+        assert job["cost_ledger"]["cap"] is None
         assert job["cost_ledger"]["actual_total_usd"] is None
+        assert job["cost_ledger"]["calculated_total_usd"] is None
         assert job["cost_ledger"]["stages"]["narration"]["estimated_cost_usd"] is None
         assert job["cost_ledger"]["stages"]["narration"]["cost_provenance"] == "provider_managed_unknown"
         assert job["attempt_details"][0]["status"] == "completed"
@@ -182,8 +191,10 @@ def test_custom_provider_authenticated_generation_commits_and_reloads(
     assert calls[0]["url"] == "http://127.0.0.1:1234/v1/chat/completions"
     if keyed:
         assert calls[0]["headers"]["authorization"] == "Bearer synthetic-owner-key"
+        assert resolver_calls == [(owner.id, credential["secret_version"])]
     else:
         assert "authorization" not in calls[0]["headers"]
+        assert resolver_calls == []
     assert "synthetic-owner-key" not in json.dumps(profile)
     persisted = connect(database)
     try:
