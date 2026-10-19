@@ -350,6 +350,17 @@ describe("story library navigation and last-story persistence", () => {
     expect(api.getCampaign).toHaveBeenCalledWith("story-a");
   });
 
+  it("explains the empty library and keeps the existing create and import actions", async () => {
+    vi.spyOn(api, "listCampaigns").mockResolvedValue([]);
+    render(<AppShell owner={{ id: "empty-library-owner", email: "owner@example.test" }} onLogout={() => undefined} />);
+    expect(await screen.findByRole("heading", { name: "Chưa có truyện nào" })).toBeInTheDocument();
+    expect(document.querySelector(".library-empty svg")).toHaveAttribute("aria-hidden", "true");
+    const library = screen.getByRole("heading", { name: "Thư viện truyện" }).closest("section")!;
+    expect(within(library).getByRole("button", { name: "+ Tạo truyện mới" })).toBeInTheDocument();
+    expect(within(library).getByRole("button", { name: "Nhập hội thoại ChatGPT" })).toBeInTheDocument();
+    expect(within(library).getByRole("button", { name: "Nhập Legacy Bundle" })).toBeInTheDocument();
+  });
+
   it("restores only an accessible last story and isolates owners", async () => {
     mockStories();
     window.localStorage.setItem(lastStoryStorageKey("owner-a"), "story-b");

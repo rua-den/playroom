@@ -79,6 +79,10 @@ h3 { font-size: 18px; line-height: 1.35; font-weight: 620; }
 .story-library { max-width: 1040px; margin: 50px auto 0; }
 .story-library .section-heading { align-items: center; margin-bottom: 26px; }
 .story-library .section-heading h1 { margin-bottom: 8px; }
+.library-empty { display: flex; align-items: center; gap: 16px; margin: 0 0 18px; padding: 18px 20px; border: 1px dashed var(--line); border-radius: 12px; color: var(--muted); background: color-mix(in srgb, var(--surface) 62%, transparent); }
+.library-empty svg { flex: 0 0 auto; opacity: .72; }
+.library-empty h2 { margin: 0 0 4px; font-size: 18px; }
+.library-empty p { max-width: 60ch; margin: 0; color: var(--muted); font-size: 14px; line-height: 1.55; }
 .story-library-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr)); gap: 14px; }
 .story-card { position: relative; min-width: 0; min-height: 176px; display: flex; flex-direction: column; justify-content: space-between; padding: 20px 20px 18px 25px; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
 .story-card::before { position: absolute; inset: 0 auto 0 0; width: 7px; content: ""; background: var(--accent); opacity: .34; }
@@ -227,8 +231,9 @@ legend { padding: 0 6px; color: var(--accent); font-weight: 620; }
 @media (max-width: 560px) {
   .app-shell { padding-right: 16px; padding-left: 16px; }
   .topbar { min-height: 64px; flex-wrap: wrap; gap: 10px 12px; }
-  .wordmark { font-size: 16px; }
-  .wordmark .demo-badge { display: none; }
+  .wordmark { max-width: 100%; flex-wrap: wrap; font-size: 16px; }
+  .wordmark .demo-badge { display: inline-flex; align-items: center; justify-content: center; width: 48px; min-width: 48px; max-width: 48px; height: 24px; padding: 0 5px; overflow: hidden; font-size: 0; white-space: nowrap; }
+  .wordmark .demo-badge::before { content: "Demo"; font-size: 12px; font-weight: 650; }
   .campaign-controls { order: 3; flex: 0 0 100%; margin: 0; overflow: visible; }
   .campaign-controls > :not(.library-trigger) { display: none; }
   .library-trigger { width: 100%; padding: 0 10px; font-size: 13px; text-align: left; }
@@ -243,6 +248,8 @@ legend { padding: 0 6px; color: var(--accent); font-weight: 620; }
   .story-library .section-heading { align-items: flex-start; flex-direction: column; gap: 16px; }
   .story-library .section-heading > button { width: 100%; }
   .story-library-grid { grid-template-columns: 1fr; gap: 10px; }
+  .library-empty { gap: 12px; padding: 15px 14px; }
+  .library-empty svg { width: 34px; height: 34px; }
   .story-card { min-height: 160px; padding: 17px 16px 15px 22px; }
   .workspace-grid { margin-top: 26px; }
   .story-column h1 { margin-bottom: 22px; }
