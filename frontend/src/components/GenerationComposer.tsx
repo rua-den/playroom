@@ -94,11 +94,13 @@ export function GenerationComposer({
   projection,
   profileId,
   onCommitted,
+  demoMode = false,
 }: {
   ownerId: string;
   projection: CampaignProjection;
   profileId: string;
   onCommitted: () => Promise<CampaignProjection | void> | void;
+  demoMode?: boolean;
 }) {
   const [action, setAction] = useState("");
   const [identity, setIdentity] = useState<GenerationIdentity | null>(null);
@@ -708,6 +710,13 @@ export function GenerationComposer({
   const busy = pending || active;
   return (
     <section className="generation-composer" aria-label="Lượt kể chuyện">
+      {demoMode && (
+        <div className="demo-runtime-notice" role="status" aria-label="Chế độ demo tổng hợp">
+          <strong>Chế độ demo tổng hợp</strong>
+          <span>Phản hồi mẫu có thể lặp lại; model đã chọn không thay đổi demo và không gọi AI thật.</span>
+          <span>Cách dùng provider thật nằm trong Cài đặt.</span>
+        </div>
+      )}
       <form onSubmit={submit}>
         <label htmlFor="generation-action">Lời và hành động tiếp theo</label>
         <p className="composer-hint">

@@ -4,7 +4,7 @@ import type { CredentialSummary, ModelProfileSummary, ProviderSettings, Settings
 
 const defaults = { input_limit: 12000, requested_output: 4000, wrapper_buffer: 512 };
 
-export function SettingsPanel() {
+export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
   const [credentials, setCredentials] = useState<CredentialSummary[]>([]);
   const [profiles, setProfiles] = useState<ModelProfileSummary[]>([]);
   const [settings, setSettings] = useState<ProviderSettings | null>(null);

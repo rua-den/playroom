@@ -12,6 +12,16 @@ describe("GenerationComposer", () => {
     localStorage.clear();
     vi.restoreAllMocks();
   });
+  it("explains synthetic demo behavior when demo mode is enabled", () => {
+    render(<GenerationComposer ownerId="owner-1" projection={projection} profileId="profile-1" onCommitted={vi.fn()} demoMode />);
+    expect(screen.getByRole("status", { name: "Chế độ demo tổng hợp" })).toHaveTextContent("Phản hồi mẫu có thể lặp lại");
+    expect(screen.getByRole("status")).toHaveTextContent("model đã chọn không thay đổi demo");
+  });
+
+  it("does not show synthetic demo messaging by default", () => {
+    render(<GenerationComposer ownerId="owner-1" projection={projection} profileId="profile-1" onCommitted={vi.fn()} />);
+    expect(screen.queryByRole("status", { name: "Chế độ demo tổng hợp" })).not.toBeInTheDocument();
+  });
   it("submits with Enter, keeps Shift+Enter as a newline, and ignores IME Enter", async () => {
     localStorage.clear();
     const preview = { id: "preview-enter", campaign_id: "campaign-1", branch_id: "branch-1", checkpoint_id: "checkpoint-1", action: "Xin chào\n", status: "ready", profile_id: "profile-1" };
