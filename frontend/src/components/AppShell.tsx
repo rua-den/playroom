@@ -10,6 +10,7 @@ import { GenerationComposer } from "./GenerationComposer";
 import { ThemeSelector } from "./ThemeSelector";
 import { ChatGptImport } from "./ChatGptImport";
 import { LegacyImport } from "./LegacyImport";
+import { Modal } from "./Modal";
 import { ToastProvider, useToast } from "./Toast";
 
 const RECOVERABLE_JOB_STATUSES = new Set(["queued", "running", "cancelling", "interrupted", "candidate"]);
@@ -61,6 +62,7 @@ const newId = () => {
 };
 
 function CampaignForm({ onCreated, onCancel, ariaHidden = false }: { onCreated: (campaign: CampaignSummary) => void; onCancel: () => void; ariaHidden?: boolean }) {
+  const toast = useToast();
   const [draft, setDraft] = useState<CreateDraft>(blankDraft);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -71,79 +73,44 @@ function CampaignForm({ onCreated, onCancel, ariaHidden = false }: { onCreated: 
     if (native.isComposing) return;
     setPending(true); setError(null);
     const payload: CampaignCreatePayload = { title: draft.title.trim(), world: { name: draft.worldName.trim(), description: draft.worldDescription.trim() }, persona: { name: draft.personaName.trim(), description: draft.personaDescription.trim() }, characters: draft.characters.map((character) => ({ id: character.id, name: character.name.trim(), aliases: character.aliases.split(",").map((alias) => alias.trim()).filter(Boolean) })) };
-    try { const created = await api.createCampaign(payload); onCreated({ id: created.id, title: created.title, created_at: new Date().toISOString(), updated_at: new Date().toISOString(), archived_at: null }); }
-    catch (cause) { setError(cause instanceof ApiError && cause.status >= 400 ? "Không thể tạo truyện. Kiểm tra thông tin rồi thử lại." : "Không thể kết nối tới Playroom."); }
+    try { const created = await api.createCampaign(payload); toast.success("Đã tạo truyện mới."); onCreated({ id: created.id, title: created.title, created_at: new Date().toISOString(), updated_at: new Date().toISOString(), archived_at: null }); }
+    catch (cause) { const message = cause instanceof ApiError && cause.status >= 400 ? "Không thể tạo truyện. Kiểm tra thông tin rồi thử lại." : "Không thể kết nối tới Playroom."; setError(message); toast.error(message); }
     finally { setPending(false); }
   }
   return <section className="create-card" aria-labelledby="create-title" aria-hidden={ariaHidden}><div className="section-heading"><div><p className="eyebrow">TRUYỆN MỚI</p><h2 id="create-title">Tạo truyện mới</h2><p className="form-hint">Mỗi truyện có bối cảnh, nhân vật và lịch sử trò chuyện riêng.</p></div><button type="button" className="quiet-button touch-target" onClick={onCancel}>Đóng</button></div>{error && <div role="alert" className="form-error">{error}</div>}<form className="campaign-form" onKeyDown={(event) => { if (event.key === "Enter" && (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229)) event.preventDefault(); }} onSubmit={submit}><label htmlFor="campaign-title">Tên truyện</label><input id="campaign-title" required value={draft.title} onChange={(event) => update("title", event.target.value)} /><fieldset><legend>Thế giới</legend><label htmlFor="world-name">Tên thế giới</label><input id="world-name" required value={draft.worldName} onChange={(event) => update("worldName", event.target.value)} /><label htmlFor="world-description">Mô tả thế giới</label><textarea id="world-description" value={draft.worldDescription} onChange={(event) => update("worldDescription", event.target.value)} /></fieldset><fieldset><legend>Persona người chơi</legend><label htmlFor="persona-name">Tên persona</label><input id="persona-name" required value={draft.personaName} onChange={(event) => update("personaName", event.target.value)} /><label htmlFor="persona-description">Mô tả persona</label><textarea id="persona-description" value={draft.personaDescription} onChange={(event) => update("personaDescription", event.target.value)} /></fieldset><fieldset><legend>Nhân vật</legend>{draft.characters.map((character, index) => <div className="character-row" key={character.id}><div className="character-fields"><label htmlFor={`character-name-${index}`}>Tên nhân vật {index + 1}</label><input id={`character-name-${index}`} required value={character.name} onChange={(event) => setDraft((current) => ({ ...current, characters: current.characters.map((item) => item.id === character.id ? { ...item, name: event.target.value } : item) }))} /><label htmlFor={`character-aliases-${index}`}>Bí danh nhân vật {index + 1}</label><input id={`character-aliases-${index}`} placeholder="Cách nhau bằng dấu phẩy" value={character.aliases} onChange={(event) => setDraft((current) => ({ ...current, characters: current.characters.map((item) => item.id === character.id ? { ...item, aliases: event.target.value } : item) }))} /></div><button type="button" className="quiet-button touch-target" onClick={() => setDraft((current) => ({ ...current, characters: current.characters.filter((item) => item.id !== character.id) }))}>Xóa</button></div>)}<button type="button" className="quiet-button touch-target" onClick={() => setDraft((current) => ({ ...current, characters: [...current.characters, { id: newId(), name: "", aliases: "" }] }))}>Thêm nhân vật</button></fieldset><button type="submit" className="primary-button touch-target" disabled={pending}>{pending ? "Đang lưu…" : "Lưu truyện"}</button></form></section>;
 }
 
 function AppShellContent({ owner, onLogout, notice }: AppShellProps) {
-  const [campaigns, setCampaigns] = useState<CampaignSummary[]>([]); const [selectedId, setSelectedId] = useState<string | null>(null); const [projection, setProjection] = useState<CampaignProjection | null>(null); const [loading, setLoading] = useState(true); const [error, setError] = useState<string | null>(null); const [demoInfo, setDemoInfo] = useState<import("../api/types").DemoInfo | null>(null); const [createOpen, setCreateOpen] = useState(false); const [importOpen, setImportOpen] = useState(false); const [libraryOpen, setLibraryOpen] = useState(true); const [importMode, setImportMode] = useState<"chatgpt" | "legacy">("chatgpt"); const [drawerOpen, setDrawerOpen] = useState(false); const [detailsOpen, setDetailsOpen] = useState(false); const [settingsOpen, setSettingsOpen] = useState(false); const [editorTab, setEditorTab] = useState<"profiles" | "memory" | "scene">("profiles");
+  const [campaigns, setCampaigns] = useState<CampaignSummary[]>([]); const [selectedId, setSelectedId] = useState<string | null>(null); const [projection, setProjection] = useState<CampaignProjection | null>(null); const [loading, setLoading] = useState(true); const [error, setError] = useState<string | null>(null); const [demoInfo, setDemoInfo] = useState<import("../api/types").DemoInfo | null>(null); const [createOpen, setCreateOpen] = useState(false); const [createInstance, setCreateInstance] = useState(0); const [importOpen, setImportOpen] = useState(false); const [importInstance, setImportInstance] = useState(0); const [libraryOpen, setLibraryOpen] = useState(true); const [importMode, setImportMode] = useState<"chatgpt" | "legacy">("chatgpt"); const [drawerOpen, setDrawerOpen] = useState(false); const [detailsOpen, setDetailsOpen] = useState(false); const [settingsOpen, setSettingsOpen] = useState(false); const [editorTab, setEditorTab] = useState<"profiles" | "memory" | "scene">("profiles");
   const selectedIdRef = useRef<string | null>(selectedId); selectedIdRef.current = selectedId;
   const ownerRef = useRef(owner.id);
   useEffect(() => { if (ownerRef.current === owner.id) return; ownerRef.current = owner.id; setCampaigns([]); setSelectedId(null); setProjection(null); setError(null); setLibraryOpen(true); }, [owner.id]);
   const projectionRequest = useRef(0);
-  const drawerTrigger = useRef<HTMLButtonElement>(null); const drawerClose = useRef<HTMLButtonElement>(null); const detailsTrigger = useRef<HTMLButtonElement>(null); const detailsReturn = useRef<HTMLButtonElement | null>(null); const detailsClose = useRef<HTMLButtonElement>(null); const settingsTrigger = useRef<HTMLButtonElement>(null); const settingsClose = useRef<HTMLButtonElement>(null);
+  const drawerTrigger = useRef<HTMLButtonElement>(null);
   useEffect(() => { let active = true; setLoading(true); if (import.meta.env.PROD) api.getDemoInfo().then((info) => { if (active) setDemoInfo(info); }).catch(() => undefined); api.listCampaigns().then((items) => { if (active) { const safeItems = Array.isArray(items) ? items : []; const remembered = readLastStoryId(owner.id); const restored = remembered && safeItems.some((item) => item.id === remembered) ? remembered : null; setCampaigns(safeItems); setSelectedId(restored); setLibraryOpen(!restored); } }).catch(() => { if (active) setError("Không thể tải thư viện truyện."); }).finally(() => { if (active) setLoading(false); }); return () => { active = false; }; }, [owner.id]);
   useEffect(() => { if (!selectedId) { setProjection(null); return; } let active = true; setProjection(null); setError(null); api.getCampaign(selectedId).then((detail) => api.getCampaignProjection(selectedId, detail.branch_id)).then((next) => { if (active) setProjection(next); }).catch(() => { if (active) setError("Không thể tải truyện này."); }); return () => { active = false; }; }, [selectedId]);
   useEffect(() => { projectionRequest.current += 1; }, [selectedId]);
-  function closeDrawer() { setDrawerOpen(false); drawerTrigger.current?.focus(); }
-  function openDetails(trigger: HTMLButtonElement) { detailsReturn.current = trigger; setDetailsOpen(true); }
-  function closeDetails() { setDetailsOpen(false); (detailsReturn.current ?? detailsTrigger.current)?.focus(); }
-  useEffect(() => {
-    const dialog = drawerOpen ? drawerClose.current?.closest("[role=dialog]") : detailsOpen ? detailsClose.current?.closest("[role=dialog]") : null;
-    const close = drawerOpen ? closeDrawer : detailsOpen ? closeDetails : null;
-    if (!dialog || !close) return;
-    const closeDialog = close;
-    const dialogElement = dialog;
-    (drawerOpen ? drawerClose.current : detailsClose.current)?.focus();
-    function handleKey(event: KeyboardEvent) {
-      if (event.key === "Escape") { event.preventDefault(); closeDialog(); return; }
-      if (event.key !== "Tab") return;
-      const focusable = Array.from(dialogElement.querySelectorAll<HTMLElement>("button, [href], input, textarea, select, [tabindex]:not([tabindex='-1'])"));
-      if (!focusable.length) return;
-      const first = focusable[0]; const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-    }
-    document.addEventListener("keydown", handleKey); return () => document.removeEventListener("keydown", handleKey);
-  }, [drawerOpen, detailsOpen]);
-  function closeSettings() { setSettingsOpen(false); settingsTrigger.current?.focus(); }
-  useEffect(() => {
-    if (!settingsOpen) return;
-    const dialog = settingsClose.current?.closest("[role=dialog]");
-    if (!dialog) return;
-    const dialogElement = dialog;
-    settingsClose.current?.focus();
-    function handleKey(event: KeyboardEvent) {
-      if (event.key === "Escape") { event.preventDefault(); closeSettings(); return; }
-      if (event.key !== "Tab") return;
-      const focusable = Array.from(dialogElement.querySelectorAll<HTMLElement>("button, [href], input, textarea, select, [tabindex]:not([tabindex='-1'])"));
-      if (!focusable.length) return;
-      const first = focusable[0]; const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-    }
-    document.addEventListener("keydown", handleKey); return () => document.removeEventListener("keydown", handleKey);
-  }, [settingsOpen]);
+  function closeDrawer() { setDrawerOpen(false); }
+  function openDetails() { setDetailsOpen(true); }
+  function closeDetails() { setDetailsOpen(false); }
+  function closeSettings() { setSettingsOpen(false); }
   const selected = useMemo(() => campaigns.find((item) => item.id === selectedId) ?? null, [campaigns, selectedId]);
   async function refreshProjection() { if (!selectedId) return undefined; const targetId = selectedId; const requestId = ++projectionRequest.current; try { const detail = await api.getCampaign(targetId); const next = await api.getCampaignProjection(targetId, detail.branch_id); if (projectionRequest.current !== requestId || selectedIdRef.current !== targetId) return undefined; setProjection(next); return next; } catch { if (projectionRequest.current === requestId && selectedIdRef.current === targetId) setError("Không thể làm mới truyện."); return undefined; } }
   const editorChanged = () => refreshProjection();
   function chooseStory(id: string) { if (id !== selectedIdRef.current) setProjection(null); setSelectedId(id); writeLastStoryId(owner.id, id); setLibraryOpen(false); setCreateOpen(false); setImportOpen(false); }
-  function created(campaign: CampaignSummary) { setCampaigns((current) => [campaign, ...current]); setCreateOpen(false); setImportOpen(false); chooseStory(campaign.id); }
-  function openCreate() { setImportOpen(false); setLibraryOpen(false); setCreateOpen(true); }
-  function openImport(mode: "chatgpt" | "legacy") { setLibraryOpen(false); setCreateOpen(false); setImportMode(mode); setImportOpen(true); }
+  function created(campaign: CampaignSummary) { setCampaigns((current) => [campaign, ...current]); setCreateInstance((current) => current + 1); setImportInstance((current) => current + 1); setCreateOpen(false); setImportOpen(false); chooseStory(campaign.id); }
+  function openCreate() { setImportOpen(false); setCreateOpen(true); }
+  function openImport(mode: "chatgpt" | "legacy") { setCreateOpen(false); setImportMode(mode); setImportOpen(true); }
   const formatStoryDate = (value: string) => { const date = new Date(value); return Number.isNaN(date.valueOf()) ? "" : new Intl.DateTimeFormat("vi-VN", { dateStyle: "medium" }).format(date); };
-  const library = <section className="story-library" aria-labelledby="library-title" aria-hidden={settingsOpen || drawerOpen || detailsOpen}><div className="section-heading"><div><p className="eyebrow">PHÒNG VIẾT RIÊNG</p><h1 id="library-title">Thư viện truyện</h1><p className="library-intro">Mở lại một câu chuyện đã lưu hoặc bắt đầu một thế giới mới.</p></div>{(!error || campaigns.length > 0) && <button type="button" className="primary-button touch-target" onClick={openCreate}>+ Tạo truyện mới</button>}</div><div className="story-library-grid">{campaigns.map((item, index) => <article className={`story-card ${item.id === selectedId ? "is-current" : ""}`} key={item.id}><div><p className="story-card-status">{item.id === selectedId ? "Đang đọc" : item.archived_at ? "Đã lưu trữ" : index === 0 ? "Gần đây" : "Đã lưu"}</p><h2>{item.title}</h2><p className="details-meta">Cập nhật {formatStoryDate(item.updated_at)}</p></div><button type="button" className="quiet-button touch-target" onClick={() => chooseStory(item.id)}>{item.id === selectedId ? "Đọc tiếp" : "Mở truyện"}</button></article>)}</div>{(!error || campaigns.length > 0) && <div className="library-import-actions"><button type="button" className="quiet-button touch-target" onClick={() => openImport("chatgpt")}>Nhập hội thoại ChatGPT</button><button type="button" className="quiet-button touch-target" onClick={() => openImport("legacy")}>Nhập Legacy Bundle</button></div>}</section>;
+  const library = <section className="story-library" aria-labelledby="library-title" aria-hidden={settingsOpen || drawerOpen || detailsOpen || createOpen || importOpen}><div className="section-heading"><div><p className="eyebrow">PHÒNG VIẾT RIÊNG</p><h1 id="library-title">Thư viện truyện</h1><p className="library-intro">Mở lại một câu chuyện đã lưu hoặc bắt đầu một thế giới mới.</p></div>{(!error || campaigns.length > 0) && <button type="button" className="primary-button touch-target" onClick={openCreate}>+ Tạo truyện mới</button>}</div><div className="story-library-grid">{campaigns.map((item, index) => <article className={`story-card ${item.id === selectedId ? "is-current" : ""}`} key={item.id}><div><p className="story-card-status">{item.id === selectedId ? "Đang đọc" : item.archived_at ? "Đã lưu trữ" : index === 0 ? "Gần đây" : "Đã lưu"}</p><h2>{item.title}</h2><p className="details-meta">Cập nhật {formatStoryDate(item.updated_at)}</p></div><button type="button" className="quiet-button touch-target" onClick={() => chooseStory(item.id)}>{item.id === selectedId ? "Đọc tiếp" : "Mở truyện"}</button></article>)}</div>{(!error || campaigns.length > 0) && <div className="library-import-actions"><button type="button" className="quiet-button touch-target" onClick={() => openImport("chatgpt")}>Nhập hội thoại ChatGPT</button><button type="button" className="quiet-button touch-target" onClick={() => openImport("legacy")}>Nhập Legacy Bundle</button></div>}</section>;
   if (loading) return <main className="app-shell loading-screen" role="status">Đang tải phòng truyện…</main>;
   const contextPanel = projection && <ContextPanel projection={projection} editorTab={editorTab} setEditorTab={setEditorTab} editorChanged={editorChanged} />;
   return <main className={`app-shell story-app ${error && !campaigns.length ? "catalog-failed" : ""}`}>
-    <header className="topbar" aria-hidden={drawerOpen || detailsOpen || settingsOpen}>
+    <header className="topbar" aria-hidden={drawerOpen || detailsOpen || settingsOpen || createOpen || importOpen}>
       <div className="wordmark"><span className="brand-mark small" aria-hidden="true">✦</span><span>Playroom</span>{demoInfo?.mode === "synthetic" && <span className="demo-badge">{demoInfo.label}</span>}</div>
       <div className="campaign-controls">
         <button type="button" className="quiet-button touch-target library-trigger" onClick={() => { setCreateOpen(false); setImportOpen(false); setLibraryOpen(true); }}>Thư viện truyện</button>
-      {!createOpen && !libraryOpen && campaigns.length > 0 && <>
+      {!libraryOpen && campaigns.length > 0 && <>
         <label htmlFor="campaign-select">Truyện</label>
         <select id="campaign-select" aria-label="Truyện hiện tại" value={selectedId ?? ""} onChange={(event) => chooseStory(event.target.value)}>{campaigns.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select>
         <button type="button" className="quiet-button touch-target" onClick={openCreate}>Tạo truyện mới</button>
@@ -152,19 +119,19 @@ function AppShellContent({ owner, onLogout, notice }: AppShellProps) {
       </>}</div>
       <div className="account-menu">
         <span className="account-email">{owner.email}</span>
-        {projection && !libraryOpen && !createOpen && !importOpen && <button type="button" className="quiet-button touch-target context-trigger" onClick={(event) => openDetails(event.currentTarget)}>Mở hồ sơ và ký ức</button>}
-        <button type="button" className="quiet-button touch-target" onClick={() => setSettingsOpen(true)} ref={settingsTrigger}>Cài đặt</button>
+        {projection && !libraryOpen && <button type="button" className="quiet-button touch-target context-trigger" onClick={openDetails}>Mở hồ sơ và ký ức</button>}
+        <button type="button" className="quiet-button touch-target" onClick={() => setSettingsOpen(true)}>Cài đặt</button>
         <button type="button" className="quiet-button touch-target" onClick={onLogout}>Đăng xuất</button>
       </div>
     </header>
-    {notice && <div role="alert" className="form-error shell-notice" aria-hidden={settingsOpen}> {notice}</div>}
+    {notice && <div role="alert" className="form-error shell-notice" aria-hidden={drawerOpen || detailsOpen || settingsOpen || createOpen || importOpen}> {notice}</div>}
     {error && !campaigns.length && <a className="catalog-retry" href="/">Thử lại</a>}
-    {importOpen ? (importMode === "legacy" ? <LegacyImport onImported={created} onCancel={() => { setImportOpen(false); setLibraryOpen(true); }} /> : <ChatGptImport onImported={created} onCancel={() => { setImportOpen(false); setLibraryOpen(true); }} />) : createOpen ? <CampaignForm onCreated={created} onCancel={() => { setCreateOpen(false); setLibraryOpen(true); }} ariaHidden={settingsOpen} /> : <>{libraryOpen && library}{error && libraryOpen && <div role="alert" className="form-error shell-notice">{error}</div>}<div className={libraryOpen ? "library-story-hidden" : ""} aria-hidden={libraryOpen} hidden={libraryOpen}>
-      <div className="mobile-actions" aria-hidden={libraryOpen || drawerOpen || detailsOpen || settingsOpen}>
+    <>{libraryOpen && library}{error && libraryOpen && <div role="alert" className="form-error shell-notice">{error}</div>}<div className={libraryOpen ? "library-story-hidden" : ""} aria-hidden={libraryOpen} hidden={libraryOpen}>
+      <div className="mobile-actions" aria-hidden={libraryOpen || drawerOpen || detailsOpen || settingsOpen || createOpen || importOpen}>
         <button type="button" className="quiet-button touch-target mobile-campaign-trigger" onClick={() => setDrawerOpen(true)} ref={drawerTrigger}>Truyện</button>
-        <button type="button" className="quiet-button touch-target" onClick={(event) => openDetails(event.currentTarget)} ref={detailsTrigger}>AI đang nhớ gì</button>
+        <button type="button" className="quiet-button touch-target" onClick={openDetails}>AI đang nhớ gì</button>
       </div>
-      <div className="workspace-grid" aria-hidden={libraryOpen || drawerOpen || detailsOpen || settingsOpen}>
+      <div className="workspace-grid" aria-hidden={libraryOpen || drawerOpen || detailsOpen || settingsOpen || createOpen || importOpen}>
         <section className="story-column conversation-column">
           {error && <div role="alert" className="form-error">{error}</div>}
           {projection && <p className="story-reading-label">Đang đọc</p>}
@@ -172,10 +139,17 @@ function AppShellContent({ owner, onLogout, notice }: AppShellProps) {
           {projection && (projection.import_review?.required ? <ImportReviewPanel projection={projection} onApproved={editorChanged} /> : <GenerationComposer ownerId={owner.id} projection={projection} profileId="" onCommitted={editorChanged} demoMode={demoInfo?.mode === "synthetic"} />)}
         </section>
       </div>
-    </div></>}
-    {drawerOpen && <div className="mobile-overlay"><section className="mobile-drawer" role="dialog" aria-modal="true" aria-labelledby="campaign-drawer-title"><div className="section-heading"><h2 id="campaign-drawer-title">Danh sách truyện</h2><button type="button" className="quiet-button touch-target" onClick={closeDrawer} ref={drawerClose}>Đóng danh sách truyện</button></div>{campaigns.map((item) => <button type="button" className="campaign-item touch-target" key={item.id} aria-pressed={item.id === selectedId} onClick={() => { chooseStory(item.id); closeDrawer(); }}>{item.title}</button>)}</section></div>}
-    {detailsOpen && <div className="mobile-overlay context-overlay"><section className="mobile-sheet context-panel" role="dialog" aria-modal="true" aria-labelledby="details-sheet-title"><div className="section-heading"><h2 id="details-sheet-title">Hồ sơ và ký ức</h2><button type="button" className="quiet-button touch-target" onClick={closeDetails} ref={detailsClose}>Đóng hồ sơ và ký ức</button></div>{contextPanel}</section></div>}
-    {settingsOpen && <div className="mobile-overlay"><section className="mobile-sheet" role="dialog" aria-modal="true" aria-labelledby="settings-title"><div className="section-heading"><h2 id="settings-title">Cài đặt</h2><button type="button" className="quiet-button touch-target" onClick={closeSettings} ref={settingsClose}>Đóng cài đặt</button></div><ThemeSelector /><SettingsPanel demoMode={demoInfo?.mode === "synthetic"} /></section></div>}
+    </div>
+    </>
+    <Modal open={drawerOpen} title="Danh sách truyện" closeLabel="Đóng danh sách truyện" onClose={closeDrawer}>
+      {campaigns.map((item) => <button type="button" className="campaign-item touch-target" key={item.id} aria-pressed={item.id === selectedId} onClick={() => { chooseStory(item.id); closeDrawer(); }}>{item.title}</button>)}
+    </Modal>
+    <Modal open={detailsOpen} title="Hồ sơ và ký ức" closeLabel="Đóng hồ sơ và ký ức" onClose={closeDetails} size="wide">{contextPanel}</Modal>
+    <Modal open={settingsOpen} title="Cài đặt" closeLabel="Đóng cài đặt" onClose={closeSettings} size="wide">{settingsOpen && <><ThemeSelector /><SettingsPanel demoMode={demoInfo?.mode === "synthetic"} /></>}</Modal>
+    <Modal open={createOpen} title="Tạo truyện mới" onClose={() => setCreateOpen(false)}><CampaignForm key={createInstance} onCreated={created} onCancel={() => setCreateOpen(false)} /></Modal>
+    <Modal open={importOpen} title={importMode === "legacy" ? "Nhập Legacy Story Bundle" : "Nhập hội thoại ChatGPT"} onClose={() => setImportOpen(false)} size="wide">
+      {importMode === "legacy" ? <LegacyImport key={`legacy-${importInstance}`} onImported={created} onCancel={() => setImportOpen(false)} /> : <ChatGptImport key={`chatgpt-${importInstance}`} onImported={created} onCancel={() => setImportOpen(false)} />}
+    </Modal>
   </main>;
 }
 
@@ -225,7 +199,7 @@ export function ImportReviewPanel({ projection, onApproved }: { projection: Camp
       await api.approveChatGptImport(projection.campaign.id, { branch_id: projection.branch.id, checkpoint_id: projection.branch.checkpoint_id, review: projection.import_review?.source_kind === "legacy_bundle" ? { ...review, provider_data: dataConsent } : review });
       if (mountedRef.current && checkpointRef.current === targetCheckpointId && identityRef.current === targetIdentity) { toast.success("Đã duyệt dữ liệu truyện nhập."); onApproved(); }
     } catch (cause) {
-      if (mountedRef.current && identityRef.current === targetIdentity) { setError(cause instanceof Error ? cause.message : "Không thể lưu duyệt checkpoint."); toast.error("Không thể duyệt checkpoint nhập."); }
+      if (mountedRef.current && identityRef.current === targetIdentity) { setError(cause instanceof Error ? cause.message : "Không thể lưu duyệt checkpoint."); toast.error("Không thể duyệt dữ liệu truyện nhập."); }
     }
     finally {
       if (mountedRef.current && identityRef.current === targetIdentity) setBusy(false);

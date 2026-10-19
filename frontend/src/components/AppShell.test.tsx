@@ -212,6 +212,50 @@ describe("recoverable job summary", () => {
   });
 });
 
+describe("auxiliary modal routes", () => {
+  it("keeps the library mounted and preserves an unsent create draft when the modal closes", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response("[]", { status: 200 })));
+    const user = userEvent.setup();
+    render(<AppShell owner={{ id: "modal-owner", email: "owner@example.test" }} onLogout={() => undefined} />);
+    const open = await screen.findByRole("button", { name: "+ Tạo truyện mới" });
+    const libraryHeading = screen.getByRole("heading", { name: "Thư viện truyện" });
+    await user.click(open);
+    const dialog = await screen.findByRole("dialog", { name: "Tạo truyện mới" });
+    expect(libraryHeading).toBeInTheDocument();
+    expect(libraryHeading.closest(".app-shell")?.parentElement?.hasAttribute("inert")).toBe(true);
+    await user.type(screen.getByLabelText("Tên truyện"), "Draft story");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(open).toHaveFocus());
+    await user.click(open);
+    expect(await screen.findByRole("dialog", { name: "Tạo truyện mới" })).toBe(dialog);
+    expect(screen.getByLabelText("Tên truyện")).toHaveValue("Draft story");
+  });
+
+  it("shows create feedback only after server acknowledgement and clears a completed draft", async () => {
+    let resolveCreate!: (response: Response) => void;
+    const createResponse = new Promise<Response>((resolve) => { resolveCreate = resolve; });
+    const detail = { id: "created-story", title: "Created story", created_at: "2026-10-19", updated_at: "2026-10-19", archived_at: null, branch_id: "created-branch", state_version: 1, checkpoint_id: "created-checkpoint", profiles: {} };
+    const projection = { campaign: detail, branch: { id: "created-branch", name: "main", state_version: 1, checkpoint_id: "created-checkpoint" }, checkpoint: { id: "created-checkpoint", state_version: 1, parent_checkpoint_id: null, selected_revision_ids: [], retrieval_policy: "auto" as const }, profiles: {}, scene: null, transcript: [], jobs: [] };
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response("[]", { status: 200 }))
+      .mockImplementationOnce(() => createResponse)
+      .mockResolvedValueOnce(new Response(JSON.stringify(detail), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(projection), { status: 200 })));
+    const user = userEvent.setup();
+    render(<AppShell owner={{ id: "ack-owner", email: "owner@example.test" }} onLogout={() => undefined} />);
+    await user.click(await screen.findByRole("button", { name: "+ Tạo truyện mới" }));
+    await user.type(screen.getByLabelText("Tên truyện"), "Created story");
+    await user.type(screen.getByLabelText("Tên thế giới"), "World");
+    await user.type(screen.getByLabelText("Tên persona"), "Player");
+    await user.click(screen.getByRole("button", { name: "Lưu truyện" }));
+    expect(screen.queryByText("Đã tạo truyện mới.")).not.toBeInTheDocument();
+    resolveCreate(new Response(JSON.stringify({ id: "created-story", title: "Created story", branch_id: "created-branch", character_ids: [] }), { status: 200 }));
+    expect(await screen.findByText("Đã tạo truyện mới.")).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "Tạo truyện mới" }));
+    expect(screen.getByLabelText("Tên truyện")).toHaveValue("");
+  });
+});
+
 describe("story library navigation and last-story persistence", () => {
   afterEach(() => { try { window.localStorage.clear(); } catch { /* blocked storage is part of coverage */ } });
   const summaries = [
