@@ -62,6 +62,14 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
         setCredentials(nextCredentials);
         setProfiles(nextProfiles);
         setSettings(nextSettings);
+        const pinned = nextProfiles.find(
+          (profile) =>
+            profile.id === nextSettings.roles?.narrator?.id &&
+            profile.version === nextSettings.roles?.narrator?.version,
+        );
+        if (pinned?.provider === "custom" || pinned?.provider === "openrouter" || pinned?.provider === "ollama") {
+          setProvider(pinned.provider);
+        }
         setNarrator(
           nextSettings.roles?.narrator &&
             nextProfiles.some(
@@ -189,6 +197,11 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
     profileId: string,
   ) {
     if (!profileId) return;
+    const selectedProfile = profiles.find((profile) => profile.id === profileId);
+    if (role === "narrator" && selectedProfile?.provider === "custom" && mode === "quality") {
+      setError("Custom provider chỉ hỗ trợ Economy. Hãy chuyển mode sang Economy trước khi đổi model narrator.");
+      return;
+    }
     try {
       const payload: SettingsUpdatePayload =
         role === "narrator"
@@ -335,9 +348,9 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
       >
         <div className="settings-section-heading">
           <h3 id="settings-connection-title">Kết nối provider</h3>
-          <p>Thêm khóa và xác minh model trước khi dùng.</p>
+          <p>{provider === "custom" ? "Lưu endpoint và model trước khi dùng." : "Thêm khóa và xác minh model trước khi dùng."}</p>
         </div>
-        {policy === "free_only" && (
+        {policy === "free_only" && !customNarrator && provider !== "custom" && (
           <div
             className="free-mode-info"
             aria-label="Thông tin chế độ miễn phí"
@@ -517,6 +530,12 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
         )}
         <fieldset>
           <legend>Model narrator</legend>
+          {mode === "quality" &&
+            profiles.find((profile) => profile.id === narrator)?.provider === "custom" && (
+              <p role="note" className="form-error">
+                Custom provider chỉ hỗ trợ Economy. Hãy chuyển mode sang Economy trước khi đổi model narrator.
+              </p>
+            )}
           {settings?.roles?.narrator && (
             <p className="details-meta">
               Đang ghim: {settings.roles.narrator.id} · v
@@ -546,6 +565,11 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
             type="button"
             className="quiet-button touch-target"
             onClick={() => switchRole("narrator", narrator)}
+            disabled={
+              !narrator ||
+              (mode === "quality" &&
+                profiles.find((profile) => profile.id === narrator)?.provider === "custom")
+            }
           >
             Đổi model narrator
           </button>
@@ -618,8 +642,9 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
         <div className="settings-section-heading">
           <h3 id="settings-cost-title">Chi phí và giới hạn</h3>
           <p>
-            Free only luôn chặn đường gọi trả phí; capped paid cần giới hạn rõ
-            ràng.
+            {customNarrator
+              ? "Chi phí/quota do endpoint quản lý."
+              : "Free only luôn chặn đường gọi trả phí; capped paid cần giới hạn rõ ràng."}
           </p>
           {customNarrator && (
             <p className="details-meta">

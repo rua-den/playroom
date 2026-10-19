@@ -1182,7 +1182,7 @@ class GenerationService:
         else:
             entry["actual_cost_usd"] = None
             entry["actual_status"] = "unknown"
-            entry["cost_provenance"] = "unknown"
+            entry["cost_provenance"] = "provider_managed_unknown" if entry.get("cost_provenance") == "provider_managed_unknown" else "unknown"
         provider_total = Decimal("0")
         calculated_total = Decimal("0")
         stage_values = list((ledger.get("stages") or {}).values())

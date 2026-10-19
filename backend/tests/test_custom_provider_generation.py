@@ -191,7 +191,7 @@ def test_custom_provider_authenticated_generation_commits_and_reloads(
     assert calls[0]["url"] == "http://127.0.0.1:1234/v1/chat/completions"
     if keyed:
         assert calls[0]["headers"]["authorization"] == "Bearer synthetic-owner-key"
-        assert resolver_calls == [(owner.id, credential["secret_version"])]
+        assert resolver_calls == [(owner.id, credential["id"])]
     else:
         assert "authorization" not in calls[0]["headers"]
         assert resolver_calls == []

@@ -391,7 +391,7 @@ def persist_model_profile(connection, owner_id: str, profile: dict) -> dict:
 
 def list_model_profiles(connection, owner_id: str) -> list[dict]:
     ensure_profile_tables(connection)
-    rows = connection.execute("SELECT p.snapshot_json FROM model_profile_versions p WHERE p.owner_id=? AND p.version=(SELECT MAX(p2.version) FROM model_profile_versions p2 WHERE p2.owner_id=p.owner_id AND p2.id=p.id) ORDER BY p.id", (owner_id,)).fetchall()
+    rows = connection.execute("SELECT p.snapshot_json FROM model_profile_versions p WHERE p.owner_id=? AND p.version=(SELECT MAX(p2.version) FROM model_profile_versions p2 WHERE p2.owner_id=p.owner_id AND p2.id=p.id) ORDER BY p.created_at DESC, p.id", (owner_id,)).fetchall()
     return [json.loads(row["snapshot_json"]) for row in rows]
 
 

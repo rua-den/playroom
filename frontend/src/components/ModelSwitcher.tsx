@@ -45,7 +45,7 @@ export function ModelSwitcher({
         setSelected(nextSettings.roles?.narrator?.id ?? "");
       })
       .catch(
-        () => active && setError("Không thể tải danh sách model đã xác minh."),
+        () => active && setError("Không thể tải danh sách model đã lưu."),
       )
       .finally(() => active && setLoading(false));
     return () => {
@@ -77,6 +77,9 @@ export function ModelSwitcher({
     (selectedProfile.id !== settings?.roles?.narrator?.id ||
       selectedProfile.version !== settings?.roles?.narrator?.version),
   );
+  const customQuality =
+    settings?.mode === "quality" &&
+    (selectedProfile?.provider === "custom" || current?.provider === "custom");
 
   async function save() {
     if (!selected || !changed || busy || saving) return;
@@ -162,6 +165,11 @@ export function ModelSwitcher({
           hoặc mở Cài đặt.
         </p>
       )}
+      {customQuality && (
+        <p role="note" className="form-error">
+          Custom provider chỉ hỗ trợ Economy. Hãy chuyển sang Economy trong Cài đặt trước khi lưu.
+        </p>
+      )}
       {settings?.policy === "free_only" &&
         (current?.provider === "ollama" ||
           selectedProfile?.provider === "ollama") && (
@@ -190,7 +198,7 @@ export function ModelSwitcher({
         <button
           type="button"
           className="primary-button touch-target"
-          disabled={!changed || saving || busy}
+          disabled={!changed || saving || busy || customQuality}
           onClick={save}
         >
           {saving ? "Đang lưu…" : "Lưu model"}
