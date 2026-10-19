@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: owner-bangtan-minimal-3x2-20261020
+  group: owner-bangtan-minimal-facts-v2-20261020
   cancel-in-progress: false
 
 jobs:
@@ -36,14 +36,14 @@ jobs:
 
   live-once:
     if: >-
-      ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && startsWith(github.event.head_commit.message, 'ci(ollama): owner Henn Yuna public-safe 3x2 real test 2026-10-20') }}
+      ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && startsWith(github.event.head_commit.message, 'ci(ollama): owner Henn Yuna guarded 3x2 real test 2026-10-20') }}
     needs: offline
     runs-on: ubuntu-latest
     timeout-minutes: 12
     env:
       PYTHONPATH: backend:backend/tests
       OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
-      BANGTAN_MINIMAL_APPROVAL: OWNER_BANGTAN_MINIMAL_3X2_2026_10_20
+      BANGTAN_MINIMAL_APPROVAL: OWNER_BANGTAN_MINIMAL_CANON_GUARDS_V2_2026_10_20
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6

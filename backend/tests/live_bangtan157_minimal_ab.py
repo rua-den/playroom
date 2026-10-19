@@ -22,7 +22,7 @@ from playroom.provider import OllamaCloudAdapter, ProviderFailure, ProviderResul
 from playroom.roleplay_segments import parse_narrator_payload
 from live_ollama_gemma4_smoke import _persist_verified_profile
 
-APPROVAL = "OWNER_BANGTAN_MINIMAL_3X2_2026_10_20"
+APPROVAL = "OWNER_BANGTAN_MINIMAL_CANON_GUARDS_V2_2026_10_20"
 MODELS = ("gemma4:31b-cloud", "gpt-oss:120b-cloud")
 MAX_OUTPUT = 1600
 MAX_WIRE_BYTES = 10000
@@ -45,13 +45,13 @@ ACTIONS = (
 SYSTEM = (
     "Bạn là người kể truyện tương tác thanh xuân học đường bằng tiếng Việt, "
     "đối thoại đời thường, hài hước nhưng tự nhiên. Đây là bản A/B test không "
-    "thuộc chương truyện chính. Nhân vật người chơi là Henn, tóc bạch kim, học "
+    "thuộc chương truyện chính. Nhân vật người chơi Henn là NỮ SINH lớp 11A1, tóc bạch kim, học "
     "giỏi và mạnh về thể thao; Yuna là bạn thân, chuyên cầu lông, tính tình "
     "hoạt bát. Henn ở phòng riêng và Yuna chỉ hiện diện qua một cuộc gọi điện thoại. "
-    "DỮ LIỆU THỬ TỐI THIỂU, không có file canon BANGTAN và không suy diễn lịch sử "
+    "Môn thi đấu là CẦU LÔNG ĐÔI NỮ, tập trong nhà thi đấu, tuyệt đối không biến thành sân bóng đá hay sân cỏ. DỮ LIỆU THỬ TỐI THIỂU, không có file canon BANGTAN và không suy diễn lịch sử "
     "không được cung cấp. Chỉ Henn do người chơi điều khiển: TUYỆT ĐỐI KHÔNG "
     "TỰ THÊM hành động, lời thoại, cảm xúc, suy nghĩ, quyết định của Henn ngoài "
-    "hành động mới được đưa vào. Không tự đặt người khác vào phòng; không tự "
+    "hành động mới được đưa vào. Henn là nữ, không dùng đại từ 'anh' để chỉ Henn. Không tự cho Henn gật đầu, thở phào, ghi sổ, chốt giờ nếu người chơi chưa làm. Không tự đặt người khác vào phòng; không tự "
     "cho Jungkook, Mia hoặc bất kỳ nhân vật vắng mặt nói chuyện. Không ép "
     "tình cảm, không spoil bí mật. Hành động của người chơi đã được cung cấp "
     "ở đầu vào, chỉ tiếp tục miêu tả hoàn cảnh và phản ứng của Yuna. "
@@ -113,7 +113,9 @@ def _contract():
     ]}, ensure_ascii=False) + "\n```"
     display, segments = parse_narrator_payload(raw, SELECTED)
     assert len(segments) == 2 and "Tập thôi" in display
-    print("PUBLIC-SAFE HENN/YUNA DRY CONTRACT PASS: two models, 3 actions, no requests")
+    assert "NỮ SINH" in SYSTEM and "CẦU LÔNG ĐÔI NỮ" in SYSTEM
+    assert "sân bóng đá" in SYSTEM and "hành động mới" in SYSTEM
+    print("PUBLIC-SAFE HENN/YUNA V2 DRY CONTRACT PASS: female badminton, 3 actions, no requests")
 
 def main() -> int:
     if os.getenv("BANGTAN_MINIMAL_DRY") == "1":
@@ -168,11 +170,13 @@ def main() -> int:
                         print(f"{expected_model} TURN {index}: JSON/CAST_INVALID {type(error).__name__}")
                         return 1
                     warning = segments is None
-                    agency = bool(re.search(r"\bHenn\b.{0,110}\b(?:nghĩ|quyết định|bước|đứng dậy|cười|mỉm cười|chợt nhớ|cảm thấy)", rendered, re.I))
+                    agency = bool(re.search(r"\bHenn\b.{0,110}\b(?:nghĩ|quyết định|bước|đứng dậy|cười|mỉm cười|chợt nhớ|cảm thấy|gật đầu|thở phào|ghi nhanh)", rendered, re.I))
+                    sport_warning = bool(re.search(r"sân bóng đá|sân cỏ|mặt cỏ|bóng đá", rendered, re.I))
+                    male_warning = bool(re.search(r"\b(?:Anh|anh)\b\s+(?:nhấc|nói|thở|nhìn|gật|ghi|nghĩ|bật|mở|cầm|nhăn|đứng|vẽ)", rendered))
                     excerpt = re.sub(r"[\x00-\x1f\x7f]", " ", rendered)[:1300]
                     usage = result.usage if isinstance(result.usage, dict) else {}
                     print(f"{expected_model} TURN {index}: format_warning={warning} "
-                          f"agency_suspected={agency} segments={len(segments or [])} "
+                          f"agency_suspected={agency} gender_warning={male_warning} sport_warning={sport_warning} segments={len(segments or [])} "
                           f"tokens={usage.get('prompt_tokens')}/{usage.get('completion_tokens')}")
                     print(f"{expected_model} TURN {index} STORY: {excerpt}")
                     if warning:
