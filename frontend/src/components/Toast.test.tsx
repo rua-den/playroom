@@ -8,11 +8,27 @@ describe("ToastProvider", () => {
   it("shows success and error toasts, dismisses manually, and caps the stack", () => {
     render(<ToastProvider><Trigger /></ToastProvider>);
     fireEvent.click(screen.getByText("success")); fireEvent.click(screen.getByText("error"));
-    expect(screen.getByRole("region", { name: "Thông báo" })).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent("Saved");
     expect(screen.getByRole("note")).toHaveTextContent("Failed");
-    fireEvent.click(within(screen.getByRole("status")).getByRole("button", { name: "Đóng thông báo" }));
+    fireEvent.click(screen.getByText("success")); fireEvent.click(screen.getByText("success")); fireEvent.click(screen.getByText("success")); fireEvent.click(screen.getByText("success")); fireEvent.click(screen.getByText("success"));
+    expect(screen.getByRole("region", { name: "Thông báo" })).toBeInTheDocument();
+    expect(screen.getAllByRole("status")).toHaveLength(3);
+    expect(screen.getAllByRole("status").length + screen.queryAllByRole("note").length).toBeLessThanOrEqual(3);
+    fireEvent.click(within(screen.getAllByRole("status")[0]).getByRole("button", { name: "Đóng thông báo" }));
+    expect(screen.getAllByRole("status")).toHaveLength(2);
+  });
+
+  it("keeps the timer paused when focus remains inside while hover ends", () => {
+    vi.useFakeTimers();
+    render(<ToastProvider><Trigger /></ToastProvider>);
+    fireEvent.click(screen.getByText("success"));
+    const toast = screen.getByRole("status");
+    fireEvent.mouseEnter(toast); fireEvent.focus(toast); fireEvent.mouseLeave(toast);
+    act(() => { vi.advanceTimersByTime(6000); });
+    expect(screen.getByRole("status")).toBeInTheDocument();
+    fireEvent.blur(toast, { relatedTarget: document.body });
+    act(() => { vi.advanceTimersByTime(5000); });
     expect(screen.queryByRole("status")).toBeNull();
+    vi.useRealTimers();
   });
 
   it("pauses success dismissal while focused", () => {

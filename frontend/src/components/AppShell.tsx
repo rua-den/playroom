@@ -180,7 +180,7 @@ function AppShellContent({ owner, onLogout, notice }: AppShellProps) {
 }
 
 export function AppShell(props: AppShellProps) {
-  return <ToastProvider ownerKey={props.owner.id}><AppShellContent {...props} /></ToastProvider>;
+  return <ToastProvider key={props.owner.id} ownerKey={props.owner.id}><AppShellContent {...props} /></ToastProvider>;
 }
 
 export function ImportReviewPanel({ projection, onApproved }: { projection: CampaignProjection; onApproved: () => void }) {
@@ -223,7 +223,7 @@ export function ImportReviewPanel({ projection, onApproved }: { projection: Camp
     setBusy(true); setError(null);
     try {
       await api.approveChatGptImport(projection.campaign.id, { branch_id: projection.branch.id, checkpoint_id: projection.branch.checkpoint_id, review: projection.import_review?.source_kind === "legacy_bundle" ? { ...review, provider_data: dataConsent } : review });
-      if (mountedRef.current && checkpointRef.current === targetCheckpointId && identityRef.current === targetIdentity) { toast.success("Đã duyệt checkpoint nhập."); onApproved(); }
+      if (mountedRef.current && checkpointRef.current === targetCheckpointId && identityRef.current === targetIdentity) { toast.success("Đã duyệt dữ liệu truyện nhập."); onApproved(); }
     } catch (cause) {
       if (mountedRef.current && identityRef.current === targetIdentity) { setError(cause instanceof Error ? cause.message : "Không thể lưu duyệt checkpoint."); toast.error("Không thể duyệt checkpoint nhập."); }
     }

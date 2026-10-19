@@ -26,9 +26,11 @@ function ToastViewport({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id:
 }
 
 function ToastItem({ toast, onDismiss }: { toast: Toast; onDismiss: (id: number) => void }) {
-  const [paused, setPaused] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const paused = hovered || focused;
   useEffect(() => { if (toast.kind === "error" || paused) return; const timer = window.setTimeout(() => onDismiss(toast.id), 5000); return () => window.clearTimeout(timer); }, [onDismiss, paused, toast.id, toast.kind]);
-  return <div className={`toast toast-${toast.kind}`} role={toast.kind === "success" ? "status" : "note"} aria-live={toast.kind === "success" ? "polite" : "off"} aria-atomic="true" onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)} onFocus={() => setPaused(true)} onBlur={() => setPaused(false)}>
+  return <div className={`toast toast-${toast.kind}`} role={toast.kind === "success" ? "status" : "note"} aria-live={toast.kind === "success" ? "polite" : "off"} aria-atomic="true" onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} onFocus={() => setFocused(true)} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocused(false); }}>
     <span>{toast.message}</span><button type="button" className="toast-close touch-target" aria-label="Đóng thông báo" onClick={() => onDismiss(toast.id)}>Đóng</button>
   </div>;
 }
