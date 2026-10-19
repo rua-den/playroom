@@ -203,9 +203,13 @@ def _send_and_wait(page, action: str, expected_turns: int) -> None:
 
 
 def _project(page, origin: str, campaign_id: str, branch_id: str) -> dict:
+    # Playwright 1.56 documents max_retries as retrying only ECONNRESET
+    # transport failures, never HTTP responses. This read-only projection
+    # helper is the sole browser read allowed that bounded stale-socket retry.
     response = page.context.request.get(
         f"{origin}/api/campaigns/{campaign_id}/projection",
         params={"branch_id": branch_id},
+        max_retries=1,
     )
     assert response.ok, f"Projection HTTP {response.status}"
     return response.json()
