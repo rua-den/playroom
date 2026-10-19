@@ -186,7 +186,7 @@ def validate_selection_plan(checkpoint_id: str, action_hash: str, pool: dict, pl
 def build_context_preview(connection: sqlite3.Connection, campaign_id: str, branch_id: str, action: str, model_config: dict, *, owner_id: str | None = None, settings_hash: str | None = None, context_counter=None, counter_id: str = "utf8-bytes-div-3") -> dict:
     model_config = model_config if isinstance(model_config, dict) else {}
     counter_id = model_config.get("counter_id", counter_id)
-    trusted_config = bool(model_config.get("is_test_profile") or model_config.get("capabilities_verified"))
+    trusted_config = bool(model_config.get("is_test_profile") or model_config.get("capabilities_verified") or model_config.get("limits_source") == "application_default")
     head = get_branch_head(connection, campaign_id, branch_id, owner_id)
     checkpoint = load_state_checkpoint(connection, campaign_id, branch_id, head.checkpoint_id, owner_id)
     omitted = []
@@ -260,6 +260,7 @@ def build_context_preview(connection: sqlite3.Connection, campaign_id: str, bran
     if trusted_config:
         budget_config["is_test_profile"] = bool(model_config.get("is_test_profile"))
         budget_config["capabilities_verified"] = bool(model_config.get("capabilities_verified"))
+        budget_config["limits_source"] = model_config.get("limits_source")
     candidate_blocks = list(blocks)
     required_blocks = [block for block in candidate_blocks if block["mandatory"]]
     optional_blocks = [block for block in candidate_blocks if not block["mandatory"]]

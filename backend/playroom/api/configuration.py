@@ -3,12 +3,12 @@ from __future__ import annotations
 import sqlite3
 
 from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..credentials import CredentialStore
 from ..domain import Owner, ValidationError
 from ..db import request_connection
-from ..model_profiles import get_model_profile, list_model_profiles, persist_model_profile, OpenRouterVerifier, OllamaCloudVerifier, OLLAMA_CLOUD_ENDPOINT, OLLAMA_CLOUD_MODEL, profile_hash
+from ..model_profiles import get_model_profile, list_model_profiles, persist_model_profile, OpenRouterVerifier, OllamaCloudVerifier, OLLAMA_CLOUD_ENDPOINT, OLLAMA_CLOUD_MODEL, profile_hash, validate_custom_profile
 from ..settings import get_owner_settings, save_owner_settings
 from ..paid_trials import create_trial_authorization, revoke_trial_authorization, get_trial_summary
 from .auth import require_owner
@@ -26,6 +26,13 @@ class VerifyProfileRequest(BaseModel):
     model: str = Field(min_length=3, max_length=256)
     endpoint: str = Field(default="https://openrouter.ai/api/v1/chat/completions", min_length=1, max_length=512)
     provider_tag: str | None = Field(default=None, max_length=256)
+
+
+class CustomProfileRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    endpoint: str = Field(min_length=1, max_length=512)
+    model: str = Field(min_length=1, max_length=256)
+    credential_id: str | None = Field(default=None, max_length=128)
 
 
 class SettingsRequest(BaseModel):
@@ -117,6 +124,24 @@ def verify_profile(payload: VerifyProfileRequest, request: Request, connection: 
         raise
     except Exception as exc:
         raise ValidationError("Provider metadata could not be verified") from exc
+
+
+@router.post("/profiles/custom", status_code=201)
+def create_custom_profile(payload: CustomProfileRequest, request: Request, connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
+    try:
+        secret_version = None
+        if payload.credential_id:
+            _store(request).get(owner.id, payload.credential_id)
+            secret_version = payload.credential_id
+        profile = validate_custom_profile(
+            endpoint=payload.endpoint, model=payload.model,
+            secret_version=secret_version,
+        )
+        return persist_model_profile(connection, owner.id, profile)
+    except ValidationError:
+        raise
+    except Exception as exc:
+        raise ValidationError("Custom provider profile could not be saved") from exc
 
 
 @router.get("/settings")

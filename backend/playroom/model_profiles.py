@@ -5,7 +5,9 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit, urlunsplit
+import ipaddress
+import re
 
 import httpx2 as httpx
 
@@ -69,6 +71,14 @@ def profile_hash(profile: dict) -> str:
     return hashlib.sha256(json.dumps(profile, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+def is_immutable_profile(profile: dict) -> bool:
+    expected = profile.get("profile_hash")
+    if not isinstance(expected, str) or not expected:
+        return False
+    base = {key: value for key, value in profile.items() if key not in {"version", "profile_hash"}}
+    return profile_hash(base) == expected
+
+
 def _money(value: object, *, field: str) -> Decimal:
     try:
         result = Decimal(str(value))
@@ -105,6 +115,8 @@ def requires_spending_authorization(profile: dict) -> bool:
     Therefore every Ollama Cloud profile must use an owner-approved trial grant
     if dispatched. A future lockout cannot be enabled by an untrusted flag.
     """
+    if profile.get("provider") == "custom":
+        return profile.get("custom_billing") == "paid_proxy"
     return (
         profile.get("provider") == "ollama"
         or profile.get("credential_tier") == "paid"
@@ -113,6 +125,12 @@ def requires_spending_authorization(profile: dict) -> bool:
 
 
 def validate_dispatch(profile: dict, policy: str, estimated_total, cap: Decimal | int | str | None = None) -> None:
+    if profile.get("provider") == "custom":
+        if not profile.get("endpoint") or not profile.get("model") or not is_immutable_profile(profile):
+            raise ValidationError("Custom profile is missing a pinned endpoint, model, or immutable hash")
+        if profile.get("custom_billing") == "provider_managed":
+            return
+        raise ValidationError("Custom billing metadata is invalid")
     if not profile.get("endpoint") or not profile.get("model") or not profile.get("secret_version"):
         raise ValidationError("Provider profile is missing a pinned endpoint, model, or credential version")
     if not profile.get("pricing_verified") or profile.get("credential_tier") in {None, "unknown"}:
@@ -154,6 +172,75 @@ def _model_parts(model: str) -> tuple[str, str]:
     if not separator or not author or not slug:
         raise ValidationError("OpenRouter model must use author/slug form")
     return author, slug
+
+
+def normalize_custom_endpoint(value: str) -> str:
+    if not isinstance(value, str) or not value or any(ord(char) < 32 or ord(char) == 127 or char.isspace() for char in value):
+        raise ValidationError("Custom endpoint contains invalid characters")
+    if "?" in value or "#" in value or "@" in value or re.search(r"%(?:0[0-9a-f]|1[0-9a-f])", value, re.IGNORECASE):
+        raise ValidationError("Custom endpoint cannot contain credentials, query, or fragment")
+    try:
+        parsed = urlsplit(value)
+    except ValueError as exc:
+        raise ValidationError("Custom endpoint is invalid") from exc
+    if parsed.username is not None or parsed.password is not None or parsed.query or parsed.fragment or not parsed.hostname:
+        raise ValidationError("Custom endpoint cannot contain credentials, query, or fragment")
+    try:
+        parsed.port
+    except ValueError as exc:
+        raise ValidationError("Custom endpoint port is invalid") from exc
+    host = parsed.hostname.lower().rstrip(".")
+    if parsed.hostname.endswith("."):
+        raise ValidationError("Custom endpoint hostname is not canonical")
+    if parsed.scheme not in {"http", "https"}:
+        raise ValidationError("Custom endpoint must use HTTP or HTTPS")
+    if parsed.scheme == "http":
+        loopback = host == "localhost" or host in {"127.0.0.1", "::1"}
+        try:
+            loopback = loopback or ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            pass
+        if not loopback:
+            raise ValidationError("HTTP custom endpoint must be loopback")
+    path = parsed.path.rstrip("/")
+    if path.endswith("/chat/completions"):
+        completion_path = path
+    else:
+        completion_path = f"{path or ''}/chat/completions"
+    if not completion_path.startswith("/") or re.search(r"//+", completion_path):
+        raise ValidationError("Custom endpoint path is invalid")
+    return urlunsplit((parsed.scheme, parsed.netloc, completion_path, "", ""))
+
+
+CUSTOM_CONTEXT_LIMIT = 16512
+CUSTOM_OUTPUT_LIMIT = 4000
+
+
+def validate_custom_profile(*, endpoint: str, model: str, secret_version: str | None = None) -> dict:
+    context_limit, output_limit = CUSTOM_CONTEXT_LIMIT, CUSTOM_OUTPUT_LIMIT
+    endpoint = normalize_custom_endpoint(endpoint)
+    if not isinstance(model, str) or not model.strip() or len(model) > 256:
+        raise ValidationError("Custom model ID is required")
+    try:
+        context_limit, output_limit = int(context_limit), int(output_limit)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError("Custom context and output limits are invalid") from exc
+    if context_limit <= 0 or output_limit <= 0 or output_limit >= context_limit:
+        raise ValidationError("Custom context and output limits are invalid")
+    # The endpoint owns billing and quota.  Keep prices absent rather than
+    # inventing a free/zero-cost claim from an owner-entered form.
+    tier = "unknown"
+    return {
+        "provider": "custom", "endpoint": endpoint, "model": model.strip(),
+        "context_limit": context_limit, "output_limit": output_limit,
+        "limits_source": "application_default", "capabilities_verified": False,
+        "credential_tier": tier, "pricing_verified": False,
+        "pricing_provenance": "unknown", "metadata_provenance": "owner_configured",
+        "custom_billing": "provider_managed", "secret_version": secret_version,
+        "structured_output": False, "native_structured_output": False,
+        "supported_parameters": ["max_tokens"], "output_parameter": "max_tokens",
+        "pricing": None,
+    }
 
 
 class OpenRouterVerifier:
