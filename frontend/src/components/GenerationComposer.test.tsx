@@ -17,7 +17,7 @@ describe("GenerationComposer", () => {
     const notice = screen.getByRole("status", { name: "Chế độ demo tổng hợp" });
     expect(notice).toHaveClass("composer-runtime-notice");
     expect(notice).toHaveTextContent("Phản hồi mẫu có thể lặp lại");
-    expect(notice).toHaveTextContent("Đổi model không gọi AI thật");
+    expect(notice).toHaveTextContent("demo không gọi AI thật dù bạn đổi model");
     expect(notice).not.toHaveTextContent("Cài đặt");
   });
 

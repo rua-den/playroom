@@ -713,7 +713,7 @@ export function GenerationComposer({
       {demoMode && (
         <div className="demo-runtime-notice composer-runtime-notice" role="status" aria-label="Chế độ demo tổng hợp">
           <strong>Chế độ demo tổng hợp</strong>
-          <span>Phản hồi mẫu có thể lặp lại. Đổi model không gọi AI thật.</span>
+          <span>Phản hồi mẫu có thể lặp lại; demo không gọi AI thật dù bạn đổi model.</span>
         </div>
       )}
       <form onSubmit={submit}>
