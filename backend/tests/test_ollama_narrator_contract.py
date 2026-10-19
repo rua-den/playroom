@@ -244,3 +244,22 @@ def test_paid_ollama_profile_never_bypasses_cost_or_native_context_gate(tmp_path
             mode=mode, policy=policy, cap="1.00" if policy == "capped_paid" else None,
         )
     assert db.execute("SELECT COUNT(*) FROM provider_attempts").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("legacy_plain", [False, True])
+def test_player_agency_is_explicit_in_every_ollama_narrator_mode(tmp_path, legacy_plain):
+    """A legacy/plain provider must not silently lose the player-agency contract."""
+    db, _, _, _, yuna_id = _story(tmp_path)
+    profile = {**_profile(), "legacy_plain_output": legacy_plain}
+    service = GenerationService(db, None, profile={"roles": {"narrator": profile}})
+    preview = {
+        "action": "Lan bước tới cửa rồi dừng lại.",
+        "blocks": [],
+        "selected_characters": [{"character_id": yuna_id, "profile_version_id": "v1"}],
+    }
+    settings = {"budgets": {"narrator": {"input_limit": 12000, "requested_output": 400, "wrapper_buffer": 0}}}
+    _, request, _ = service._narrator_request({}, profile, preview, settings)
+    system = request["messages"][0]["content"]
+    assert "Never narrate new actions, dialogue, thoughts, or decisions for the player persona." in system
+    assert "Do not force A/B choices" in system
+    assert "No invented canon" in system

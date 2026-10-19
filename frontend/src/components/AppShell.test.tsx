@@ -103,6 +103,34 @@ describe("recoverable job summary", () => {
     expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/api/transfers/chatgpt/imported/review"), expect.objectContaining({ method: "POST" }));
   });
 
+  it("shows durable partial progress and keeps review locked until import completes", async () => {
+    mockReviewSnapshot();
+    const base = reviewProjection();
+    const projection = {
+      ...base,
+      transcript: Array.from({ length: 100 }, (_, index) => ({
+        revision_id: `revision-${index}`,
+        turn_id: `turn-${index}`,
+        sequence: index + 1,
+        action_text: `action ${index}`,
+        revision: 1,
+        narrative_text: `narrative ${index}`,
+        complete: true,
+        selected: true,
+      })),
+      import_review: {
+        ...base.import_review,
+        import_status: "importing" as const,
+        imported_turns: 100,
+        paired_turns: 125,
+      },
+    };
+    render(<ImportReviewPanel projection={projection as never} onApproved={() => undefined} />);
+    expect(await screen.findByText(/Import chưa hoàn tất: đã lưu 100\/125/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: /Duyệt checkpoint/ })).toBeDisabled());
+    expect(screen.getAllByRole("checkbox").every((checkbox) => (checkbox as HTMLInputElement).disabled)).toBe(true);
+  });
+
   it("keeps approval disabled when the actual snapshot cannot be loaded", async () => {
     vi.spyOn(api, "listMemory").mockRejectedValue(new Error("offline"));
     vi.spyOn(api, "getScene").mockResolvedValue({ focus_scene_id: null, scenes: {} });

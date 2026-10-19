@@ -106,16 +106,26 @@ export function ChatGptImport({ onImported, onCancel }: Props) {
     };
     const importKey = keyRef.current;
     importInFlightRef.current = true;
-    setImporting(true); setBusy(true); setError(null);
+    setImporting(true); setBusy(true); setError(null); setNotice("Bắt đầu nhập lịch sử theo từng phần an toàn…");
     try {
-      const result = await api.importChatGpt(conversation, submittedConfig, importKey);
-      const now = new Date().toISOString();
-      if (mountedRef.current && sourceEpochRef.current === epoch) {
-        onImported({ id: result.campaign_id, title: submittedTitle, created_at: now, updated_at: now, archived_at: null });
+      let previousProgress = -1;
+      let result: Awaited<ReturnType<typeof api.importChatGpt>>;
+      while (true) {
+        result = await api.importChatGpt(conversation, submittedConfig, importKey);
+        if (!mountedRef.current || sourceEpochRef.current !== epoch) return;
+        if (result.complete) break;
+        if (result.imported_turns <= previousProgress || result.imported_turns >= result.turn_count) {
+          throw new Error("Import progress did not advance");
+        }
+        previousProgress = result.imported_turns;
+        setNotice(`Đã lưu ${result.imported_turns}/${result.turn_count} lượt. Có thể tiếp tục an toàn nếu cần tải lại.`);
       }
+      const now = new Date().toISOString();
+      setNotice(`Đã nhập đủ ${result.imported_turns}/${result.turn_count} lượt. Mở chiến dịch để duyệt checkpoint.`);
+      onImported({ id: result.campaign_id, title: submittedTitle, created_at: now, updated_at: now, archived_at: null });
     } catch (cause) {
       if (mountedRef.current && sourceEpochRef.current === epoch) {
-        setError(cause instanceof ApiError ? cause.message : "Không thể nhập thread. Dữ liệu gốc vẫn nằm trên thiết bị.");
+        setError(cause instanceof ApiError ? cause.message : "Không thể nhập thread. Tiến độ đã lưu có thể tiếp tục khi thử lại cùng thread.");
       }
     } finally {
       importInFlightRef.current = false;
@@ -130,10 +140,10 @@ export function ChatGptImport({ onImported, onCancel }: Props) {
     {notice && <p role="status">{notice}</p>}
     <div className="campaign-form">
       <label htmlFor="chatgpt-files">Tệp xuất từ ChatGPT</label>
-      <input id="chatgpt-files" type="file" accept=".json,.zip,application/json,application/zip" multiple onChange={(event) => void loadFiles(event)} />
+      <input id="chatgpt-files" type="file" accept=".json,.zip,application/json,application/zip" multiple disabled={importing} onChange={(event) => void loadFiles(event)} />
       {conversations.length > 0 && <>
         <label htmlFor="chatgpt-thread">Chọn chính xác cuộc hội thoại cần nhập</label>
-        <select id="chatgpt-thread" value={selectedIndex} onChange={(event) => choose(Number(event.target.value))}>
+        <select id="chatgpt-thread" value={selectedIndex} disabled={importing} onChange={(event) => choose(Number(event.target.value))}>
           {conversations.map((item, index) => <option key={item.id} value={index}>{item.title || "(không có tiêu đề)"} — {item.id.slice(0, 8)}</option>)}
         </select>
         <button type="button" className="quiet-button touch-target" disabled={busy || importing} onClick={() => void doPreview()}>Xem trước thread này</button>

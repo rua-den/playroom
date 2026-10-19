@@ -56,6 +56,33 @@ def migrate(connection: sqlite3.Connection) -> None:
     source_columns = {row[1] for row in connection.execute("PRAGMA table_info(chatgpt_import_sources)")}
     if "skipped_messages" not in source_columns:
         connection.executescript(source_skip_count.read_text(encoding="utf-8"))
+    # ChatGPT source imports are resumed in bounded committed chunks. Keep these
+    # additive columns individually guarded so an interrupted schema upgrade is
+    # safe to rerun on the next launch.
+    source_columns = {row[1] for row in connection.execute("PRAGMA table_info(chatgpt_import_sources)")}
+    for name, definition in (
+        ("import_status", "TEXT NOT NULL DEFAULT 'complete'"),
+        ("imported_turns", "INTEGER NOT NULL DEFAULT 0"),
+        ("import_updated_at", "TEXT"),
+    ):
+        if name not in source_columns:
+            connection.execute(f"ALTER TABLE chatgpt_import_sources ADD COLUMN {name} {definition}")
+    connection.execute(
+        "UPDATE chatgpt_import_sources "
+        "SET imported_turns=paired_turns, import_status='complete', "
+        "import_updated_at=COALESCE(import_updated_at, imported_at) "
+        "WHERE import_status='complete' AND imported_turns=0"
+    )
+    # Migration 004 historically backfills a review row for every ChatGPT
+    # source. Resumable imports intentionally persist their source before the
+    # final chunk, so remove only unapproved synthetic backfills for unfinished
+    # sources. The final chunk recreates the row at the actual final checkpoint.
+    connection.execute(
+        "DELETE FROM import_review_checkpoints "
+        "WHERE approved_checkpoint_id IS NULL AND campaign_id IN ("
+        "SELECT campaign_id FROM chatgpt_import_sources WHERE import_status='importing'"
+        ")"
+    )
     columns = {row[1] for row in connection.execute("PRAGMA table_info(campaigns)")}
     if "archived_at" not in columns:
         connection.execute("ALTER TABLE campaigns ADD COLUMN archived_at TEXT")

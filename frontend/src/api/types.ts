@@ -85,6 +85,8 @@ export interface CampaignProjection {
       review: Record<string, boolean>;
       warnings?: string[];
       paired_turns?: number;
+      imported_turns?: number;
+      import_status?: "importing" | "complete";
       skipped_messages?: number | null;
       source_conversation_id?: string;
       source_provenance?: { format?: string; schema_version?: string; is_app_export?: boolean; can_roundtrip_app_export?: boolean; title?: string };
