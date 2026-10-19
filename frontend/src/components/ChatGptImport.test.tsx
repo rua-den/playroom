@@ -43,9 +43,9 @@ async function chooseFiles(files: File[]) {
   await screen.findByRole("combobox");
 }
 
-async function prepareImport(items = [conversation("one"), conversation("two")]) {
+async function prepareImport(items = [conversation("one"), conversation("two")], onImported = vi.fn()) {
   readFiles.mockResolvedValue(items);
-  const rendered = renderImport();
+  const rendered = renderImport(onImported);
   await chooseFiles([new File(["zip"], "export.zip", { type: "application/zip" })]);
   vi.spyOn(api, "previewChatGptImport").mockResolvedValue(preview);
   await userEvent.setup().click(screen.getByRole("button", { name: /Xem tr/ }));
@@ -104,10 +104,41 @@ describe("ChatGptImport", () => {
 
   it("posts only the conversation selected for preview and import", async () => {
     await prepareImport();
-    const importSpy = vi.spyOn(api, "importChatGpt").mockResolvedValue({ campaign_id: "campaign", branch_id: "branch", checkpoint_id: "checkpoint", turn_count: 1, already_imported: false });
+    const importSpy = vi.spyOn(api, "importChatGpt").mockResolvedValue({ campaign_id: "campaign", branch_id: "branch", checkpoint_id: "checkpoint", turn_count: 1, imported_turns: 1, complete: true, already_imported: false, resumed: false });
     await userEvent.setup().click(screen.getByRole("button", { name: /Nhập v/ }));
     await waitFor(() => expect(importSpy).toHaveBeenCalledTimes(1));
     expect(importSpy.mock.calls[0][0]).toEqual(conversation("one"));
+  });
+
+  it("continues a bounded server import until every turn is durably stored", async () => {
+    const onImported = vi.fn();
+    await prepareImport([conversation("one")], onImported);
+    const importSpy = vi.spyOn(api, "importChatGpt")
+      .mockResolvedValueOnce({
+        campaign_id: "campaign",
+        branch_id: "branch",
+        checkpoint_id: "checkpoint-100",
+        turn_count: 125,
+        imported_turns: 100,
+        complete: false,
+        already_imported: false,
+        resumed: false,
+      })
+      .mockResolvedValueOnce({
+        campaign_id: "campaign",
+        branch_id: "branch",
+        checkpoint_id: "checkpoint-125",
+        turn_count: 125,
+        imported_turns: 125,
+        complete: true,
+        already_imported: false,
+        resumed: true,
+      });
+
+    await userEvent.setup().click(screen.getByRole("button", { name: /Nhập v/ }));
+    await waitFor(() => expect(importSpy).toHaveBeenCalledTimes(2));
+    expect(importSpy.mock.calls[0][2]).toBe(importSpy.mock.calls[1][2]);
+    expect(onImported).toHaveBeenCalledTimes(1);
   });
 
   it("clears preview and approval when switching conversations", async () => {
@@ -120,13 +151,13 @@ describe("ChatGptImport", () => {
 
   it("does not start a second authorized import while one is pending", async () => {
     await prepareImport();
-    let resolveImport: (value: { campaign_id: string; branch_id: string; checkpoint_id: string; turn_count: number; already_imported: boolean }) => void = () => undefined;
+    let resolveImport: (value: { campaign_id: string; branch_id: string; checkpoint_id: string; turn_count: number; imported_turns: number; complete: boolean; already_imported: boolean; resumed: boolean }) => void = () => undefined;
     const importSpy = vi.spyOn(api, "importChatGpt").mockReturnValue(new Promise((resolve) => { resolveImport = resolve; }));
     const button = screen.getByRole("button", { name: /Nhập v/ });
     await userEvent.setup().click(button);
     await userEvent.setup().click(button);
     expect(importSpy).toHaveBeenCalledTimes(1);
-    resolveImport({ campaign_id: "campaign", branch_id: "branch", checkpoint_id: "checkpoint", turn_count: 1, already_imported: false });
+    resolveImport({ campaign_id: "campaign", branch_id: "branch", checkpoint_id: "checkpoint", turn_count: 1, imported_turns: 1, complete: true, already_imported: false, resumed: false });
   });
 
   it("ignores a stale preview error after switching conversations", async () => {
@@ -164,12 +195,12 @@ describe("ChatGptImport", () => {
 
   it("captures import config before a pending request can observe edits", async () => {
     await prepareImport();
-    let resolveImport: (value: { campaign_id: string; branch_id: string; checkpoint_id: string; turn_count: number; already_imported: boolean }) => void = () => undefined;
+    let resolveImport: (value: { campaign_id: string; branch_id: string; checkpoint_id: string; turn_count: number; imported_turns: number; complete: boolean; already_imported: boolean; resumed: boolean }) => void = () => undefined;
     const importSpy = vi.spyOn(api, "importChatGpt").mockReturnValue(new Promise((resolve) => { resolveImport = resolve; }));
     await userEvent.setup().click(screen.getByRole("button", { name: /Nhập v/ }));
     await userEvent.setup().clear(screen.getByLabelText("Tên chiến dịch mới"));
     await userEvent.setup().type(screen.getByLabelText("Tên chiến dịch mới"), "changed after submit");
-    resolveImport({ campaign_id: "campaign", branch_id: "branch", checkpoint_id: "checkpoint", turn_count: 1, already_imported: false });
+    resolveImport({ campaign_id: "campaign", branch_id: "branch", checkpoint_id: "checkpoint", turn_count: 1, imported_turns: 1, complete: true, already_imported: false, resumed: false });
     await waitFor(() => expect(importSpy).toHaveBeenCalledTimes(1));
     expect(importSpy.mock.calls[0][1].title).toBe("one");
   });
@@ -192,11 +223,11 @@ describe("ChatGptImport", () => {
     await userEvent.setup().click(screen.getByRole("button", { name: /Xem tr/ }));
     await screen.findByText(/Tìm thấy/);
     await userEvent.setup().click(screen.getByRole("checkbox"));
-    let resolveImport: (value: { campaign_id: string; branch_id: string; checkpoint_id: string; turn_count: number; already_imported: boolean }) => void = () => undefined;
+    let resolveImport: (value: { campaign_id: string; branch_id: string; checkpoint_id: string; turn_count: number; imported_turns: number; complete: boolean; already_imported: boolean; resumed: boolean }) => void = () => undefined;
     vi.spyOn(api, "importChatGpt").mockReturnValue(new Promise((resolve) => { resolveImport = resolve; }));
     await userEvent.setup().click(screen.getByRole("button", { name: /Nhập v/ }));
     rendered.unmount();
-    resolveImport({ campaign_id: "campaign", branch_id: "branch", checkpoint_id: "checkpoint", turn_count: 1, already_imported: false });
+    resolveImport({ campaign_id: "campaign", branch_id: "branch", checkpoint_id: "checkpoint", turn_count: 1, imported_turns: 1, complete: true, already_imported: false, resumed: false });
     await act(async () => undefined);
     expect(onImported).not.toHaveBeenCalled();
   });

@@ -65,7 +65,8 @@ export const api = {
     title: string; world: { name: string }; persona: { name: string };
     characters: Array<{ id: string; name: string; aliases: string[] }>;
   }, importKey: string) => request<{
-    campaign_id: string; branch_id: string; checkpoint_id: string; turn_count: number; already_imported: boolean;
+    campaign_id: string; branch_id: string; checkpoint_id: string; turn_count: number;
+    imported_turns: number; complete: boolean; already_imported: boolean; resumed: boolean;
   }>("/api/transfers/chatgpt/import", { method: "POST", body: JSON.stringify({ conversation, config, import_key: importKey }) }),
   previewLegacyImport: (bundle: Record<string, unknown>) => request<{
     format: string; schema_version: string; title: string; turn_count: number; missing_history: boolean;
