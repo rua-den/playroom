@@ -6,7 +6,7 @@ import httpx2 as httpx
 import pytest
 
 from playroom.domain import ValidationError
-from playroom.model_profiles import normalize_custom_endpoint, validate_custom_profile, validate_dispatch, profile_hash
+from playroom.model_profiles import normalize_custom_endpoint, validate_custom_profile, validate_dispatch, profile_hash, persist_model_profile, list_model_profiles
 from playroom.provider import CustomOpenAIAdapter, ProviderResult
 
 
@@ -36,6 +36,21 @@ def test_custom_profile_route_saves_owner_declared_snapshot_without_catalog_call
     assert client.post("/api/auth/logout", headers=origin).status_code == 204
     assert client.post("/api/auth/login", json={"email": second.email, "password": "password-two"}, headers=origin).status_code == 200
     assert client.get("/api/provider/profiles", headers=origin).json() == []
+
+
+def test_custom_profiles_list_newest_first_even_when_ids_sort_inversely(tmp_path):
+    from playroom.auth import create_owner
+    from playroom.db import connect, migrate
+
+    connection = connect(tmp_path / "ordering.sqlite3")
+    migrate(connection)
+    owner = create_owner(connection, "ordering@example.test", "password-ordering")
+    base = validate_custom_profile(endpoint="http://127.0.0.1:1234/v1", model="fixture")
+    persist_model_profile(connection, owner.id, {**base, "id": "z-old"})
+    persist_model_profile(connection, owner.id, {**base, "id": "a-new", "model": "fixture-new"})
+    listed = list_model_profiles(connection, owner.id)
+    assert [profile["id"] for profile in listed[:2]] == ["a-new", "z-old"]
+    connection.close()
 
 
 def test_custom_profile_route_rejects_extra_billing_fields_and_cross_owner_key(tmp_path):
