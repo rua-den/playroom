@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
 import type { SceneResponse, SceneState } from "../api/types";
+import { useToast } from "./Toast";
 
 interface Props { campaignId: string; branchId: string; stateVersion: number; characters?: Array<{ id: string; name: string }>; onSaved?: (result: { state_version: number; checkpoint_id: string }) => void; onConflict?: () => void; }
 export function SceneEditor({ campaignId, branchId, stateVersion, characters = [], onSaved, onConflict }: Props) {
+  const toast = useToast();
   const [scene, setScene] = useState<SceneState>({ focus_scene_id: null, scenes: [] }); const [error, setError] = useState<string | null>(null);
   useEffect(() => { api.getScene(campaignId, branchId).then((next) => setScene({ focus_scene_id: next.focus_scene_id, scenes: Object.values(next.scenes ?? {}) })).catch(() => setError("Không thể tải bản đồ cảnh.")); }, [campaignId, branchId]);
-  async function save() { try { const result = await api.updateScene(campaignId, { branch_id: branchId, expected_state_version: stateVersion, scene_state: scene }); onSaved?.(result); } catch { onConflict?.(); setError("Không thể lưu cảnh; bản nháp vẫn được giữ lại."); } }
+  async function save() { try { const result = await api.updateScene(campaignId, { branch_id: branchId, expected_state_version: stateVersion, scene_state: scene }); onSaved?.(result); toast.success("Đã lưu cảnh."); } catch { onConflict?.(); setError("Không thể lưu cảnh; bản nháp vẫn được giữ lại."); toast.error("Không thể lưu cảnh."); } }
   function addScene() { const id = crypto.randomUUID(); setScene((current) => ({ ...current, scenes: [...current.scenes, { id, name: "", present_ids: [] }], focus_scene_id: current.focus_scene_id ?? id })); }
   function removeScene(id: string) { setScene((current) => { const scenes = current.scenes.filter((item) => item.id !== id); return { scenes, focus_scene_id: current.focus_scene_id === id ? (scenes[0]?.id ?? null) : current.focus_scene_id }; }); }
   function togglePresence(sceneId: string, characterId: string, present: boolean) { setScene((current) => ({ ...current, scenes: current.scenes.map((item) => item.id === sceneId ? { ...item, present_ids: present ? [...item.present_ids, characterId] : item.present_ids.filter((id) => id !== characterId) } : item) })); }
