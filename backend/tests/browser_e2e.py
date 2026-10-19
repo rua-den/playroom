@@ -373,6 +373,7 @@ def browser_synthetic_chat() -> None:
                 camp_list = page.context.request.get(f"{origin}/api/campaigns").json()
                 assert len(camp_list) == 1
                 campaign_id = camp_list[0]["id"]
+                first_title = camp_list[0]["title"]
                 detail = page.context.request.get(f"{origin}/api/campaigns/{campaign_id}").json()
                 branch_id = detail["branch_id"]
 
@@ -414,6 +415,106 @@ def browser_synthetic_chat() -> None:
 
                 _send_and_wait(page, "Tớ đợi cậu ở vạch sân.", 2)
                 assert len(campaign.calls) == 2
+
+                # The library must retain multiple stories and restore each
+                # story's own history. Create B through the authenticated API
+                # so this check stays independent of the create form.
+                first_story_id = campaign_id
+                first_branch_id = branch_id
+                transcript = _project(page, origin, first_story_id, first_branch_id)["transcript"]
+                assert len(transcript) == 2
+                first_turn_count = len(transcript)
+                second_create = page.context.request.post(
+                    f"{origin}/api/campaigns",
+                    data=json.dumps({
+                        "title": "Synthetic history B",
+                        "world": {"name": "Synthetic world B", "description": ""},
+                        "persona": {"name": "Synthetic player B", "description": ""},
+                        "characters": [],
+                    }),
+                    headers={
+                        "content-type": "application/json",
+                        "origin": origin,
+                        "x-requested-with": "XMLHttpRequest",
+                    },
+                )
+                assert second_create.status == 201, second_create.text()
+                second_story = second_create.json()
+                second_story_id = second_story["id"]
+                assert second_story_id != first_story_id
+                provider_before_library = len(campaign.calls)
+
+                # Reload loads the API-created catalog and restores A from
+                # localStorage before opening the library.
+                """
+                page.reload(wait_until="domcontentloaded")
+                expect(page.get_by_role("heading", name="Thá»­ nghiá»‡m sÃ¢n bÃ³ng")).to_be_visible(timeout=15000)
+                page.get_by_role("button", name="ThÆ° viá»‡n truyá»‡n").click()
+                expect(page.get_by_role("heading", name="ThÆ° viá»‡n truyá»‡n")).to_be_visible(timeout=12000)
+                page.set_viewport_size({"width": 757, "height": 900})
+                page.screenshot(path=str(screenshot_dir / "library-757.png"), full_page=True)
+                page.set_viewport_size({"width": 375, "height": 812})
+                page.screenshot(path=str(screenshot_dir / "library-375.png"), full_page=True)
+
+                second_card = page.locator("article").filter(has_text="Synthetic history B")
+                expect(second_card).to_have_count(1)
+                second_card.get_by_role("button", name="Má»Ÿ truyá»‡n").click()
+                expect(page.get_by_role("heading", name="Synthetic history B")).to_be_visible(timeout=12000)
+                expect(page.locator(".story-turn")).to_have_count(0)
+                assert len(campaign.calls) == provider_before_library
+
+                page.get_by_role("button", name="ThÆ° viá»‡n truyá»‡n").click()
+                expect(page.get_by_role("heading", name="ThÆ° viá»‡n truyá»‡n")).to_be_visible(timeout=12000)
+                first_card = page.locator("article").filter(has_text="Thá»­ nghiá»‡m sÃ¢n bÃ³ng")
+                expect(first_card).to_have_count(1)
+                first_card.get_by_role("button", name="Äá»c tiáº¿p").click()
+                expect(page.get_by_role("heading", name="Thá»­ nghiá»‡m sÃ¢n bÃ³ng")).to_be_visible(timeout=12000)
+                expect(page.locator(".story-turn")).to_have_count(first_turn_count)
+                expect(page.get_by_text(NARRATION, exact=True)).to_be_visible()
+                assert len(campaign.calls) == provider_before_library
+
+                page.reload(wait_until="domcontentloaded")
+                expect(page.get_by_role("heading", name="Thá»­ nghiá»‡m sÃ¢n bÃ³ng")).to_be_visible(timeout=15000)
+                expect(page.locator(".story-turn")).to_have_count(first_turn_count)
+                expect(page.get_by_text(NARRATION, exact=True)).to_be_visible()
+                assert len(campaign.calls) == provider_before_library
+
+                """
+                page.reload(wait_until="domcontentloaded")
+                expect(page.get_by_role("heading", name=first_title)).to_be_visible(timeout=15000)
+                page.locator(".library-trigger").click()
+                expect(page.locator("#library-title")).to_be_visible(timeout=12000)
+                first_card = page.locator("article").filter(has_text=first_title)
+                second_card = page.locator("article").filter(has_text="Synthetic history B")
+                expect(first_card).to_have_count(1)
+                expect(second_card).to_have_count(1)
+                for width, filename in ((757, "library-757.png"), (375, "library-375.png")):
+                    page.set_viewport_size({"width": width, "height": 900 if width == 757 else 812})
+                    expect(page.locator("#library-title")).to_be_visible()
+                    expect(first_card.locator("h2")).to_have_text(first_title)
+                    expect(second_card.locator("h2")).to_have_text("Synthetic history B")
+                    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+                    page.screenshot(path=str(screenshot_dir / filename), full_page=True)
+                second_card.locator("button").click()
+                expect(page.get_by_role("heading", name="Synthetic history B")).to_be_visible(timeout=12000)
+                expect(page.locator(".story-turn")).to_have_count(0)
+                assert len(campaign.calls) == provider_before_library
+                page.locator(".library-trigger").click()
+                expect(page.locator("#library-title")).to_be_visible(timeout=12000)
+                first_card = page.locator("article").filter(has_text=first_title)
+                first_card.locator("button").click()
+                expect(page.get_by_role("heading", name=first_title)).to_be_visible(timeout=12000)
+                expect(page.locator(".story-turn")).to_have_count(first_turn_count)
+                expect(page.locator(".story-turn").filter(has_text=NARRATION)).to_have_count(first_turn_count)
+                assert len(campaign.calls) == provider_before_library
+                page.reload(wait_until="domcontentloaded")
+                expect(page.get_by_role("heading", name=first_title)).to_be_visible(timeout=15000)
+                expect(page.locator(".story-turn")).to_have_count(first_turn_count)
+                expect(page.locator(".story-turn").filter(has_text=NARRATION)).to_have_count(first_turn_count)
+                assert len(campaign.calls) == provider_before_library
+
+                campaign_id = first_story_id
+                branch_id = first_branch_id
 
                 # A POST can reach the server before the browser loses its
                 # response. The client must recover the *same* durable job.
