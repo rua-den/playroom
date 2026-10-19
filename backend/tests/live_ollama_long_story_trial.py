@@ -19,22 +19,35 @@ from decimal import Decimal, InvalidOperation
 import httpx2 as httpx
 
 from playroom.model_profiles import (
-    OLLAMA_CLOUD_API_MODEL, OLLAMA_CLOUD_MODEL,
-    OLLAMA_CLOUD_ENDPOINT, OllamaCloudVerifier,
+    OLLAMA_CLOUD_API_MODEL, OLLAMA_CLOUD_MODEL, OLLAMA_CLOUD_MODELS,
+    OLLAMA_FREE_CLOUD_MODEL, OLLAMA_CLOUD_ENDPOINT, OllamaCloudVerifier,
 )
 from playroom.provider import OllamaCloudAdapter, ProviderFailure, ProviderResult
 from playroom.roleplay_segments import parse_narrator_payload
 from live_ollama_gemma4_smoke import _persist_verified_profile
 from live_ollama_three_turn_trial import _quality_flags
 
-APPROVAL = "OWNER_LONG_STORY_24_TURNS_2026_10_19"
-MODEL = "gpt-oss:120b"
+# Keep the previously accepted gpt-oss one-shot workflow unchanged.
+# A separate first-attempt workflow enables a fair, SAME-FIXTURE comparison
+# with strict allowlisted model labels; neither mode can use arbitrary endpoints.
+COMPARISON_MODE = os.getenv("LONG_STORY_COMPARISON") == "1"
+MODEL_LABEL = (
+    os.getenv("LONG_STORY_MODEL_LABEL", "") if COMPARISON_MODE else OLLAMA_CLOUD_MODEL
+)
+if MODEL_LABEL not in {OLLAMA_CLOUD_MODEL, OLLAMA_FREE_CLOUD_MODEL}:
+    raise RuntimeError("Only the two pinned Ollama models can be compared")
+MODEL_SPEC = OLLAMA_CLOUD_MODELS[MODEL_LABEL]
+APPROVAL = (
+    "OWNER_GEMMA_GPTOSS_SAME_24_2026_10_20"
+    if COMPARISON_MODE else "OWNER_LONG_STORY_24_TURNS_2026_10_19"
+)
+MODEL = MODEL_SPEC["api_model"]
 MAX_TURNS = 24
 MAX_OUTPUT_TOKENS = 1600
 MAX_WIRE_BYTES = 16000
 MAX_TOTAL_USD = Decimal("0.085")
-PROMPT_RATE = Decimal("0.00000015")
-OUTPUT_RATE = Decimal("0.00000060")
+PROMPT_RATE = Decimal(MODEL_SPEC["prompt_price"])
+OUTPUT_RATE = Decimal(MODEL_SPEC["completion_price"])
 RESERVE_PER_TURN = PROMPT_RATE * MAX_WIRE_BYTES + OUTPUT_RATE * MAX_OUTPUT_TOKENS
 TOTAL_RESERVE = RESERVE_PER_TURN * MAX_TURNS
 CAST = {
@@ -226,7 +239,7 @@ def _dry() -> None:
     assert len(SCENES) == 6
     assert [s["chapter"] for s in STEPS] == list(range(157, 181))
     assert TOTAL_RESERVE < MAX_TOTAL_USD
-    assert OLLAMA_CLOUD_API_MODEL == MODEL
+    assert OLLAMA_CLOUD_MODELS[MODEL_LABEL]["api_model"] == MODEL
     assert all("Lan" in step["action"] or "Tớ" in step["action"] for step in STEPS)
     assert len(json.dumps(_messages(0, []), ensure_ascii=False).encode()) <= MAX_WIRE_BYTES
     synthetic_long_turns = [
@@ -240,7 +253,7 @@ def _dry() -> None:
     assert packed[0]["role"] == "system"
     assert "player_event_ledger" in packed[-1]["content"]
     assert _quality_flags([{"kind": "narration", "text": "Lan bắt đầu tìm kiếm quanh quầy."}])[0]
-    print("LONG STORY OFFLINE CONTRACT: PASS; 24 actions, 6 scenes, 0 provider calls")
+    print(f"LONG STORY OFFLINE CONTRACT: PASS; model={MODEL} 24 actions, 6 scenes, 0 provider calls")
 
 
 def main() -> int:
@@ -264,7 +277,7 @@ def main() -> int:
         stage = "model_verification"
         with httpx.Client(timeout=httpx.Timeout(150, connect=15)) as http_client:
             profile = OllamaCloudVerifier(http_client=http_client).verify(
-                key, OLLAMA_CLOUD_MODEL, OLLAMA_CLOUD_ENDPOINT
+                key, MODEL_LABEL, OLLAMA_CLOUD_ENDPOINT
             )
             if profile["model"] != MODEL:
                 raise RuntimeError("Unexpected model ID")
@@ -324,11 +337,11 @@ def main() -> int:
                 # Give the provider a small inter-request gap; no completion retries.
                 if i + 1 < MAX_TURNS:
                     time.sleep(1)
-            print(f"LONG STORY RESULT: turns={len(completed)}/{MAX_TURNS} posts_started={posts} "
+            print(f"LONG STORY RESULT: model={MODEL} turns={len(completed)}/{MAX_TURNS} posts_started={posts} "
                   f"heuristic_warnings={len(alerts)}; reviewer must inspect prose")
             for chapter, code in alerts:
                 print(f"QUALITY FLAG: chapter={chapter} code={code}")
-            print("Synthetic adapter-only trial, NOT Playroom DB import/persistence or GPT benchmark")
+            print("Synthetic adapter-only trial, NOT Playroom DB import/persistence or a direct GPT benchmark")
             return 0 if len(completed) == MAX_TURNS else 1
     except Exception as exc:
         print(f"LONG STORY STOP: {stage} exception={type(exc).__name__} posts_started={posts}")
