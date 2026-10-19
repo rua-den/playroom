@@ -11,6 +11,8 @@ import json
 import os
 import re
 import sys
+import time
+import urllib.error
 import urllib.request
 from decimal import Decimal, InvalidOperation
 
@@ -72,7 +74,12 @@ SYSTEM = (
     "The player alone controls Lan: never invent Lan's motions, speech, thoughts, emotion, "
     "relationship decisions or completed actions. A stated intention is NOT an executed action. "
     "Never force romance, A/B menus or game mechanics. NPC voices must be distinct, no extra "
-    "speaker or magical knowledge. Respond naturally to the LAST player action with a meaningful "
+    "speaker or knowledge. Narrate NPCs and setting; never narrate Lan beyond the EXACT "
+    "player-authored action. Do not add Lan moving, opening objects, searching, smiling, sighing, "
+    "thinking or agreeing unless the player explicitly wrote it. An intention is not an action. "
+    "Until chapter 176, the locker code B-17 must not appear in either narration or dialogue; "
+    "even the narrator must preserve the mystery. "
+    "Respond naturally to the LAST player action with a meaningful "
     "change or question. Aim for 140-260 Vietnamese words per reply where appropriate. "
     "The allowed present NPCs are supplied PER TURN. Their exact IDs and profile versions must be "
     "copied from selected_characters. Only those NPCs may speak; others cannot walk into the "
@@ -156,8 +163,13 @@ def _credit(key: str, required: Decimal) -> None:
         headers={"Authorization": "Bearer " + key, "Accept": "application/json"},
         method="GET",
     )
-    with urllib.request.build_opener(NoRedirect).open(req, timeout=18) as response:
-        payload = json.load(response)
+    try:
+        with urllib.request.build_opener(NoRedirect).open(req, timeout=18) as response:
+            payload = json.load(response)
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"Read-only credit check HTTP {exc.code}; no completion sent") from None
+    except (urllib.error.URLError, TimeoutError, ValueError):
+        raise RuntimeError("Read-only credit check unavailable; no completion sent") from None
     try:
         included = Decimal(str(payload["included"]["balance_usd"]))
         purchased = Decimal(str(payload["purchased"]["balance_usd"]))
@@ -240,7 +252,11 @@ def main() -> int:
             )
             for i, step in enumerate(STEPS):
                 stage = f"chapter_{step['chapter']}_preflight"
-                _credit(key, RESERVE_PER_TURN)
+                # The initial gate reserves the full worst-case allowance. Recheck
+                # every 6 turns instead of hammering the balance endpoint 24 times.
+                # Never advance if a periodic read-only check fails.
+                if i > 0 and i % 6 == 0:
+                    _credit(key, RESERVE_PER_TURN * (MAX_TURNS - i))
                 messages = _messages(i, completed)
                 wire_bytes = len(json.dumps(messages, ensure_ascii=False).encode("utf-8"))
                 if wire_bytes > MAX_WIRE_BYTES:
@@ -267,9 +283,7 @@ def main() -> int:
                     print(f"CHAPTER {step['chapter']}: JSON/CAST_INVALID {type(exc).__name__}; no retry")
                     break
                 agency = _quality_flags(segments)[0]
-                forbidden = "B-17" in " ".join(
-                    x["text"] for x in segments if x["kind"] == "dialogue"
-                ) and step["chapter"] < 176
+                forbidden = "B-17" in narrative and step["chapter"] < 176
                 if agency:
                     alerts.append((step["chapter"], "agency_suspected"))
                 if forbidden:
@@ -283,6 +297,9 @@ def main() -> int:
                 safe = re.sub(r"[\x00-\x1f\x7f]", " ", narrative)[:850]
                 print(f"CHAPTER {step['chapter']} EXCERPT: {safe}")
                 completed.append((step["action"], result.text))
+                # Give the provider a small inter-request gap; no completion retries.
+                if i + 1 < MAX_TURNS:
+                    time.sleep(1)
             print(f"LONG STORY RESULT: turns={len(completed)}/{MAX_TURNS} posts_started={posts} "
                   f"heuristic_warnings={len(alerts)}; reviewer must inspect prose")
             for chapter, code in alerts:
