@@ -208,7 +208,9 @@ export function ModelSwitcher({
           className="quiet-button touch-target"
           onClick={onOpenCostSettings}
         >
-          Cài đặt chi phí
+          {current?.provider === "custom" || selectedProfile?.provider === "custom"
+            ? "Cài đặt API"
+            : "Cài đặt chi phí"}
         </button>
         <button
           type="button"

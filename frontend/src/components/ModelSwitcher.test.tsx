@@ -134,5 +134,6 @@ describe("ModelSwitcher", () => {
     await waitFor(() => expect(screen.getByRole("option", { name: /local-model/ })).toBeInTheDocument());
     expect(screen.queryByText(/chưa được xác minh là Free/)).not.toBeInTheDocument();
     expect(screen.queryByText(/pricing và tier/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Cài đặt API/ })).toBeInTheDocument();
   });
 });

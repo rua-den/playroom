@@ -501,8 +501,8 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
             profile={profiles.find((item) => item.provider === "custom")}
             onSaved={(profile) => {
               setProfiles((current) => [
-                ...current.filter((item) => item.id !== profile.id),
                 profile,
+                ...current.filter((item) => item.id !== profile.id),
               ]);
               setNotice(
                 "Đã lưu custom provider; chi phí và quota do endpoint quản lý.",
