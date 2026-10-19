@@ -125,7 +125,7 @@ describe("recoverable job summary", () => {
       },
     };
     render(<ImportReviewPanel projection={projection as never} onApproved={() => undefined} />);
-    expect(await screen.findByRole("status")).toHaveTextContent("100/125");
+    expect(await screen.findByText(/Import chưa hoàn tất: đã lưu 100\/125/)).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("button", { name: /Duyệt checkpoint/ })).toBeDisabled());
     expect(screen.getAllByRole("checkbox").every((checkbox) => (checkbox as HTMLInputElement).disabled)).toBe(true);
   });
