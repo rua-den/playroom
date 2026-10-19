@@ -236,6 +236,19 @@ def _pack_messages(index: int, completed: list[tuple[str, str]]) -> tuple[list[d
         count -= 1
 
 
+def _review_segments(narrative: str, segments: list[dict] | None) -> tuple[list[dict], bool]:
+    """For a quality probe, preserve plain text as a format-warning sample.
+
+    Production commits remain stricter: no valid JSON segments means no
+    attributed NPC dialogue. Never count this as a schema/format PASS.
+    """
+    if segments is None:
+        if not narrative.strip():
+            raise ValueError("Empty plain narrator response")
+        return [{"kind": "narration", "text": narrative}], True
+    return segments, False
+
+
 def _dry() -> None:
     assert len(STEPS) == MAX_TURNS == 24
     assert len(SCENES) == 6
@@ -255,6 +268,11 @@ def _dry() -> None:
     assert packed[0]["role"] == "system"
     assert "player_event_ledger" in packed[-1]["content"]
     assert _quality_flags([{"kind": "narration", "text": "Lan bắt đầu tìm kiếm quanh quầy."}])[0]
+    plain_segments, format_warning = _review_segments("Vy quay lại, hỏi Lan về chiếc hộp.", None)
+    assert format_warning and len(plain_segments) == 1
+    assert plain_segments[0]["kind"] == "narration"
+    structured_segments = [{"kind": "narration", "text": "Vy nhìn Lan."}]
+    assert _review_segments("Vy nhìn Lan.", structured_segments) == (structured_segments, False)
     print(f"LONG STORY OFFLINE CONTRACT: PASS; model={MODEL} 24 actions, 6 scenes, 0 provider calls")
 
 
@@ -321,8 +339,15 @@ def main() -> int:
                 except Exception as exc:
                     print(f"CHAPTER {step['chapter']}: JSON/CAST_INVALID {type(exc).__name__}; no retry")
                     break
-                agency = _quality_flags(segments)[0]
+                try:
+                    review_segments, format_warning = _review_segments(narrative, segments)
+                except ValueError:
+                    print(f"CHAPTER {step['chapter']}: EMPTY_NARRATION; no retry")
+                    break
+                agency = _quality_flags(review_segments)[0]
                 forbidden = "B-17" in narrative and step["chapter"] < 176
+                if format_warning:
+                    alerts.append((step["chapter"], "non_structured_text"))
                 if agency:
                     alerts.append((step["chapter"], "agency_suspected"))
                 if forbidden:
@@ -330,7 +355,8 @@ def main() -> int:
                 char_count = len(narrative)
                 usage = result.usage if isinstance(result.usage, dict) else {}
                 print(f"CHAPTER {step['chapter']} [{step['scene']}]: "
-                      f"chars={char_count} segments={len(segments)} "
+                      f"chars={char_count} segments={len(review_segments)} "
+                      f"format_warning={format_warning} "
                       f"agency_warning={agency} knowledge_warning={forbidden} "
                       f"tokens={usage.get('prompt_tokens')}/{usage.get('completion_tokens')}")
                 safe = re.sub(r"[\x00-\x1f\x7f]", " ", narrative)[:850]
