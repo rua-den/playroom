@@ -17,7 +17,7 @@ button { cursor: pointer; }
 .brand-mark.small { width: 30px; height: 30px; margin: 0; border-radius: 9px; font-size: 16px; }
 .eyebrow { color: #d79771; letter-spacing: .18em; font-size: 11px; font-weight: 700; }
 h1, h2, p { margin-top: 0; }
-h1 { margin-bottom: 12px; font-family: Georgia, serif; font-size: clamp(32px, 8vw, 54px); line-height: 1.02; letter-spacing: -.04em; }
+h1 { margin-bottom: 12px; font-family: "Segoe UI", system-ui, sans-serif; font-size: clamp(32px, 8vw, 54px); line-height: 1.12; letter-spacing: normal; }
 .auth-intro, .welcome-copy p, .empty-state p { color: #c2b8aa; line-height: 1.65; }
 .auth-form { display: grid; gap: 10px; margin-top: 30px; }
 label { color: #e4dbce; font-size: 13px; font-weight: 650; }
@@ -43,7 +43,7 @@ label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) { display:
 .campaign-controls select { width: min(230px, 32vw); min-height: 44px; border: 1px solid #5b5145; border-radius: 12px; padding: 0 30px 0 12px; color: #fff; background: #151311; font: inherit; }
 .campaign-quick-list { display: none; }
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.section-heading h2 { font: 22px Georgia, serif; margin: 0; }
+.section-heading h2 { font: 22px "Segoe UI", system-ui, sans-serif; margin: 0; letter-spacing: normal; }
 .campaign-item { display: block; width: 100%; margin-top: 8px; padding: 0 12px; text-align: left; color: #cfc4b5; background: transparent; border: 1px solid transparent; border-radius: 10px; }
 .campaign-item:hover, .campaign-item.selected { color: #fff; border-color: #6c5949; background: #2b241e; }
 .story-column { min-width: 0; }
@@ -71,7 +71,7 @@ label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) { display:
 .context-overlay .context-panel { width: min(420px, 100%); height: 100%; max-height: none; border-radius: 18px; }
 .mobile-drawer .campaign-item { margin-top: 12px; }
 .create-card { width: min(100%, 720px); margin: 42px auto 0; padding: clamp(22px, 5vw, 42px); border: 1px solid #4d453a; border-radius: 20px; background: #211d19; }
-.create-card h2 { font: 32px Georgia, serif; margin: 0 0 20px; }
+.create-card h2 { font: 32px "Segoe UI", system-ui, sans-serif; margin: 0 0 20px; letter-spacing: normal; }
 .campaign-form { display: grid; gap: 10px; }
 .campaign-form textarea { width: 100%; min-height: 88px; resize: vertical; border: 1px solid #5b5145; border-radius: 12px; padding: 12px 14px; color: #fff; background: #151311; font: inherit; }
 .campaign-form fieldset { display: grid; gap: 10px; margin: 14px 0 0; padding: 16px; border: 1px solid #43392f; border-radius: 14px; }
@@ -104,6 +104,18 @@ label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) { display:
 .welcome-copy h1 { font-size: clamp(42px, 8vw, 84px); }
 .empty-state { margin-top: 64px; max-width: 560px; padding: 28px; border-left: 2px solid #c98257; background: #25211d99; }
 .empty-state h2 { font: 27px Georgia, serif; }
+.story-library { max-width: 960px; margin: clamp(48px, 10vh, 110px) auto 0; }
+.story-library h1, .story-library h2 { font-family: "Segoe UI", system-ui, sans-serif; letter-spacing: normal; }
+.library-intro { color: #c2b8aa; line-height: 1.6; }
+.story-library-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 14px; margin-top: 32px; }
+.story-card { display: flex; min-height: 170px; flex-direction: column; justify-content: space-between; gap: 18px; padding: 20px; border: 1px solid #4d453a; border-radius: 18px; background: #211d19; }
+.story-card.is-current { border-color: #c98257; box-shadow: 0 0 0 1px #c9825733; }
+.story-card h2 { margin: 6px 0 8px; font-size: 24px; line-height: 1.2; }
+.story-card-status { margin: 0; color: #d79771; font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.story-card .quiet-button { align-self: flex-start; }
+.library-import-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 24px; }
+.form-hint { max-width: 48ch; margin: 8px 0 0; color: #c2b8aa; line-height: 1.5; }
+@media (max-width: 560px) { .story-library .section-heading { align-items: flex-start; flex-direction: column; } .story-library .section-heading > .primary-button { width: 100%; } }
 .empty-icon { color: #d79771; font-size: 42px; }
 @media (max-width: 560px) {
   .auth-card { padding: 30px 24px; }
