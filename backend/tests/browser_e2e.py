@@ -989,12 +989,15 @@ def browser_synthetic_chat() -> None:
                     expect(settings_dialog).to_be_visible(timeout=12000)
                     expect(settings_dialog.get_by_role("region", name="Cài đặt provider")).to_be_visible(timeout=12000)
                     _assert_modal_geometry(page, settings_dialog, viewport_width)
+                    if viewport_width in (375, 1280):
+                        theme = "dark" if viewport_width == 375 else "light"
+                        settings_dialog.get_by_label("Giao diện").select_option(theme)
+                        page.screenshot(path=str(modal_screenshot_dir / f"settings-opening-{viewport_width}-{theme}.png"))
                     endpoint = settings_dialog.get_by_label("Endpoint")
                     endpoint.fill("https://synthetic.invalid/" + "long-provider-path-" * 24)
                     _assert_modal_geometry(page, settings_dialog, viewport_width)
                     if viewport_width in (375, 1280):
                         theme = "dark" if viewport_width == 375 else "light"
-                        settings_dialog.get_by_label("Giao diện").select_option(theme)
                         page.screenshot(path=str(modal_screenshot_dir / f"settings-{viewport_width}-{theme}.png"))
                     _assert_modal_scroll_header(page, settings_dialog)
                     _assert_modal_focus(page, settings_dialog, settings_trigger)
@@ -1009,6 +1012,7 @@ def browser_synthetic_chat() -> None:
                 context_dialog = page.get_by_role("dialog", name="Hồ sơ và ký ức")
                 expect(context_dialog).to_be_visible(timeout=12000)
                 _assert_modal_geometry(page, context_dialog, 375)
+                page.screenshot(path=str(modal_screenshot_dir / "context-375.png"))
                 _assert_modal_focus(page, context_dialog, context_trigger)
                 _assert_story_preserved(page, modal_title, modal_draft, 1)
 
@@ -1018,6 +1022,12 @@ def browser_synthetic_chat() -> None:
                     modal_dialog = page.get_by_role("dialog").last
                     expect(modal_dialog).to_be_visible(timeout=12000)
                     _assert_modal_geometry(page, modal_dialog, 375)
+                    screenshot_name = {
+                        "Tạo truyện mới": "create-375.png",
+                        "Nhập ChatGPT": "chatgpt-import-375.png",
+                        "Nhập Legacy": "legacy-import-375.png",
+                    }[action_name]
+                    page.screenshot(path=str(modal_screenshot_dir / screenshot_name))
                     _assert_modal_focus(page, modal_dialog, create_or_import_trigger)
                     _assert_story_preserved(page, modal_title, modal_draft, 1)
 
