@@ -344,7 +344,15 @@ class CustomOpenAIAdapter(OpenRouterAdapter):
     def __init__(self, *, profile: dict, credential: str | None = None, http_client: httpx.Client | None = None):
         if profile.get("provider") != "custom" or not is_immutable_profile(profile):
             raise ValueError("Custom adapter requires an immutable custom profile")
-        if not credential and not (profile.get("custom_billing") == "provider_managed" and profile.get("limits_source") == "application_default" and profile.get("pricing_verified") is False and profile.get("capabilities_verified") is False):
+        keyless_contract = (
+            not credential
+            and not profile.get("secret_version")
+            and profile.get("custom_billing") == "provider_managed"
+            and profile.get("limits_source") == "application_default"
+            and profile.get("pricing_verified") is False
+            and profile.get("capabilities_verified") is False
+        )
+        if not credential and not keyless_contract:
             raise ValueError("Keyless custom adapter requires the provider-managed profile contract")
         self.endpoint = profile["endpoint"]
         self.profile = dict(profile)

@@ -169,6 +169,13 @@ def test_custom_adapter_pins_wire_and_omits_authorization_without_key():
     assert isinstance(events[-1], ProviderResult)
 
 
+def test_custom_adapter_rejects_missing_credential_for_keyed_profile():
+    profile = validate_custom_profile(endpoint="https://relay.example.test/v1", model="fixture-model", secret_version="credential-v1")
+    profile["profile_hash"] = profile_hash(profile)
+    with pytest.raises(ValueError, match="Keyless custom adapter"):
+        CustomOpenAIAdapter(profile=profile)
+
+
 def test_custom_profile_keeps_billing_and_pricing_unknown():
     profile = validate_custom_profile(endpoint="https://relay.example.test/v1", model="fixture-model")
     assert profile["pricing"] is None
