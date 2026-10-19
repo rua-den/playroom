@@ -2,10 +2,37 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ProfileEditor } from "./ProfileEditor";
+import { ToastProvider } from "./Toast";
 
 const base = { branchId: "branch-1", stateVersion: 4, campaignId: "campaign-1" };
 
 describe("ProfileEditor", () => {
+  it("shows save success only after the server acknowledgement", async () => {
+    let resolveSave!: (response: Response) => void;
+    const save = new Promise<Response>((resolve) => { resolveSave = resolve; });
+    const fetchMock = vi.fn().mockReturnValue(save);
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<ToastProvider><ProfileEditor {...base} profiles={{ world: { kind: "world", data: { name: "Old" } } }} /></ToastProvider>);
+    await user.click(screen.getByRole("button", { name: /Lưu thế giới/ }));
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    resolveSave(new Response(JSON.stringify({ state_version: 5, checkpoint_id: "cp" }), { status: 200 }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Đã lưu hồ sơ.");
+  });
+
+  it("keeps the edited draft and shows only an error after a failed save", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ detail: "failed" }), { status: 500 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<ToastProvider><ProfileEditor {...base} profiles={{ world: { kind: "world", data: { name: "Old" } } }} /></ToastProvider>);
+    const input = screen.getByLabelText("Tên thế giới");
+    await user.clear(input); await user.type(input, "Báº£n nhÃ¡p");
+    await user.click(screen.getByRole("button", { name: /Lưu thế giới/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Không thể lưu");
+    expect(input).toHaveValue("Báº£n nhÃ¡p");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
   it("preserves unknown profile keys and submits aliases as arrays with character identity", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ state_version: 5, checkpoint_id: "checkpoint-5" }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);

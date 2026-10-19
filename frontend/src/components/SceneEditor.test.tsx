@@ -2,8 +2,21 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { SceneEditor } from "./SceneEditor";
+import { ToastProvider } from "./Toast";
 
 describe("SceneEditor", () => {
+  it("shows save success after acknowledgement and never for a local scene draft", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ focus_scene_id: null, scenes: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ state_version: 5, checkpoint_id: "cp" }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<ToastProvider><SceneEditor campaignId="campaign-1" branchId="branch-1" stateVersion={4} /></ToastProvider>);
+    await user.click(await screen.findByRole("button", { name: /Thêm cảnh/ }));
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Lưu cảnh/ }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Đã lưu cảnh.");
+  });
+
   it("translates API scene map to editable rows and puts list plus focus/presence ids", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ focus_scene_id: "scene-1", scenes: { "scene-1": { id: "scene-1", name: "Bến cảng", present_ids: ["char-1"] } } }), { status: 200 }))

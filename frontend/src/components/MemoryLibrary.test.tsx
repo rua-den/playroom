@@ -2,8 +2,34 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { MemoryLibrary } from "./MemoryLibrary";
+import { ToastProvider } from "./Toast";
 
 describe("MemoryLibrary", () => {
+  it("shows saved status after a create acknowledgement even when refresh fails", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ effective_state_version: 4 }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "refresh failed" }), { status: 500 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<ToastProvider><MemoryLibrary campaignId="campaign-1" branchId="branch-1" stateVersion={3} /></ToastProvider>);
+    await screen.findByText("Chưa có ký ức đã duyệt");
+    await user.type(screen.getByLabelText("Nội dung"), "Synthetic memory");
+    await user.click(screen.getByRole("button", { name: /Thêm ký ức/ }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Đã thêm ký ức.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Không thể tải");
+    expect(screen.queryByText("Không thể thêm ký ức.")).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+  });
+
+  it("does not toast for the initial read-only memory GET", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 })));
+    render(<ToastProvider><MemoryLibrary campaignId="campaign-1" branchId="branch-1" stateVersion={3} /></ToastProvider>);
+    await screen.findByText("Chưa có ký ức đã duyệt");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
   it("separates pending proposals and supports explicit review, provenance, source interval and retrieval", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify([{ memory_id: "m1", id: "v1", version: 1, kind: "lore", text: "Canon", origin: "user", status: "approved", pinned: true, source_revision_ids: ["r1", "r2"], knowledge_scope: "public", known_by: [] }]), { status: 200 }))
