@@ -45,7 +45,7 @@ export function AuthView({ onAuthenticated, notice }: AuthViewProps) {
           {error && <div role="alert" className="form-error">{error}</div>}
           <button type="submit" className="primary-button" disabled={pending}>{pending ? "Đang xác thực…" : "Đăng nhập"}</button>
         </form>
-        <p className="security-note">Mật khẩu chỉ được gửi khi đăng nhập và phiên dùng cookie HttpOnly. Dữ liệu riêng trong bộ nhớ trình duyệt được xóa khi bạn đăng xuất.</p>
+        <p className="security-note">Dùng tài khoản bạn đã tạo khi khởi chạy Playroom.</p>
       </section>
     </main>
   );

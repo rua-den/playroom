@@ -270,6 +270,31 @@ describe("story library navigation and last-story persistence", () => {
     vi.spyOn(api, "getCampaignProjection").mockImplementation(async (id) => projection(id));
   }
 
+  it("keeps story creation and both import routes available from the story menu", async () => {
+    mockStories();
+    const user = userEvent.setup();
+    render(<AppShell owner={{ id: "mobile-menu-owner", email: "owner@example.test" }} onLogout={() => undefined} />);
+    await user.click((await screen.findAllByRole("button", { name: "Mở truyện" }))[0]);
+    await user.click(await screen.findByRole("button", { name: "Truyện và tác vụ" }));
+    const storyMenu = screen.getByRole("dialog", { name: "Danh sách truyện" });
+    expect(within(storyMenu).getByRole("button", { name: "Mùa hạ" })).toBeInTheDocument();
+
+    await user.click(within(storyMenu).getByRole("button", { name: "Tạo truyện mới" }));
+    expect(await screen.findByRole("dialog", { name: "Tạo truyện mới" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+
+    await user.click(screen.getByRole("button", { name: "Truyện và tác vụ" }));
+    const chatMenu = screen.getByRole("dialog", { name: "Danh sách truyện" });
+    await user.click(within(chatMenu).getByRole("button", { name: "Nhập ChatGPT" }));
+    expect(await screen.findByRole("dialog", { name: "Nhập hội thoại ChatGPT" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+
+    await user.click(screen.getByRole("button", { name: "Truyện và tác vụ" }));
+    const legacyMenu = screen.getByRole("dialog", { name: "Danh sách truyện" });
+    await user.click(within(legacyMenu).getByRole("button", { name: "Nhập Legacy" }));
+    expect(await screen.findByRole("dialog", { name: "Nhập Legacy Story Bundle" })).toBeInTheDocument();
+  });
+
   it("keeps the real ChatGPT import metadata draft and current story across modal close and reopen", async () => {
     mockStories();
     vi.spyOn(api, "previewChatGptImport").mockResolvedValue({
