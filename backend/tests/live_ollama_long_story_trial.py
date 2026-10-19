@@ -209,6 +209,18 @@ def _messages(index: int, completed: list[tuple[str, str]]) -> list[dict]:
     return messages
 
 
+def _pack_messages(index: int, completed: list[tuple[str, str]]) -> tuple[list[dict], int, int]:
+    """Retain canon and latest player ledger; trim old raw turns first."""
+    count = min(6, len(completed))
+    while True:
+        history = completed[-count:] if count else []
+        messages = _messages(index, history)
+        wire_bytes = len(json.dumps(messages, ensure_ascii=False).encode("utf-8"))
+        if wire_bytes <= MAX_WIRE_BYTES or count == 0:
+            return messages, wire_bytes, count
+        count -= 1
+
+
 def _dry() -> None:
     assert len(STEPS) == MAX_TURNS == 24
     assert len(SCENES) == 6
@@ -217,6 +229,16 @@ def _dry() -> None:
     assert OLLAMA_CLOUD_API_MODEL == MODEL
     assert all("Lan" in step["action"] or "Tớ" in step["action"] for step in STEPS)
     assert len(json.dumps(_messages(0, []), ensure_ascii=False).encode()) <= MAX_WIRE_BYTES
+    synthetic_long_turns = [
+        ("*Lan nhìn quanh.*", json.dumps({"segments": [
+            {"kind": "narration", "text": "Đây là dữ liệu giả lập." * 220}
+        ]}, ensure_ascii=False))
+        for _ in range(6)
+    ]
+    packed, length, count = _pack_messages(21, synthetic_long_turns)
+    assert length <= MAX_WIRE_BYTES and count < 6
+    assert packed[0]["role"] == "system"
+    assert "player_event_ledger" in packed[-1]["content"]
     assert _quality_flags([{"kind": "narration", "text": "Lan bắt đầu tìm kiếm quanh quầy."}])[0]
     print("LONG STORY OFFLINE CONTRACT: PASS; 24 actions, 6 scenes, 0 provider calls")
 
@@ -257,10 +279,12 @@ def main() -> int:
                 # Never advance if a periodic read-only check fails.
                 if i > 0 and i % 6 == 0:
                     _credit(key, RESERVE_PER_TURN * (MAX_TURNS - i))
-                messages = _messages(i, completed)
-                wire_bytes = len(json.dumps(messages, ensure_ascii=False).encode("utf-8"))
+                messages, wire_bytes, packed_turns = _pack_messages(i, completed)
+                if packed_turns < min(6, len(completed)):
+                    print(f"CHAPTER {step['chapter']}: context packed to {packed_turns} recent turns, "
+                          f"wire_bytes={wire_bytes}; canon and player ledger retained")
                 if wire_bytes > MAX_WIRE_BYTES:
-                    print(f"CHAPTER {step['chapter']}: context too large ({wire_bytes}); no POST")
+                    print(f"CHAPTER {step['chapter']}: required context too large ({wire_bytes}); no POST")
                     break
                 stage = f"chapter_{step['chapter']}_dispatch"
                 posts += 1
