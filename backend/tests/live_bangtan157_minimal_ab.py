@@ -114,7 +114,7 @@ def _contract():
     display, segments = parse_narrator_payload(raw, SELECTED)
     assert len(segments) == 2 and "Tập thôi" in display
     assert "NỮ SINH" in SYSTEM and "CẦU LÔNG ĐÔI NỮ" in SYSTEM
-    assert "sân bóng đá" in SYSTEM and "player_action" in SYSTEM
+    assert "sân bóng đá" in SYSTEM and "hành động mới" in SYSTEM
     print("PUBLIC-SAFE HENN/YUNA V2 DRY CONTRACT PASS: female badminton, 3 actions, no requests")
 
 def main() -> int:
