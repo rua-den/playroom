@@ -34,6 +34,21 @@ describe("GenerationComposer provider validation messages", () => {
     expect(onOpenCostSettings).toHaveBeenCalledOnce();
   });
 
+  it("keeps unknown quota wording generic without Economy retry or cost CTA", async () => {
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "preview", campaign_id: "c", branch_id: "b", checkpoint_id: "cp", action: "hello", status: "ready", profile_id: "p" }), { status: 201 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "quota schema secret" }), { status: 422 })));
+    const user = userEvent.setup();
+    render(<GenerationComposer ownerId="o" projection={projection} profileId="p" onCommitted={vi.fn()} onOpenCostSettings={vi.fn()} />);
+    await user.type(screen.getByLabelText("Hành động tiếp theo"), "hello");
+    await user.click(screen.getByRole("button", { name: "Gửi" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Không thể bắt đầu lượt kể chuyện; bản nháp vẫn được giữ.");
+    expect(alert).not.toHaveTextContent("quota schema secret");
+    expect(screen.queryByText(/Economy \+ Free only/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Mở Cài đặt chi phí" })).not.toBeInTheDocument();
+  });
+
   it("sanitizes an unknown provider payload and keeps the draft", async () => {
     vi.stubGlobal("fetch", vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ id: "preview", campaign_id: "c", branch_id: "b", checkpoint_id: "cp", action: "keep me", status: "ready", profile_id: "p" }), { status: 201 }))

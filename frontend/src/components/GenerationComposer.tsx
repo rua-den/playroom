@@ -72,17 +72,16 @@ function isQuota(error: unknown) {
     (error.code === "QUOTA_EXCEEDED" ||
       error.code === "UNSUPPORTED_SCHEMA" ||
       error.code === "SCHEMA_INVALID" ||
-      error.code === "UNSUPPORTED_CAPABILITY" ||
-      /quota|schema|unsupported capability/i.test(error.message))
+      error.code === "UNSUPPORTED_CAPABILITY")
   );
 }
-function generationFailure(error: unknown): { message: string; economyRetry: boolean } {
+function generationFailure(error: unknown): { message: string; economyRetry: boolean; costAction: boolean } {
   const raw = error instanceof ApiError ? error.message.trim().toLowerCase() : "";
   const validation = error instanceof ApiError && [400, 422].includes(error.status);
   if (validation && raw === "free_only cannot exclude purchased-credit billing by the provider")
-    return { message: "Ollama chưa chứng minh được giới hạn chi phí cho profile này. Hãy mở Cài đặt chi phí và tự chấp thuận Capped paid trước khi gửi.", economyRetry: false };
+    return { message: "Ollama chưa chứng minh được giới hạn chi phí cho profile này. Hãy mở Cài đặt chi phí và tự chấp thuận Capped paid trước khi gửi.", economyRetry: false, costAction: true };
   if (validation && raw === "free_only requires a verified free credential tier")
-    return { message: "Free only đang chặn model trả phí này. Hãy chọn profile Free đã xác minh hoặc mở Cài đặt chi phí để tự chấp thuận Capped paid.", economyRetry: false };
+    return { message: "Free only đang chặn model trả phí này. Hãy chọn profile Free đã xác minh hoặc mở Cài đặt chi phí để tự chấp thuận Capped paid.", economyRetry: false, costAction: true };
   if (validation && [
     "an active trial authorization is required for paid generation",
     "trial model/profile does not match the grant",
@@ -90,7 +89,7 @@ function generationFailure(error: unknown): { message: string; economyRetry: boo
     "generation exceeds authorized trial per-send cap",
     "paid trial authorization is missing, revoked, expired, or mismatched",
   ].includes(raw))
-    return { message: "Hạn mức trả phí chưa được chấp thuận cho đúng profile, đã hết hoặc vượt giới hạn lượt này. Hãy kiểm tra Cài đặt chi phí.", economyRetry: false };
+    return { message: "Hạn mức trả phí chưa được chấp thuận cho đúng profile, đã hết hoặc vượt giới hạn lượt này. Hãy kiểm tra Cài đặt chi phí.", economyRetry: false, costAction: true };
   if (validation && [
     "required context exceeds the verified input budget",
     "required director context exceeds the configured input budget",
@@ -99,9 +98,9 @@ function generationFailure(error: unknown): { message: string; economyRetry: boo
     "director wire exceeds the configured input budget",
     "narrator wire exceeds the configured input budget",
   ].includes(raw))
-    return { message: "Context hoặc ngân sách lượt kể không đáp ứng model này. Hãy mở Cài đặt chi phí để xem giới hạn đã chấp thuận.", economyRetry: false };
-  if (isQuota(error)) return { message: "Không thể gửi vì quota hoặc khả năng model không đáp ứng. Chỉ model được xác minh Free mới được gửi với Free only; bản nháp được giữ.", economyRetry: true };
-  return { message: "Không thể bắt đầu lượt kể chuyện; bản nháp vẫn được giữ.", economyRetry: false };
+    return { message: "Context hoặc ngân sách lượt kể không đáp ứng model này. Hãy mở Cài đặt chi phí để xem giới hạn đã chấp thuận.", economyRetry: false, costAction: true };
+  if (isQuota(error)) return { message: "Không thể gửi vì quota hoặc khả năng model không đáp ứng. Chỉ model được xác minh Free mới được gửi với Free only; bản nháp được giữ.", economyRetry: true, costAction: false };
+  return { message: "Không thể bắt đầu lượt kể chuyện; bản nháp vẫn được giữ.", economyRetry: false, costAction: false };
 }
 function isQuotaFailure(failure: GenerationJob["failure"]) {
   return Boolean(
@@ -111,8 +110,7 @@ function isQuotaFailure(failure: GenerationJob["failure"]) {
       "UNSUPPORTED_SCHEMA",
       "SCHEMA_INVALID",
       "UNSUPPORTED_CAPABILITY",
-    ].includes(failure.code ?? "") ||
-      /quota|schema|unsupported capability/i.test(failure.message ?? "")),
+    ].includes(failure.code ?? "")),
   );
 }
 
@@ -140,6 +138,7 @@ export function GenerationComposer({
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [economyRetry, setEconomyRetry] = useState(false);
+  const [costAction, setCostAction] = useState(false);
   const [pending, setPending] = useState(false);
 
   const polling = useRef<number | null>(null);
@@ -699,6 +698,7 @@ export function GenerationComposer({
     setPending(true);
     setError(null);
     setEconomyRetry(false);
+    setCostAction(false);
     try {
       if (job?.status === "candidate") {
         await commitCandidate(
@@ -721,6 +721,7 @@ export function GenerationComposer({
       if (!isCurrentEpoch(submitEpoch)) return;
       const failure = generationFailure(cause);
       setEconomyRetry(failure.economyRetry);
+      setCostAction(failure.costAction);
       const missingConfiguration = cause instanceof Error && cause.message === "Chưa cấu hình hồ sơ nhà cung cấp cho vai trò kể chuyện.";
       setError(cause instanceof ApiError && cause.status === 409
         ? "Tác vụ đã thay đổi. Hãy tải lại chiến dịch."
@@ -795,7 +796,7 @@ export function GenerationComposer({
               mức lượt miễn phí của Ollama.
             </span>
           )}
-          {onOpenCostSettings && <button type="button" className="quiet-button touch-target composer-error-settings" onClick={onOpenCostSettings}>Mở Cài đặt chi phí</button>}
+          {onOpenCostSettings && costAction && <button type="button" className="quiet-button touch-target composer-error-settings" onClick={onOpenCostSettings}>Mở Cài đặt chi phí</button>}
         </div>
       )}
       {job && (

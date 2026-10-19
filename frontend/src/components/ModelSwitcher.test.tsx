@@ -113,4 +113,14 @@ describe("ModelSwitcher", () => {
     await waitFor(() => expect(onSaved).toHaveBeenCalledOnce());
     expect(JSON.parse(String(fetchMock.mock.calls[2][1]?.body))).toEqual({ narrator_profile_id: "same-model" });
   });
+
+  it("does not borrow latest Free billing metadata for an older pinned version", async () => {
+    const pinned = { ...settings, roles: { narrator: { id: "same-model", version: 1 } } };
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(pinned)))
+      .mockResolvedValueOnce(new Response(JSON.stringify([{ id: "same-model", version: 2, model: "same", model_label: "Same v2", provider: "openrouter", credential_tier: "free", pricing_verified: true }]))));
+    render(<ModelSwitcher open onClose={vi.fn()} onOpenCostSettings={vi.fn()} onSaved={vi.fn()} busy={false} />);
+    await waitFor(() => expect(screen.getByText(/pricing và tier của bản ghim không còn/)).toBeInTheDocument());
+    expect(screen.queryByText(/Model hiện tại chưa được xác minh là Free/)).not.toBeInTheDocument();
+  });
 });

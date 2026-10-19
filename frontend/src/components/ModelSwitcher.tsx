@@ -54,7 +54,6 @@ export function ModelSwitcher({
     [profiles, settings],
   );
   const currentDisplay = current ?? profiles.find((profile) => profile.id === settings?.roles?.narrator?.id);
-  const warningProfile = current ?? currentDisplay;
   const verifiedProfiles = useMemo(() => profiles.filter(isVerifiedRealProfile), [profiles]);
   const selectedProfile = verifiedProfiles.find((profile) => profile.id === selected);
   const changed = Boolean(selectedProfile && (selectedProfile.id !== settings?.roles?.narrator?.id || selectedProfile.version !== settings?.roles?.narrator?.version));
@@ -107,10 +106,13 @@ export function ModelSwitcher({
         ))}
       </select>
       {verifiedProfiles.length === 0 && !loading && <p role="status">Chưa có profile narrator thật đã xác minh. Hãy mở Cài đặt để xác minh model.</p>}
-      {settings?.policy === "free_only" && (warningProfile?.provider === "ollama" || selectedProfile?.provider === "ollama") && (
+      {settings?.roles?.narrator && !current && currentDisplay && (
+        <p role="note" className="form-error">Model đang ghim v{settings.roles.narrator.version}; pricing và tier của bản ghim không còn trong danh sách hiện tại nên được coi là chưa biết. Bản mới v{currentDisplay.version} có thể được chọn để cập nhật, hoặc mở Cài đặt.</p>
+      )}
+      {settings?.policy === "free_only" && (current?.provider === "ollama" || selectedProfile?.provider === "ollama") && (
         <p role="note" className="form-error">Ollama included credits chưa chứng minh được cơ chế khóa chi phí của provider. Free only vẫn giữ nguyên; hãy mở Cài đặt chi phí và tự chấp thuận Capped paid nếu muốn dùng profile này.</p>
       )}
-      {settings?.policy === "free_only" && warningProfile?.provider !== "ollama" && warningProfile?.credential_tier !== "free" && (
+      {settings?.policy === "free_only" && ((current && current.provider !== "ollama" && current.credential_tier !== "free") || (selectedProfile && selectedProfile.provider !== "ollama" && selectedProfile.credential_tier !== "free")) && (
         <p role="note" className="form-error">Model hiện tại chưa được xác minh là Free. Free only sẽ chặn lượt trả phí; hãy mở Cài đặt chi phí nếu bạn muốn tự chấp thuận Capped paid.</p>
       )}
       <div className="model-switcher-actions">
