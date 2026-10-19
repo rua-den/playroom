@@ -24,6 +24,8 @@ import uvicorn
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, expect, sync_playwright
 
 from playroom.demo import create_demo_app
+from playroom.db import connect
+from playroom.model_profiles import persist_model_profile
 from playroom.provider import ProviderResult
 
 
@@ -112,6 +114,41 @@ def _start_demo(data_dir: Path):
         except Exception:
             time.sleep(0.1)
     raise RuntimeError("Demo server failed its loopback health check")
+
+
+def _seed_synthetic_narrator_profiles(data_dir: Path) -> dict[str, dict]:
+    """Install verified, production-shaped narrator profiles without HTTP."""
+    connection = connect(data_dir / "playroom.sqlite3")
+    try:
+        owner = connection.execute("SELECT id FROM owners WHERE email=?", (EMAIL.casefold(),)).fetchone()
+        assert owner is not None
+        profiles = {}
+        for profile_id, model, label in (
+            ("synthetic-openrouter-free-a", "synthetic/free0pricing-a", "OpenRouter free0pricing A"),
+            ("synthetic-openrouter-free-b", "synthetic/free0pricing-b", "OpenRouter free0pricing B"),
+        ):
+            profiles[profile_id] = persist_model_profile(connection, owner["id"], {
+                "id": profile_id,
+                "provider": "openrouter",
+                "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+                "model": model,
+                "model_label": label,
+                "provider_tag": "synthetic-exact",
+                "context_limit": 12000,
+                "output_limit": 4000,
+                "credential_tier": "free",
+                "pricing_verified": True,
+                "pricing": {"prompt": "0", "completion": "0", "currency": "USD", "unit": "USD/token"},
+                "secret_version": "synthetic-credential",
+                "capabilities_verified": True,
+                "structured_output": True,
+                "native_structured_output": True,
+                "structured_schema_parameter": "response_format",
+                "supported_parameters": ["response_format", "max_tokens"],
+            })
+        return profiles
+    finally:
+        connection.close()
 
 
 def _start_live_local(data_dir: Path):
@@ -475,7 +512,9 @@ def _browser_zip_conversations() -> bytes:
 
 def browser_synthetic_chat() -> None:
     with tempfile.TemporaryDirectory(prefix="playroom-b3-") as tmp:
-        app, server, thread, origin = _start_demo(Path(tmp))
+        data_dir = Path(tmp)
+        app, server, thread, origin = _start_demo(data_dir)
+        seeded_narrators = _seed_synthetic_narrator_profiles(data_dir)
         try:
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch(headless=True, args=["--no-sandbox"])
@@ -1108,6 +1147,78 @@ def browser_synthetic_chat() -> None:
                 modal_draft = "synthetic unsent draft stays with Lanterns"
                 page.locator("#generation-action").fill(modal_draft)
                 provider_calls_before_modals = len(campaign.calls)
+
+                # The composer model trigger must load the real settings and
+                # verified profile list, save an explicit narrator binding,
+                # and hand off to Cost settings without stacking dialogs.
+                original_settings = page.context.request.get(f"{origin}/api/provider/settings")
+                assert original_settings.ok
+                original_narrator_id = original_settings.json()["roles"]["narrator"]["id"]
+                assert original_narrator_id not in seeded_narrators
+                for viewport_width in (375, 1280):
+                    page.set_viewport_size({"width": viewport_width, "height": 780})
+                    model_trigger = page.get_by_role("button", name="\u0110\u1ed5i model", exact=True)
+                    expect(model_trigger).to_be_visible()
+                    model_trigger.click()
+                    model_dialog = page.get_by_role("dialog", name="Model k\u1ec3 chuy\u1ec7n")
+                    expect(model_dialog).to_be_visible(timeout=12000)
+                    _assert_modal_geometry(page, model_dialog, viewport_width)
+                    _assert_modal_heading_readable(model_dialog)
+                    profiles_response = page.context.request.get(f"{origin}/api/provider/profiles")
+                    assert profiles_response.ok
+                    profiles = profiles_response.json()
+                    listed_ids = {profile["id"] for profile in profiles}
+                    assert set(seeded_narrators) <= listed_ids
+                    narrator = model_dialog.get_by_label("Model narrator")
+                    expect(narrator).to_be_visible()
+                    option_text = narrator.locator("option").all_text_contents()
+                    assert any("free0pricing-a" in text for text in option_text)
+                    assert any("free0pricing-b" in text for text in option_text)
+                    _visual_screenshot(page, f"model-picker-{viewport_width}.png", full_page=False)
+
+                    selected_id = "synthetic-openrouter-free-b" if viewport_width == 375 else "synthetic-openrouter-free-a"
+                    narrator.select_option(selected_id)
+                    save_model = model_dialog.get_by_role("button", name="L\u01b0u model", exact=True)
+                    expect(save_model).to_be_enabled()
+                    provider_calls_before_model_save = len(campaign.calls)
+                    save_model.click()
+                    toast_region = page.get_by_role("region", name="Th\u00f4ng b\u00e1o")
+                    expect(toast_region.get_by_role("status")).to_be_visible(timeout=12000)
+                    saved_settings = page.context.request.get(f"{origin}/api/provider/settings")
+                    assert saved_settings.ok
+                    saved_binding = saved_settings.json()["roles"]["narrator"]
+                    assert saved_binding["id"] == selected_id
+                    assert saved_binding["version"] == seeded_narrators[selected_id]["version"]
+                    assert saved_binding.get("profile_hash") == seeded_narrators[selected_id].get("profile_hash")
+                    assert len(campaign.calls) == provider_calls_before_model_save
+                    _assert_story_preserved(page, modal_title, modal_draft, 1)
+
+                    if viewport_width == 375:
+                        model_dialog.get_by_role("button", name="C\u00e0i \u0111\u1eb7t chi ph\u00ed", exact=True).click()
+                        settings_dialog = page.get_by_role("dialog", name="C\u00e0i \u0111\u1eb7t")
+                        expect(model_dialog).not_to_be_visible()
+                        expect(settings_dialog).to_be_visible(timeout=12000)
+                        assert page.locator("[role='dialog']:visible").count() == 1
+                        _assert_modal_geometry(page, settings_dialog, viewport_width)
+                        settings_dialog.get_by_role("button", name="\u0110\u00f3ng c\u00e0i \u0111\u1eb7t", exact=True).click()
+                        expect(settings_dialog).not_to_be_visible()
+                    else:
+                        model_dialog.get_by_role("button", name="\u0110\u00f3ng ch\u1ecdn model", exact=True).click()
+                        expect(model_dialog).not_to_be_visible()
+                    expect(model_trigger).to_be_focused()
+                    _assert_story_preserved(page, modal_title, modal_draft, 1)
+
+                    # Keep later gate coverage on the original synthetic fake
+                    # binding; the picker coverage above proves the persisted
+                    # production-shaped binding and restores this fixture.
+                    restored = page.context.request.put(
+                        f"{origin}/api/provider/settings",
+                        data=json.dumps({"narrator_profile_id": original_narrator_id}),
+                        headers={"content-type": "application/json", "origin": origin},
+                    )
+                    assert restored.ok, restored.text()
+                    restored_binding = restored.json()["roles"]["narrator"]
+                    assert restored_binding["id"] == original_narrator_id
 
                 # Check the real dialog rectangle at all required widths. The
                 # desktop center assertion intentionally uses measured bounds,
