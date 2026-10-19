@@ -40,7 +40,7 @@ function renderStrictImport(onImported = vi.fn()) {
 
 async function chooseFiles(files: File[]) {
   fireEvent.change(screen.getByLabelText("Tệp xuất từ ChatGPT"), { target: { files } });
-  await waitFor(() => expect(readFiles).toHaveBeenCalled());
+  await screen.findByRole("combobox");
 }
 
 async function prepareImport(items = [conversation("one"), conversation("two")]) {

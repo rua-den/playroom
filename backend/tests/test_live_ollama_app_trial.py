@@ -11,6 +11,9 @@ from live_ollama_app_trial import (
     FIXTURE_KEY,
     OLLAMA_CLOUD_ENDPOINT,
     OfflineProviderTransport,
+    NPC_VERSION,
+    NPC_ID,
+    _response_shape_summary,
     _balance_preflight,
     _run_app_flow,
     trial_contract,
@@ -50,6 +53,37 @@ def test_offline_fixture_rejects_wrong_persisted_credential():
     with pytest.raises(RuntimeError, match="credential"):
         client.get(f"{OLLAMA_CLOUD_ENDPOINT}/models", headers={"Authorization": "Bearer wrong-key"})
     client.close()
+
+
+def test_old_invented_npc_version_fixture_is_red():
+    fixture = OfflineProviderTransport()
+    fixture.npc_profile_version = "persisted-version"
+    request = httpx.Request(
+        "POST", f"{OLLAMA_CLOUD_ENDPOINT}/chat/completions",
+        headers={"Authorization": f"Bearer {FIXTURE_KEY}"},
+        json={"model": "gemma4:31b", "max_tokens": 640, "messages": [{"content": NPC_VERSION}]},
+    )
+    with pytest.raises(RuntimeError, match="invented"):
+        fixture(request)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("null", {"json_valid": True, "segment_kind_valid": False, "selected_attribution_match": False}),
+        ('{"segments": [{"kind": "narration"}, null]}', {"json_valid": True, "segment_kind_valid": False, "selected_attribution_match": False}),
+        ('{"segments": [{"kind": "dialogue", "character_id": "x", "profile_version_id": "wrong"}]}', {"json_valid": True, "segment_kind_valid": True, "selected_attribution_match": False}),
+        (json.dumps({"segments": [{"kind": "dialogue", "character_id": NPC_ID, "profile_version_id": "persisted"}]}), {"json_valid": True, "segment_kind_valid": True, "selected_attribution_match": True}),
+        ('```json\n{"segments": []}\n```', {"json_valid": False, "fenced": True, "segment_kind_valid": False, "selected_attribution_match": False}),
+    ],
+)
+def test_response_shape_summary_is_strict_and_redacts_content(text, expected):
+    summary = _response_shape_summary(text, "persisted")
+    assert {key: summary[key] for key in expected} == expected
+    rendered = json.dumps(summary)
+    assert "persisted" not in rendered
+    assert NPC_ID not in rendered
+    assert "wrong" not in rendered
 
 
 def test_offline_app_flow_exercises_real_verifier_adapter_and_persistence():
@@ -112,7 +146,7 @@ def test_live_gate_denies_missing_approval_and_reruns_before_dispatch(monkeypatc
     monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
     assert ensure_live_gate() is False
 
-    monkeypatch.setenv("B4_LOCAL_APP_APPROVAL", "B4_LOCAL_APP_TRIAL_2026_10_18")
+    monkeypatch.setenv("B4_LOCAL_APP_APPROVAL", "B4_LOCAL_APP_TRIAL_2026_10_19")
     monkeypatch.setenv("OLLAMA_API_KEY", "redacted-test-key")
     monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
     assert ensure_live_gate() is False
