@@ -140,10 +140,10 @@ export function ChatGptImport({ onImported, onCancel }: Props) {
     {notice && <p role="status">{notice}</p>}
     <div className="campaign-form">
       <label htmlFor="chatgpt-files">Tệp xuất từ ChatGPT</label>
-      <input id="chatgpt-files" type="file" accept=".json,.zip,application/json,application/zip" multiple disabled={busy || importing} onChange={(event) => void loadFiles(event)} />
+      <input id="chatgpt-files" type="file" accept=".json,.zip,application/json,application/zip" multiple disabled={importing} onChange={(event) => void loadFiles(event)} />
       {conversations.length > 0 && <>
         <label htmlFor="chatgpt-thread">Chọn chính xác cuộc hội thoại cần nhập</label>
-        <select id="chatgpt-thread" value={selectedIndex} disabled={busy || importing} onChange={(event) => choose(Number(event.target.value))}>
+        <select id="chatgpt-thread" value={selectedIndex} disabled={importing} onChange={(event) => choose(Number(event.target.value))}>
           {conversations.map((item, index) => <option key={item.id} value={index}>{item.title || "(không có tiêu đề)"} — {item.id.slice(0, 8)}</option>)}
         </select>
         <button type="button" className="quiet-button touch-target" disabled={busy || importing} onClick={() => void doPreview()}>Xem trước thread này</button>
