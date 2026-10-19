@@ -501,7 +501,7 @@ class GenerationService:
         native_schema_capable = bool(profile.get("structured_output") and profile.get("native_structured_output") and profile.get("structured_schema_parameter") in supported_parameters)
         narrator_schema = None if profile.get("is_test_profile") or profile.get("legacy_plain_output") or not native_schema_capable else NARRATOR_SCHEMA
         system = (
-            "Continue in Vietnamese. Respect canon; committed raw turns override summaries. "
+            "Continue Vietnamese using supplied context. Respect canon; committed raw turns override summaries. "
             "Exclude pending, foreign, rejected and future facts. known_by is knowledge, not presence. "
             "Respect focus/parallel scenes, style and player choices. "
             "Only selected_characters may speak; use their stable IDs for dialogue. "
