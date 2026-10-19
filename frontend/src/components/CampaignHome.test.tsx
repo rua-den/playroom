@@ -28,8 +28,8 @@ describe("CampaignHome", () => {
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
     render(<AppShell owner={owner} onLogout={vi.fn()} />);
-    await user.click(await screen.findByRole("button", { name: "Tạo chiến dịch đầu tiên" }));
-    await user.type(screen.getByLabelText("Tên chiến dịch"), "Bản đồ");
+    await user.click(await screen.findByRole("button", { name: "+ Tạo truyện mới" }));
+    await user.type(screen.getByLabelText("Tên truyện"), "Bản đồ");
     await user.type(screen.getByLabelText("Tên thế giới"), "Miền sương");
     await user.type(screen.getByLabelText("Mô tả thế giới"), "Một thung lũng");
     await user.type(screen.getByLabelText("Tên persona"), "Linh");
@@ -38,7 +38,7 @@ describe("CampaignHome", () => {
     const characterName = screen.getByLabelText("Tên nhân vật 1");
     await user.type(characterName, "An");
     await user.type(screen.getByLabelText("Bí danh nhân vật 1"), "Bóng đêm, Người gác");
-    await user.click(screen.getByRole("button", { name: "Lưu chiến dịch" }));
+    await user.click(screen.getByRole("button", { name: "Lưu truyện" }));
     await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(2));
     const payload = JSON.parse(fetchMock.mock.calls[1][1].body as string);
     expect(payload).toMatchObject({ title: "Bản đồ", world: { name: "Miền sương", description: "Một thung lũng" }, persona: { name: "Linh", description: "Người tìm đường" } });
@@ -54,13 +54,13 @@ describe("CampaignHome", () => {
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
     render(<AppShell owner={owner} onLogout={vi.fn()} />);
-    await user.click(await screen.findByRole("button", { name: "Tạo chiến dịch đầu tiên" }));
-    await user.type(screen.getByLabelText("Tên chiến dịch"), "Không mất bản nháp");
+    await user.click(await screen.findByRole("button", { name: "+ Tạo truyện mới" }));
+    await user.type(screen.getByLabelText("Tên truyện"), "Không mất bản nháp");
     await user.type(screen.getByLabelText("Tên thế giới"), "Thế giới thử");
     await user.type(screen.getByLabelText("Tên persona"), "Persona thử");
-    await user.click(screen.getByRole("button", { name: "Lưu chiến dịch" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Không thể tạo chiến dịch");
-    expect(screen.getByLabelText("Tên chiến dịch")).toHaveValue("Không mất bản nháp");
+    await user.click(screen.getByRole("button", { name: "Lưu truyện" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Không thể tạo truyện");
+    expect(screen.getByLabelText("Tên truyện")).toHaveValue("Không mất bản nháp");
     expect(screen.getByLabelText("Tên thế giới")).toHaveValue("Thế giới thử");
     expect(screen.getByLabelText("Tên persona")).toHaveValue("Persona thử");
   });
@@ -70,8 +70,8 @@ describe("CampaignHome", () => {
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
     render(<AppShell owner={owner} onLogout={vi.fn()} />);
-    await user.click(await screen.findByRole("button", { name: "Tạo chiến dịch đầu tiên" }));
-    await user.type(screen.getByLabelText("Tên chiến dịch"), "Bản nháp");
+    await user.click(await screen.findByRole("button", { name: "+ Tạo truyện mới" }));
+    await user.type(screen.getByLabelText("Tên truyện"), "Bản nháp");
     await user.type(screen.getByLabelText("Tên thế giới"), "Thế giới");
     await user.type(screen.getByLabelText("Tên persona"), "Persona");
     await user.click(screen.getByRole("button", { name: "Thêm nhân vật" }));
@@ -98,6 +98,7 @@ describe("CampaignHome", () => {
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
     render(<AppShell owner={owner} onLogout={vi.fn()} />);
+    await user.click((await screen.findAllByRole("button", { name: "Mở truyện" }))[0]);
     expect(await screen.findByText("Câu cũ")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Hai chiến dịch" }));
     expect(screen.queryByText("Câu cũ")).not.toBeInTheDocument();
@@ -112,17 +113,18 @@ describe("CampaignHome", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify(projection("one", "Một chiến dịch", "Câu chuyện")), { status: 200 })));
     const user = userEvent.setup();
     render(<AppShell owner={owner} onLogout={vi.fn()} />);
+    await user.click(await screen.findByRole("button", { name: "Mở truyện" }));
     await screen.findByText("Câu chuyện");
-    const drawerButton = screen.getByRole("button", { name: "Chiến dịch" });
+    const drawerButton = screen.getByRole("button", { name: "Truyện" });
     await user.click(drawerButton);
-    const drawer = screen.getByRole("dialog", { name: "Danh sách chiến dịch" });
+    const drawer = screen.getByRole("dialog", { name: "Danh sách truyện" });
     expect(drawer).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Đóng danh sách chiến dịch" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Đóng danh sách truyện" })).toHaveFocus();
     expect(drawerButton).toHaveClass("touch-target");
     await user.keyboard("{Escape}");
     expect(drawerButton).toHaveFocus();
     await user.click(drawerButton);
-    const reopenedDrawer = screen.getByRole("dialog", { name: "Danh sách chiến dịch" });
+    const reopenedDrawer = screen.getByRole("dialog", { name: "Danh sách truyện" });
     const drawerCampaign = within(reopenedDrawer).getByRole("button", { name: "Một chiến dịch" });
     expect(drawerCampaign).toHaveAttribute("aria-pressed", "true");
     await user.click(drawerCampaign);
@@ -144,8 +146,8 @@ describe("CampaignHome", () => {
   it("shows a shell-level load error instead of the empty create state", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValueOnce(new TypeError("offline")));
     render(<AppShell owner={owner} onLogout={vi.fn()} />);
-    expect(await screen.findByRole("alert")).toHaveTextContent("Không thể tải danh sách chiến dịch");
-    expect(screen.queryByRole("button", { name: "Tạo chiến dịch đầu tiên" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Không thể tải thư viện truyện");
+    expect(screen.queryByRole("button", { name: "Tạo truyện đầu tiên" })).not.toBeInTheDocument();
   });
 });
 

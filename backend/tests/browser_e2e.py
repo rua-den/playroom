@@ -237,7 +237,7 @@ def _assert_mobile(page, width: int) -> None:
     assert overflow <= 1, f"Horizontal overflow at {width}px: {overflow}px"
     # The current responsive UI uses the topbar campaign select; the
     # legacy mobile-campaign drawer button is intentionally hidden in CSS.
-    expect(page.get_by_role("combobox", name="Chiến dịch hiện tại")).to_be_visible()
+    expect(page.get_by_role("combobox", name="Truyện hiện tại")).to_be_visible()
     if width == 390:
         page.get_by_role("button", name="AI đang nhớ gì").click()
         details = page.get_by_role("dialog", name="Hồ sơ và ký ức")
@@ -333,13 +333,13 @@ def browser_synthetic_chat() -> None:
                 page.get_by_label("Email").fill(EMAIL)
                 page.get_by_label("Mật khẩu").fill(PASSWORD)
                 page.get_by_role("button", name="Đăng nhập").click()
-                page.get_by_role("button", name="Tạo chiến dịch đầu tiên").click()
-                page.get_by_label("Tên chiến dịch").fill("Thử nghiệm sân bóng")
+                page.get_by_role("button", name="+ Tạo truyện mới").click()
+                page.get_by_label("Tên truyện").fill("Thử nghiệm sân bóng")
                 page.get_by_label("Tên thế giới").fill("Trường Bangtan")
                 page.get_by_label("Tên persona").fill("Henn")
                 page.get_by_role("button", name="Thêm nhân vật").click()
                 page.get_by_label("Tên nhân vật 1").fill("Yuna")
-                page.get_by_role("button", name="Lưu chiến dịch").click()
+                page.get_by_role("button", name="Lưu truyện").click()
 
                 expect(page.get_by_role("heading", name="Thử nghiệm sân bóng")).to_be_visible(timeout=15000)
                 expect(page.get_by_role("button", name="Gửi", exact=True)).to_have_count(1)
@@ -821,13 +821,13 @@ def browser_live_local_chat() -> None:
                 page.get_by_label("Email").fill(EMAIL)
                 page.get_by_label("Mật khẩu").fill(PASSWORD)
                 page.get_by_role("button", name="Đăng nhập").click()
-                page.get_by_role("button", name="Tạo chiến dịch đầu tiên").click()
-                page.get_by_label("Tên chiến dịch").fill("Lan Vy Binh local")
+                page.get_by_role("button", name="+ Tạo truyện mới").click()
+                page.get_by_label("Tên truyện").fill("Lan Vy Binh local")
                 page.get_by_label("Tên thế giới").fill("Thế giới tổng hợp")
                 page.get_by_label("Tên persona").fill("Bình")
                 page.get_by_role("button", name="Thêm nhân vật").click()
                 page.get_by_label("Tên nhân vật 1").fill("Lan")
-                page.get_by_role("button", name="Lưu chiến dịch").click()
+                page.get_by_role("button", name="Lưu truyện").click()
 
                 expect(page.get_by_role("heading", name="Lan Vy Binh local")).to_be_visible(timeout=15000)
                 send = page.locator(".generation-composer button[type=submit]")
