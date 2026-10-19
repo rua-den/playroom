@@ -130,6 +130,11 @@ def test_chapter_156_scale_import_http_review_restart_idempotency(tmp_path):
     assert db.execute("SELECT COUNT(*) FROM memory_versions WHERE campaign_id=?",
                       (saved["campaign_id"],)).fetchone()[0] >= 68
     head = get_branch_head(db, saved["campaign_id"], saved["branch_id"], owner.id)
+    from playroom.chatgpt_import import assert_import_review_approved
+    from playroom.domain import StateConflict
+    import pytest
+    with pytest.raises(StateConflict, match="review"):
+        assert_import_review_approved(db, owner.id, saved["campaign_id"], head.checkpoint_id)
     approved = approve_import_review(
         db, owner.id, saved["campaign_id"], saved["branch_id"], head.checkpoint_id,
         {"persona": True, "npc_voice_presence": True,
@@ -142,4 +147,37 @@ def test_chapter_156_scale_import_http_review_restart_idempotency(tmp_path):
     migrate(reopened)
     assert reopened.execute("SELECT COUNT(*) FROM campaigns").fetchone()[0] == 1
     assert reopened.execute("SELECT COUNT(*) FROM legacy_import_sources").fetchone()[0] == 1
+    # Review approval must survive another process/restart and promote all
+    # imported memories without creating fictional transcript turns.
+    from playroom.chatgpt_import import assert_import_review_approved, import_review
+    from playroom.memory import list_memory_library, list_memory_proposals
+
+    approved_head = get_branch_head(reopened, saved["campaign_id"], saved["branch_id"], owner.id)
+    assert_import_review_approved(reopened, owner.id, saved["campaign_id"], approved_head.checkpoint_id)
+    assert import_review(reopened, owner.id, saved["campaign_id"])["required"] is False
+    assert len(list_memory_library(
+        reopened, saved["campaign_id"], saved["branch_id"], None, owner_id=owner.id
+    )) == 68
+    assert list_memory_proposals(
+        reopened, saved["campaign_id"], saved["branch_id"], None, owner_id=owner.id
+    ) == []
+    assert reopened.execute("SELECT COUNT(*) FROM turns WHERE campaign_id=?",
+                            (saved["campaign_id"],)).fetchone()[0] == 0
     reopened.close()
+
+    app3 = create_app(database_url=str(path), allowed_hosts={"testserver"},
+                      secure_cookies=False, credential_root=str(tmp_path / "keys"))
+    with TestClient(app3) as client:
+        assert client.post("/api/auth/login", json={
+            "email": owner.email, "password": "test password long enough"
+        }, headers=headers).status_code == 200
+        projection = client.get(f"/api/campaigns/{saved['campaign_id']}/projection",
+                                params={"branch_id": saved["branch_id"]})
+        assert projection.status_code == 200, projection.text
+        assert projection.json()["import_review"]["required"] is False
+        assert projection.json()["transcript"] == []
+        duplicate = client.post("/api/transfers/legacy/import", json={
+            "bundle": source, "import_key": str(uuid4())
+        }, headers=headers)
+        assert duplicate.status_code == 201, duplicate.text
+        assert duplicate.json()["campaign_id"] == saved["campaign_id"]
