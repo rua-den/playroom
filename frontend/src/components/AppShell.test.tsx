@@ -270,6 +270,50 @@ describe("story library navigation and last-story persistence", () => {
     vi.spyOn(api, "getCampaignProjection").mockImplementation(async (id) => projection(id));
   }
 
+  it("keeps the real ChatGPT import metadata draft and current story across modal close and reopen", async () => {
+    mockStories();
+    vi.spyOn(api, "previewChatGptImport").mockResolvedValue({
+      turn_count: 1,
+      skipped_messages: 0,
+      warnings: [],
+      sample_first: { action_text: "Synthetic player text", narrative_text: "Synthetic assistant text" },
+      sample_last: { action_text: "Synthetic player text", narrative_text: "Synthetic assistant text" },
+    } as never);
+    window.localStorage.setItem(lastStoryStorageKey("import-owner"), "story-b");
+    const user = userEvent.setup();
+    render(<AppShell owner={{ id: "import-owner", email: "import@example.test" }} onLogout={() => undefined} />);
+
+    expect(await screen.findByRole("heading", { name: "Đêm mưa" })).toBeInTheDocument();
+    const importTrigger = screen.getByRole("button", { name: "Nhập ChatGPT" });
+    await user.click(importTrigger);
+    expect(await screen.findByRole("dialog", { name: "Nhập hội thoại ChatGPT" })).toBeInTheDocument();
+
+    const exportFile = new File([
+      JSON.stringify([{ id: "synthetic-thread", title: "Synthetic thread", current_node: "node-1", mapping: {} }]),
+    ], "conversations.json", { type: "application/json" });
+    await user.upload(screen.getByLabelText("Tệp xuất từ ChatGPT"), exportFile);
+    await user.click(await screen.findByRole("button", { name: "Xem trước thread này" }));
+    const title = await screen.findByLabelText("Tên chiến dịch mới");
+    await user.clear(title);
+    await user.type(title, "Nháp hội thoại giữ lại");
+    await user.clear(screen.getByLabelText("Thế giới"));
+    await user.type(screen.getByLabelText("Thế giới"), "Thành phố mưa");
+    await user.clear(screen.getByLabelText("Persona người chơi"));
+    await user.type(screen.getByLabelText("Persona người chơi"), "Người kể chuyện");
+
+    expect(document.querySelector(".workspace-grid h1")).toHaveTextContent("Đêm mưa");
+    expect(document.querySelector(".story-library") ?? document.querySelector(".workspace-grid")).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(importTrigger).toHaveFocus();
+
+    await user.click(importTrigger);
+    expect(await screen.findByRole("dialog", { name: "Nhập hội thoại ChatGPT" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Tên chiến dịch mới")).toHaveValue("Nháp hội thoại giữ lại");
+    expect(screen.getByLabelText("Thế giới")).toHaveValue("Thành phố mưa");
+    expect(screen.getByLabelText("Persona người chơi")).toHaveValue("Người kể chuyện");
+    expect(document.querySelector(".workspace-grid h1")).toHaveTextContent("Đêm mưa");
+  });
+
   it("opens the library without loading a story until the user chooses one", async () => {
     mockStories();
     render(<AppShell owner={{ id: "library-owner", email: "owner@example.test" }} onLogout={() => undefined} />);
