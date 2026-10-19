@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { lastStoryStorageKey, recoverableJobCount, recoverableJobSummary } from "./AppShell";
 import { AppShell, ImportReviewPanel } from "./AppShell";
 import { api } from "../api/client";
+import type { CampaignProjection } from "../api/types";
 
 vi.mock("./GenerationComposer", () => ({ GenerationComposer: () => <div data-testid="generation-composer" /> }));
 vi.mock("./ProfileEditor", () => ({ ProfileEditor: () => <div data-testid="profile-editor" /> }));
@@ -359,6 +360,25 @@ describe("story library navigation and last-story persistence", () => {
     expect(within(library).getByRole("button", { name: "+ Tạo truyện mới" })).toBeInTheDocument();
     expect(within(library).getByRole("button", { name: "Nhập hội thoại ChatGPT" })).toBeInTheDocument();
     expect(within(library).getByRole("button", { name: "Nhập Legacy Bundle" })).toBeInTheDocument();
+  });
+
+  it("offers the context panel only after the selected story projection is ready", async () => {
+    mockStories();
+    let resolveProjection: (value: CampaignProjection) => void = () => undefined;
+    vi.mocked(api.getCampaignProjection).mockReturnValueOnce(new Promise((resolve) => { resolveProjection = resolve; }));
+    const user = userEvent.setup();
+    render(<AppShell owner={{ id: "pending-context-owner", email: "owner@example.test" }} onLogout={() => undefined} />);
+    await user.click((await screen.findAllByRole("button", { name: "Mở truyện" }))[0]);
+    const storyMenuTrigger = await screen.findByRole("button", { name: "Truyện và tác vụ" });
+    expect(screen.queryByRole("button", { name: "AI đang nhớ gì" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Hồ sơ và ký ức" })).not.toBeInTheDocument();
+
+    resolveProjection(projection("story-a") as CampaignProjection);
+    const contextTrigger = await screen.findByRole("button", { name: "AI đang nhớ gì" });
+    expect(contextTrigger).toBeInTheDocument();
+    await user.click(contextTrigger);
+    expect(await screen.findByRole("dialog", { name: "Hồ sơ và ký ức" })).toBeInTheDocument();
+    expect(storyMenuTrigger).toBeInTheDocument();
   });
 
   it("restores only an accessible last story and isolates owners", async () => {
