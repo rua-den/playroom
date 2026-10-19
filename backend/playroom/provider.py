@@ -240,7 +240,7 @@ class OpenRouterAdapter(ProviderAdapter):
                 code = str(error.get("code", "")).casefold() if isinstance(error, dict) else ""
                 normalized = "QUOTA_EXHAUSTED" if code in {"402", "429", "quota"} else "MODEL_UNAVAILABLE" if code in {"404", "503", "model_not_found"} else "PROVIDER_ERROR"
                 failed = True
-                return ProviderFailure(normalized, "OpenRouter provider returned an error")
+                return ProviderFailure(normalized, "Provider returned an error")
             if frame.get("usage") is not None:
                 usage = frame["usage"]
             choice = (frame.get("choices") or [{}])[0]
@@ -248,7 +248,7 @@ class OpenRouterAdapter(ProviderAdapter):
             refusal = delta.get("refusal") or choice.get("refusal")
             if refusal:
                 failed = True
-                return ProviderFailure("MODEL_REFUSED", "OpenRouter refused the request")
+                return ProviderFailure("MODEL_REFUSED", "Provider refused the request")
             if choice.get("finish_reason") is not None:
                 finish_reason = choice.get("finish_reason")
             if delta.get("content"):
@@ -267,7 +267,7 @@ class OpenRouterAdapter(ProviderAdapter):
                     return
                 if response.status_code >= 400:
                     code = "QUOTA_EXHAUSTED" if response.status_code in {402, 429} else "MODEL_UNAVAILABLE" if response.status_code in {404, 503} else "PROVIDER_ERROR"
-                    yield ProviderFailure(code, "OpenRouter request failed")
+                    yield ProviderFailure(code, "Provider request failed")
                     return
                 for chunk in response.iter_bytes():
                     if request and request.get("cancel_event") is not None and request["cancel_event"].is_set():
@@ -305,7 +305,7 @@ class OpenRouterAdapter(ProviderAdapter):
             yield ProviderFailure("PROVIDER_TIMEOUT", "Provider request timed out")
             return
         except httpx.HTTPError:
-            yield ProviderFailure("MODEL_UNAVAILABLE", "OpenRouter provider could not be reached")
+            yield ProviderFailure("MODEL_UNAVAILABLE", "Provider could not be reached")
             return
         finally:
             with self._response_lock:
@@ -315,7 +315,7 @@ class OpenRouterAdapter(ProviderAdapter):
         if finish_reason == "length":
             yield ProviderFailure("OUTPUT_TRUNCATED", "Provider output reached its limit")
         elif finish_reason == "refusal":
-            yield ProviderFailure("MODEL_REFUSED", "OpenRouter refused the request")
+            yield ProviderFailure("MODEL_REFUSED", "Provider refused the request")
         elif finish_reason != "stop" or not done:
             yield ProviderFailure("MISSING_TERMINAL", "Provider stream did not provide a normal terminal frame")
         else:
