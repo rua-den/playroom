@@ -17,7 +17,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: b4-2026-10-18-one-shot-local-app-trial
+  group: b4-2026-10-19-owner-authorized-one-shot-local-app-trial
   cancel-in-progress: false
 
 jobs:
@@ -40,7 +40,7 @@ jobs:
 
   one-shot-live-app:
     if: >-
-      ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && startsWith(github.event.head_commit.message, 'ci(ollama): verify corrected app fixture 2026-10-19') }}
+      ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && startsWith(github.event.head_commit.message, 'ci(ollama): owner-authorized one shot 2026-10-19') }}
     needs: offline-contract
     runs-on: ubuntu-latest
     timeout-minutes: 8
