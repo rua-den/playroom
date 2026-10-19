@@ -85,6 +85,13 @@ def _quality_flags(segments: list[dict]) -> tuple[bool, bool, bool]:
         r"Lan\s+(?:nghĩ|quyết định|tự nhủ|bắt đầu|bước|chạy|rời|hứa|đồng ý|đáp|nói|cười|gật đầu)",
         text, re.I,
     ))
+    # A live gpt-oss:120b response invented walking to the drawer after the
+    # player merely said they *would* check it. The motion can appear later
+    # in the same clause rather than immediately after the name.
+    agency = agency or bool(re.search(
+        r"\bLan\b[^.!?\n]{0,180}\b(?:rồi\s+)?(?:bước|chạy|rời|tiến)\s+(?:về|tới|đến|ra|vào)\b",
+        text, re.I,
+    ))
     absent = any(s.get("character_id") != VY_ID for s in segments if s["kind"] == "dialogue")
     absent = absent or bool(re.search(r"Bình\s+(?:bước vào|đứng ở quầy|lên tiếng|nói|đáp)", text, re.I))
     leaked = any(
