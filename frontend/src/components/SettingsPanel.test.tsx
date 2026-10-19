@@ -13,6 +13,10 @@ describe("SettingsPanel", () => {
     const view = render(<SettingsPanel demoMode={false} />);
     await screen.findByRole("heading", { name: "Cài đặt provider" });
     view.rerender(<SettingsPanel demoMode />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Lưu ngân sách" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Ngân sách");
+    expect(screen.getByRole("note", { name: "Chế độ demo tổng hợp" })).toBeInTheDocument();
     expect(screen.getByRole("note", { name: "Chế độ demo tổng hợp" })).toHaveTextContent("không thay đổi demo");
     view.rerender(<SettingsPanel demoMode={false} />);
     expect(screen.queryByRole("note", { name: "Chế độ demo tổng hợp" })).not.toBeInTheDocument();
