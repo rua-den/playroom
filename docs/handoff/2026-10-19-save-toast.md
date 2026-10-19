@@ -1,5 +1,7 @@
 # Save feedback checkpoint — 19 October 2026
 
+**Later update:** the owner approved Luna 6, which completed the remaining corrections together with the modal refactor. See [the completion update](2026-10-19-modal-ui-design.md#completion-update-after-owner-approved-luna-6) for final local verification and release boundaries; the blocked state below describes the earlier checkpoint.
+
 Owner requested visible toast feedback after saving. Worktree: `D:/stu/worktrees/playroom-import-followup`, branch `feat/save-toast-feedback-20261019`, based on main `85d4f4d`.
 
 Implemented through `418c09f`: body-portal toast stack above settings/editor overlays, success dismissal after five seconds with hover/focus pause, manual close, generic persistent error feedback, owner-keyed provider remount. Settings, profile, memory, scene and import-review acknowledgement handlers emit feedback. Memory write acknowledgement is separated from subsequent refresh failure. Inline field errors remain available; demo runtime warning is retained.
