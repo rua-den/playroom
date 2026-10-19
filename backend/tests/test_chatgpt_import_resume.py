@@ -94,6 +94,10 @@ def test_long_import_is_bounded_and_resumes_after_sqlite_restart(tmp_path):
 
     db = connect(path)
     migrate(db)
+    assert db.execute(
+        "SELECT COUNT(*) FROM import_review_checkpoints WHERE campaign_id=?",
+        (campaign_id,),
+    ).fetchone()[0] == 0
     previous = first["imported_turns"]
     result = first
     calls = 1
@@ -118,10 +122,15 @@ def test_long_import_is_bounded_and_resumes_after_sqlite_restart(tmp_path):
         (campaign_id,),
     ).fetchone()
     assert tuple(row) == ("complete", PAIR_COUNT, PAIR_COUNT)
-    assert db.execute(
-        "SELECT COUNT(*) FROM import_review_checkpoints WHERE campaign_id=?",
+    review_row = db.execute(
+        "SELECT source_checkpoint_id FROM import_review_checkpoints WHERE campaign_id=?",
         (campaign_id,),
-    ).fetchone()[0] == 1
+    ).fetchone()
+    assert review_row is not None
+    assert review_row["source_checkpoint_id"] == db.execute(
+        "SELECT head_checkpoint_id FROM branches WHERE id=?",
+        (branch_id,),
+    ).fetchone()[0]
     assert db.execute("SELECT COUNT(*) FROM campaigns WHERE owner_id=?", (owner.id,)).fetchone()[0] == 1
     assert db.execute("SELECT COUNT(*) FROM generation_jobs").fetchone()[0] == 0
     assert db.execute("SELECT COUNT(*) FROM provider_attempts").fetchone()[0] == 0
