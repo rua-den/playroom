@@ -34,6 +34,12 @@ def test_counting_client_rejects_unpinned_provider_post():
         client.record_post("https://example.test/chat/completions")
 
 
+def test_counting_client_rejects_non_post_before_transport():
+    client = CountingHttpClient(object())
+    with pytest.raises(RuntimeError, match="method"):
+        client.guard.check("GET", "https://ollama.com/v1/chat/completions", {"model": "gemma4:31b", "max_tokens": 1})
+
+
 def test_offline_app_flow_exercises_real_verifier_adapter_and_persistence():
     posts, verifier_gets = _run_app_flow(offline=True)
     assert (posts, verifier_gets) == (1, 1)

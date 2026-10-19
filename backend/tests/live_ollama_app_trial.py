@@ -34,6 +34,15 @@ ACTION = '*Lan mở chiếc hộp gỗ trên quầy.* "Vy, cậu có thấy tờ
 NPC_ID = "00000000-0000-4000-8000-000000000001"
 NPC_VERSION = "vy-profile-v1"
 FIXTURE_KEY = "offline-fixture-key"
+_OPEN_HTTP_CLIENTS: list[object] = []
+
+
+class TrialState:
+    def __init__(self):
+        self.stage = "initialization"
+        self.failure_code = None
+        self.http_status = None
+        self.provider_posts = 0
 
 
 def trial_contract() -> dict:
@@ -41,10 +50,11 @@ def trial_contract() -> dict:
 
 
 class DispatchGuard:
-    def __init__(self, *, preflight=None):
+    def __init__(self, *, preflight=None, state: TrialState | None = None):
         self._lock = threading.Lock()
         self.provider_posts = 0
         self.preflight = preflight
+        self.state = state
 
     def check(self, method: str, url: str, payload: dict | None) -> None:
         with self._lock:
@@ -61,6 +71,9 @@ class DispatchGuard:
                 self.preflight()
                 self.preflight = None
             self.provider_posts += 1
+            if self.state is not None:
+                self.state.stage = "provider_dispatch"
+                self.state.provider_posts = self.provider_posts
 
 
 class CountingHttpClient:
@@ -80,8 +93,7 @@ class CountingHttpClient:
         return self.client.get(*args, **kwargs)
 
     def stream(self, method, url, *args, **kwargs):
-        if method.upper() == "POST":
-            self.guard.check(method, str(url), kwargs.get("json"))
+        self.guard.check(method, str(url), kwargs.get("json"))
         return self.client.stream(method, url, *args, **kwargs)
 
     def close(self):
@@ -147,7 +159,7 @@ def _create_app(root: Path, *, transport: OfflineProviderTransport | None = None
     counted = None
     if transport is not None or live:
         shared = httpx.Client(transport=httpx.MockTransport(transport), timeout=30) if transport is not None else httpx.Client(timeout=httpx.Timeout(90.0, connect=15.0))
-        app.router.add_event_handler("shutdown", shared.close)
+        _OPEN_HTTP_CLIENTS.append(shared)
         app.state.provider_verifier = OllamaCloudVerifier(http_client=shared)
         # The production route constructs its pinned Ollama verifier directly;
         # inject the fixture client at the harness boundary without changing
@@ -187,10 +199,10 @@ def _poll_job(client: TestClient, job_id: str, *, timeout: float = 120.0, interv
     raise RuntimeError("generation job polling exceeded bounded timeout")
 
 
-def _run_app_flow_impl(*, offline: bool) -> tuple[int, int]:
+def _run_app_flow_impl(*, offline: bool, state: TrialState | None = None) -> tuple[int, int]:
     transport = OfflineProviderTransport() if offline else None
     secret = os.environ.get("OLLAMA_API_KEY", "")
-    guard = DispatchGuard(preflight=None if offline else lambda: _balance_preflight(secret))
+    guard = DispatchGuard(preflight=None if offline else lambda: _balance_preflight(secret), state=state)
     with tempfile.TemporaryDirectory(prefix="playroom-app-trial-") as directory:
         root = Path(directory)
         _create_owner(root)
@@ -198,6 +210,7 @@ def _run_app_flow_impl(*, offline: bool) -> tuple[int, int]:
         counted = getattr(app.state, "_trial_http_client", None)
         headers = {"origin": "http://127.0.0.1"}
         with TestClient(app, base_url="http://127.0.0.1") as client:
+            if state: state.stage = "authenticated_setup"
             _assert_ok(client.post("/api/auth/login", json={"email": OWNER_EMAIL, "password": OWNER_PASSWORD}, headers=headers))
             campaign = _assert_ok(client.post("/api/campaigns", json={"title": "Synthetic Ollama app trial", "world": {"name": "Quiet library", "public_canon": "A blue paper is waiting."}, "characters": [{"id": NPC_ID, "name": "Vy", "profile_version_id": NPC_VERSION, "present": True}], "persona": {"name": "Lan", "player_controlled": True}}, headers=headers), 201)
             credential = _assert_ok(client.post("/api/provider/credentials", json={"secret": FIXTURE_KEY if offline else os.environ["OLLAMA_API_KEY"]}, headers=headers), 201)
@@ -211,6 +224,7 @@ def _run_app_flow_impl(*, offline: bool) -> tuple[int, int]:
             _assert_ok(client.post("/api/provider/trials", json={"profile_id": profile["id"], "profile_version": profile["version"], "total_cap_usd": str(MAX_TRIAL_USD), "per_send_cap_usd": str(MAX_TRIAL_USD), "max_jobs": 1, "expires_at": expires}, headers=headers), 201)
             detail = _assert_ok(client.get(f"/api/campaigns/{campaign['id']}"))
             preview = _assert_ok(client.post(f"/api/campaigns/{campaign['id']}/context/previews", json={"branch_id": campaign["branch_id"], "action": ACTION, "profile_id": profile["id"]}, headers=headers), 201)
+            if state: state.stage = "context_preview"
             if preview.get("status") != "ready" or preview.get("budget", {}).get("fits") is not True:
                 raise RuntimeError("verified context preview did not fit the bounded input/output wire budget")
             selected = preview.get("selected_characters") or []
@@ -221,13 +235,16 @@ def _run_app_flow_impl(*, offline: bool) -> tuple[int, int]:
             if transport is not None:
                 transport.npc_profile_version = expected_npc_version
             job = _assert_ok(client.post(f"/api/campaigns/{campaign['id']}/generate", json={"branch_id": campaign["branch_id"], "action": ACTION, "idempotency_key": "synthetic-app-trial-once", "checkpoint_id": detail["checkpoint_id"], "preview_id": preview["id"], "mode": "economy", "policy": "capped_paid", "cap": str(MAX_TRIAL_USD)}, headers=headers), 201)
+            if state: state.stage = "generation_poll"
             job = _poll_job(client, job["id"])
             if job.get("status") != "candidate":
+                if state: state.failure_code = (job.get("failure") or {}).get("code")
                 raise RuntimeError(f"generation stopped before candidate: {job.get('failure', {}).get('code', 'unknown')}")
             output = job.get("output_segments") or []
             if not any(segment.get("character_id") == NPC_ID and segment.get("profile_version_id") == expected_npc_version for segment in output):
                 raise RuntimeError("candidate output lost persisted NPC profile attribution")
             _assert_ok(client.post(f"/api/generation/jobs/{job['id']}/commit", headers=headers))
+            if state: state.stage = "commit"
             projection = _assert_ok(client.get(f"/api/campaigns/{campaign['id']}/projection?branch_id={campaign['branch_id']}"))
             transcript = projection.get("transcript") or []
             if len(transcript) != 1 or transcript[0].get("action_text") != ACTION or not any(segment.get("character_id") == NPC_ID and segment.get("profile_version_id") == expected_npc_version for segment in transcript[0].get("output_segments") or []):
@@ -235,6 +252,7 @@ def _run_app_flow_impl(*, offline: bool) -> tuple[int, int]:
         reload_transport = OfflineProviderTransport() if offline else None
         app2 = _create_app(root, transport=reload_transport, live=not offline, guard=guard)
         with TestClient(app2, base_url="http://127.0.0.1") as client2:
+            if state: state.stage = "reload_verification"
             _assert_ok(client2.post("/api/auth/login", json={"email": OWNER_EMAIL, "password": OWNER_PASSWORD}, headers=headers))
             restored = _assert_ok(client2.get(f"/api/campaigns/{campaign['id']}/projection?branch_id={campaign['branch_id']}"))
             restored_turn = (restored.get("transcript") or [None])[0]
@@ -245,18 +263,20 @@ def _run_app_flow_impl(*, offline: bool) -> tuple[int, int]:
         return guard.provider_posts, (transport.verifier_gets if transport else 0)
 
 
-def _run_app_flow(*, offline: bool) -> tuple[int, int]:
+def _run_app_flow(*, offline: bool, state: TrialState | None = None) -> tuple[int, int]:
     """Run a flow and always restore the offline-only verifier injection."""
     import playroom.api.configuration as configuration_api
     original = configuration_api.OllamaCloudVerifier
     try:
-        return _run_app_flow_impl(offline=offline)
+        return _run_app_flow_impl(offline=offline, state=state)
     finally:
         configuration_api.OllamaCloudVerifier = original
+        while _OPEN_HTTP_CLIENTS:
+            _OPEN_HTTP_CLIENTS.pop().close()
 
 
-def _run_live() -> int:
-    posts, _ = _run_app_flow(offline=False)
+def _run_live(state: TrialState) -> int:
+    posts, _ = _run_app_flow(offline=False, state=state)
     if posts != 1:
         raise RuntimeError(f"expected one provider completion POST, observed {posts}")
     print("APP TRIAL: PASS; authenticated local app flow, one committed synthetic turn, reload persistence")
@@ -282,10 +302,11 @@ def main() -> int:
     if not ensure_live_gate():
         print("DENIED: one-shot approval, first attempt, and credential are required")
         return 2
+    state = TrialState()
     try:
-        return _run_live()
+        return _run_live(state)
     except Exception as exc:
-        print("APP TRIAL: STOPPED without retry; exception:", type(exc).__name__)
+        print("APP TRIAL: STOPPED without retry; stage:", state.stage, "provider_posts:", state.provider_posts, "failure_code:", state.failure_code or type(exc).__name__, "http_status:", state.http_status or "unknown")
         return 1
 
 

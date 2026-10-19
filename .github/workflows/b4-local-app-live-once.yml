@@ -45,9 +45,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     env:
-      OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
-      B4_LOCAL_APP_APPROVAL: B4_LOCAL_APP_TRIAL_2026_10_18
-      GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
       PYTHONPATH: backend
     steps:
       - uses: actions/checkout@v4
@@ -59,5 +56,8 @@ jobs:
       - name: Install locked dependencies
         run: uv sync --locked --extra test
       - name: Run one authenticated synthetic app trial
+        env:
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+          B4_LOCAL_APP_APPROVAL: B4_LOCAL_APP_TRIAL_2026_10_18
         run: |
           uv run --locked --extra test python backend/tests/live_ollama_app_trial.py
