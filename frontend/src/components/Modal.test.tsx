@@ -52,4 +52,3 @@ describe("Modal", () => {
     expect(screen.getByTestId("background").parentElement?.hasAttribute("inert")).toBe(false);
   });
 });
-
