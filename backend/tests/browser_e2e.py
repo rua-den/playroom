@@ -303,9 +303,10 @@ def _assert_modal_focus(page, dialog, trigger) -> None:
     )
     assert app_shell_is_inert, "The application background must be inert while a modal is open"
     focusable = dialog.locator(
-        "button:visible:not([disabled]), input:visible:not([disabled]), "
-        "select:visible:not([disabled]), textarea:visible:not([disabled]), "
-        "a[href]:visible, [tabindex]:not([tabindex='-1']):visible"
+        "button:visible:enabled, input:visible:enabled, "
+        "select:visible:enabled, textarea:visible:enabled, "
+        "summary:visible, a[href]:visible, "
+        "[tabindex]:not([tabindex='-1']):visible"
     )
     assert focusable.count() >= 2, "Modal needs at least two enabled visible focus targets"
     first, last = focusable.first, focusable.last
