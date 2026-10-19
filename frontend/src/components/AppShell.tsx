@@ -7,6 +7,7 @@ import { MemoryLibrary } from "./MemoryLibrary";
 import { SceneEditor } from "./SceneEditor";
 import { SettingsPanel } from "./SettingsPanel";
 import { GenerationComposer } from "./GenerationComposer";
+import { ModelSwitcher } from "./ModelSwitcher";
 import { ThemeSelector } from "./ThemeSelector";
 import { ChatGptImport } from "./ChatGptImport";
 import { LegacyImport } from "./LegacyImport";
@@ -81,10 +82,10 @@ function CampaignForm({ onCreated, onCancel, ariaHidden = false }: { onCreated: 
 }
 
 function AppShellContent({ owner, onLogout, notice }: AppShellProps) {
-  const [campaigns, setCampaigns] = useState<CampaignSummary[]>([]); const [selectedId, setSelectedId] = useState<string | null>(null); const [projection, setProjection] = useState<CampaignProjection | null>(null); const [loading, setLoading] = useState(true); const [error, setError] = useState<string | null>(null); const [demoInfo, setDemoInfo] = useState<import("../api/types").DemoInfo | null>(null); const [createOpen, setCreateOpen] = useState(false); const [createInstance, setCreateInstance] = useState(0); const [importOpen, setImportOpen] = useState(false); const [importInstance, setImportInstance] = useState(0); const [libraryOpen, setLibraryOpen] = useState(true); const [importMode, setImportMode] = useState<"chatgpt" | "legacy">("chatgpt"); const [drawerOpen, setDrawerOpen] = useState(false); const [detailsOpen, setDetailsOpen] = useState(false); const [settingsOpen, setSettingsOpen] = useState(false); const [editorTab, setEditorTab] = useState<"profiles" | "memory" | "scene">("profiles");
+  const [campaigns, setCampaigns] = useState<CampaignSummary[]>([]); const [selectedId, setSelectedId] = useState<string | null>(null); const [projection, setProjection] = useState<CampaignProjection | null>(null); const [loading, setLoading] = useState(true); const [error, setError] = useState<string | null>(null); const [demoInfo, setDemoInfo] = useState<import("../api/types").DemoInfo | null>(null); const [createOpen, setCreateOpen] = useState(false); const [createInstance, setCreateInstance] = useState(0); const [importOpen, setImportOpen] = useState(false); const [importInstance, setImportInstance] = useState(0); const [libraryOpen, setLibraryOpen] = useState(true); const [importMode, setImportMode] = useState<"chatgpt" | "legacy">("chatgpt"); const [drawerOpen, setDrawerOpen] = useState(false); const [detailsOpen, setDetailsOpen] = useState(false); const [settingsOpen, setSettingsOpen] = useState(false); const [modelOpen, setModelOpen] = useState(false); const [editorTab, setEditorTab] = useState<"profiles" | "memory" | "scene">("profiles");
   const selectedIdRef = useRef<string | null>(selectedId); selectedIdRef.current = selectedId;
   const ownerRef = useRef(owner.id);
-  useEffect(() => { if (ownerRef.current === owner.id) return; ownerRef.current = owner.id; setCampaigns([]); setSelectedId(null); setProjection(null); setError(null); setLibraryOpen(true); }, [owner.id]);
+  useEffect(() => { if (ownerRef.current === owner.id) return; ownerRef.current = owner.id; setCampaigns([]); setSelectedId(null); setProjection(null); setError(null); setModelOpen(false); setLibraryOpen(true); }, [owner.id]);
   const projectionRequest = useRef(0);
   const drawerTrigger = useRef<HTMLButtonElement>(null);
   useEffect(() => { let active = true; setLoading(true); if (import.meta.env.PROD) api.getDemoInfo().then((info) => { if (active) setDemoInfo(info); }).catch(() => undefined); api.listCampaigns().then((items) => { if (active) { const safeItems = Array.isArray(items) ? items : []; const remembered = readLastStoryId(owner.id); const restored = remembered && safeItems.some((item) => item.id === remembered) ? remembered : null; setCampaigns(safeItems); setSelectedId(restored); setLibraryOpen(!restored); } }).catch(() => { if (active) setError("Không thể tải thư viện truyện."); }).finally(() => { if (active) setLoading(false); }); return () => { active = false; }; }, [owner.id]);
@@ -94,6 +95,8 @@ function AppShellContent({ owner, onLogout, notice }: AppShellProps) {
   function openDetails() { setDetailsOpen(true); }
   function closeDetails() { setDetailsOpen(false); }
   function closeSettings() { setSettingsOpen(false); }
+  function openModel() { if (!projection || libraryOpen) return; setSettingsOpen(false); setModelOpen(true); }
+  function openCostSettingsFromModel() { setModelOpen(false); setSettingsOpen(true); }
   const selected = useMemo(() => campaigns.find((item) => item.id === selectedId) ?? null, [campaigns, selectedId]);
   async function refreshProjection() { if (!selectedId) return undefined; const targetId = selectedId; const requestId = ++projectionRequest.current; try { const detail = await api.getCampaign(targetId); const next = await api.getCampaignProjection(targetId, detail.branch_id); if (projectionRequest.current !== requestId || selectedIdRef.current !== targetId) return undefined; setProjection(next); return next; } catch { if (projectionRequest.current === requestId && selectedIdRef.current === targetId) setError("Không thể làm mới truyện."); return undefined; } }
   const editorChanged = () => refreshProjection();
@@ -107,7 +110,7 @@ function AppShellContent({ owner, onLogout, notice }: AppShellProps) {
   if (loading) return <main className="app-shell loading-screen" role="status">Đang tải phòng truyện…</main>;
   const contextPanel = projection && <ContextPanel projection={projection} editorTab={editorTab} setEditorTab={setEditorTab} editorChanged={editorChanged} />;
   return <main className={`app-shell story-app ${error && !campaigns.length ? "catalog-failed" : ""}`}>
-    <header className="topbar" aria-hidden={drawerOpen || detailsOpen || settingsOpen || createOpen || importOpen}>
+    <header className="topbar" aria-hidden={drawerOpen || detailsOpen || settingsOpen || modelOpen || createOpen || importOpen}>
       <div className="wordmark"><span className="brand-mark small" aria-hidden="true"><svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M4 5.5c3.2-.8 5.9-.1 8 1.9v12c-2.1-2-4.8-2.7-8-1.9z"/><path d="M20 5.5c-3.2-.8-5.9-.1-8 1.9v12c2.1-2 4.8-2.7 8-1.9z"/><path d="M7 9h2M15 9h2M7 12h2M15 12h2"/></svg></span><span>Playroom</span>{demoInfo?.mode === "synthetic" && <span className="demo-badge" aria-label={demoInfo.label} title={demoInfo.label}>{demoInfo.label}</span>}</div>
       <div className="campaign-controls">
         <button type="button" className="quiet-button touch-target library-trigger" onClick={() => { setCreateOpen(false); setImportOpen(false); setLibraryOpen(true); }}>Thư viện truyện</button>
@@ -128,16 +131,16 @@ function AppShellContent({ owner, onLogout, notice }: AppShellProps) {
     {notice && <div role="alert" className="form-error shell-notice" aria-hidden={drawerOpen || detailsOpen || settingsOpen || createOpen || importOpen}> {notice}</div>}
     {error && !campaigns.length && <a className="catalog-retry" href="/">Thử lại</a>}
     <>{libraryOpen && library}{error && libraryOpen && <div role="alert" className="form-error shell-notice">{error}</div>}<div className={libraryOpen ? "library-story-hidden" : "story-workspace"} aria-hidden={libraryOpen} hidden={libraryOpen}>
-      <div className="mobile-actions" aria-hidden={libraryOpen || drawerOpen || detailsOpen || settingsOpen || createOpen || importOpen}>
+      <div className="mobile-actions" aria-hidden={libraryOpen || drawerOpen || detailsOpen || settingsOpen || modelOpen || createOpen || importOpen}>
         <button type="button" className="quiet-button touch-target mobile-campaign-trigger" onClick={() => setDrawerOpen(true)} ref={drawerTrigger}>Truyện và tác vụ</button>
         {projection && <button type="button" className="quiet-button touch-target" onClick={openDetails}>AI đang nhớ gì</button>}
       </div>
-      <div className="workspace-grid" aria-hidden={libraryOpen || drawerOpen || detailsOpen || settingsOpen || createOpen || importOpen}>
+      <div className="workspace-grid" aria-hidden={libraryOpen || drawerOpen || detailsOpen || settingsOpen || modelOpen || createOpen || importOpen}>
         <section className="story-column conversation-column">
           {error && <div role="alert" className="form-error">{error}</div>}
           {projection && <p className="story-reading-label">Đang đọc</p>}
           {projection ? <><h1>{projection.campaign.title}</h1>{projection.transcript.length ? <div className="transcript">{projection.transcript.map((turn) => <article className="story-turn" key={turn.revision_id}>{turn.input_segments?.length ? <div className="input-segments">{turn.input_segments.map((segment, index) => <p className={`input-segment ${segment.kind}`} key={`${turn.revision_id}-input-${index}`}>{segment.text}</p>)}</div> : <p className="turn-action">{turn.action_text}</p>}{turn.output_segments?.length ? <div className="roleplay-segments">{turn.output_segments.map((segment, index) => <div className={`roleplay-segment ${segment.kind}`} key={`${turn.revision_id}-${index}`}>{segment.character_id ? <strong>{projection.profiles[`character:${segment.character_id}`]?.data.name as string ?? segment.character_id}: </strong> : null}<Markdown source={segment.text} /></div>)}</div> : <Markdown source={turn.narrative_text} />}</article>)}</div> : <div className="story-empty"><h2>Chương đầu tiên đang chờ bạn.</h2><p>Thế giới đã sẵn sàng. Bạn có thể tiếp tục thiết lập hồ sơ và ký ức.</p></div>}</> : <div className="loading-story" role="status">Đang mở truyện…</div>}
-          {projection && (projection.import_review?.required ? <ImportReviewPanel projection={projection} onApproved={editorChanged} /> : <GenerationComposer ownerId={owner.id} projection={projection} profileId="" onCommitted={editorChanged} demoMode={demoInfo?.mode === "synthetic"} />)}
+          {projection && (projection.import_review?.required ? <ImportReviewPanel projection={projection} onApproved={editorChanged} /> : <GenerationComposer ownerId={owner.id} projection={projection} profileId="" onCommitted={editorChanged} onOpenModelSettings={openModel} onOpenCostSettings={() => setSettingsOpen(true)} demoMode={demoInfo?.mode === "synthetic"} />)}
         </section>
       </div>
     </div>
@@ -152,6 +155,9 @@ function AppShellContent({ owner, onLogout, notice }: AppShellProps) {
     </Modal>
     <Modal open={detailsOpen} title="Hồ sơ và ký ức" closeLabel="Đóng hồ sơ và ký ức" onClose={closeDetails} size="wide">{contextPanel}</Modal>
     <Modal open={settingsOpen} title="Cài đặt" closeLabel="Đóng cài đặt" onClose={closeSettings} size="wide">{settingsOpen && <><ThemeSelector /><SettingsPanel demoMode={demoInfo?.mode === "synthetic"} /></>}</Modal>
+    <Modal open={modelOpen} title="Model kể chuyện" closeLabel="Đóng chọn model" onClose={() => setModelOpen(false)}>
+      {modelOpen && <ModelSwitcher key={owner.id} open onClose={() => setModelOpen(false)} onOpenCostSettings={openCostSettingsFromModel} onSaved={() => undefined} busy={false} />}
+    </Modal>
     <Modal open={createOpen} title="Tạo truyện mới" onClose={() => setCreateOpen(false)}><CampaignForm key={createInstance} onCreated={created} onCancel={() => setCreateOpen(false)} /></Modal>
     <Modal open={importOpen} title={importMode === "legacy" ? "Nhập Legacy Story Bundle" : "Nhập hội thoại ChatGPT"} onClose={() => setImportOpen(false)} size="wide">
       {importMode === "legacy" ? <LegacyImport key={`legacy-${importInstance}`} onImported={created} onCancel={() => setImportOpen(false)} /> : <ChatGptImport key={`chatgpt-${importInstance}`} onImported={created} onCancel={() => setImportOpen(false)} />}

@@ -1,9 +1,32 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 from uuid import uuid4
 
-from playroom.db import connect, migrate
+import pytest
+
+from playroom.db import _add_column_if_missing, connect, migrate
+
+
+def test_add_column_if_missing_propagates_unrelated_sqlite_errors():
+    class FailingConnection:
+        def execute(self, sql, parameters=()):
+            raise sqlite3.OperationalError("database is locked")
+
+    with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+        _add_column_if_missing(FailingConnection(), "owners", "extra", "TEXT")
+
+
+def test_add_column_if_missing_propagates_duplicate_when_column_is_absent():
+    class DuplicateConnection:
+        def execute(self, sql, parameters=()):
+            if sql.startswith("ALTER TABLE"):
+                raise sqlite3.OperationalError("duplicate column name: extra")
+            return []
+
+    with pytest.raises(sqlite3.OperationalError, match="duplicate column name"):
+        _add_column_if_missing(DuplicateConnection(), "owners", "extra", "TEXT")
 
 
 def test_migrate_adds_nullable_roleplay_columns_without_backfilling_legacy_rows(tmp_path):

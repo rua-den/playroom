@@ -124,6 +124,14 @@ h3 { font-size: 18px; line-height: 1.35; font-weight: 620; }
 .generation-composer textarea, .app-modal-body textarea, .campaign-form textarea, .editor-stack textarea { width: 100%; min-width: 0; min-height: 48px; padding: 12px 14px; resize: vertical; border: 1px solid var(--line); border-radius: 10px; color: var(--text); background: var(--inset); line-height: 1.5; }
 .generation-composer form > textarea { min-height: 88px; max-height: 240px; }
 .generation-composer form > button { min-width: 84px; }
+.generation-composer .composer-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.generation-composer .composer-actions > button { min-width: 84px; }
+.generation-composer .composer-error-settings { margin-top: 8px; }
+.model-switcher { display: grid; gap: 10px; max-width: 560px; }
+.model-switcher-current { margin: -4px 0 2px; color: var(--text); font-size: 18px; font-weight: 650; }
+.model-switcher-current span { color: var(--muted); font-size: 13px; font-weight: 500; }
+.model-switcher select { width: 100%; min-height: 44px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 9px; color: var(--text); background: var(--inset); }
+.model-switcher-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
 .generation-details { grid-column: 1 / -1; padding-top: 12px; color: var(--muted); font-size: 13px; }
 .generation-details summary, details summary { cursor: pointer; }
 .generation-details textarea { margin-top: 8px; }

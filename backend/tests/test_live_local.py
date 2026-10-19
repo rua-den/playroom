@@ -450,6 +450,54 @@ def test_two_first_live_setup_attempts_leave_only_one_owner(tmp_path):
         connection.close()
 
 
+def test_concurrent_live_setup_tolerates_duplicate_column_migration(tmp_path, monkeypatch):
+    migration_barrier = threading.Barrier(2)
+    original_connect = connect
+
+    class _ConnectionProxy:
+        def __init__(self, connection):
+            self._connection = connection
+            self._synchronized = False
+
+        def execute(self, sql, parameters=()):
+            if sql == "PRAGMA table_info(provider_attempts)" and not self._synchronized:
+                rows = self._connection.execute(sql, parameters).fetchall()
+                self._synchronized = True
+                migration_barrier.wait(timeout=5)
+                return rows
+            return self._connection.execute(sql, parameters)
+
+        def __getattr__(self, name):
+            return getattr(self._connection, name)
+
+    def synchronized_connect(path):
+        return _ConnectionProxy(original_connect(path))
+
+    monkeypatch.setattr("playroom.live_local.connect", synchronized_connect)
+    outcomes = []
+
+    def setup():
+        try:
+            outcomes.append(
+                setup_owner_if_needed(
+                    tmp_path / "data",
+                    input_fn=lambda _: f"owner-{threading.current_thread().name}@example.test",
+                    password_fn=lambda _: "a secure owner password",
+                )
+            )
+        except BaseException as exc:
+            outcomes.append(exc)
+
+    threads = [threading.Thread(target=setup) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+        assert not thread.is_alive()
+
+    assert sorted(outcomes, key=str) == [False, True]
+
+
 def test_fresh_live_start_does_not_invoke_provider_factory(tmp_path, monkeypatch):
     calls = []
 

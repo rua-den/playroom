@@ -40,6 +40,19 @@ def connect(path_or_url: str | Path) -> sqlite3.Connection:
     return connection
 
 
+def _add_column_if_missing(connection: sqlite3.Connection, table: str, name: str, definition: str) -> None:
+    try:
+        connection.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+    except sqlite3.OperationalError as exc:
+        # Another startup connection may have observed the same missing column
+        # and added it first. Keep the migration idempotent while preserving
+        # unrelated SQLite errors for the caller to handle.
+        if "duplicate column name" not in str(exc).casefold():
+            raise
+        if name not in {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}:
+            raise
+
+
 def migrate(connection: sqlite3.Connection) -> None:
     migration = Path(__file__).parent / "migrations" / "001_initial.sql"
     connection.executescript(migration.read_text(encoding="utf-8"))
@@ -52,10 +65,9 @@ def migrate(connection: sqlite3.Connection) -> None:
     connection.executescript(import_review.read_text(encoding="utf-8"))
     legacy_import = Path(__file__).parent / "migrations" / "006_legacy_import.sql"
     connection.executescript(legacy_import.read_text(encoding="utf-8"))
-    source_skip_count = Path(__file__).parent / "migrations" / "005_import_source_skip_count.sql"
     source_columns = {row[1] for row in connection.execute("PRAGMA table_info(chatgpt_import_sources)")}
     if "skipped_messages" not in source_columns:
-        connection.executescript(source_skip_count.read_text(encoding="utf-8"))
+        _add_column_if_missing(connection, "chatgpt_import_sources", "skipped_messages", "INTEGER")
     # ChatGPT source imports are resumed in bounded committed chunks. Keep these
     # additive columns individually guarded so an interrupted schema upgrade is
     # safe to rerun on the next launch.
@@ -66,7 +78,7 @@ def migrate(connection: sqlite3.Connection) -> None:
         ("import_updated_at", "TEXT"),
     ):
         if name not in source_columns:
-            connection.execute(f"ALTER TABLE chatgpt_import_sources ADD COLUMN {name} {definition}")
+            _add_column_if_missing(connection, "chatgpt_import_sources", name, definition)
     connection.execute(
         "UPDATE chatgpt_import_sources "
         "SET imported_turns=paired_turns, import_status='complete', "
@@ -85,28 +97,28 @@ def migrate(connection: sqlite3.Connection) -> None:
     )
     columns = {row[1] for row in connection.execute("PRAGMA table_info(campaigns)")}
     if "archived_at" not in columns:
-        connection.execute("ALTER TABLE campaigns ADD COLUMN archived_at TEXT")
+        _add_column_if_missing(connection, "campaigns", "archived_at", "TEXT")
     generation_columns = {row[1] for row in connection.execute("PRAGMA table_info(generation_jobs)")}
     if generation_columns:
         for name, definition in (("action", "TEXT NOT NULL DEFAULT ''"), ("mode", "TEXT NOT NULL DEFAULT 'economy'"), ("policy", "TEXT NOT NULL DEFAULT 'free_only'"), ("draft", "TEXT NOT NULL DEFAULT ''"), ("output_segments_json", "TEXT"), ("failure_json", "TEXT"), ("usage_json", "TEXT"), ("settings_revision", "INTEGER NOT NULL DEFAULT 0"), ("settings_snapshot_json", "TEXT NOT NULL DEFAULT '{}'"), ("profile_snapshot_json", "TEXT NOT NULL DEFAULT '{}'"), ("credential_version", "TEXT"), ("reserved_cost_json", "TEXT"), ("execution_epoch", "TEXT"), ("cancel_requested", "INTEGER NOT NULL DEFAULT 0"), ("final_context_json", "TEXT"), ("preview_id", "TEXT"), ("preview_snapshot_json", "TEXT")):
             if name not in generation_columns:
-                connection.execute(f"ALTER TABLE generation_jobs ADD COLUMN {name} {definition}")
+                _add_column_if_missing(connection, "generation_jobs", name, definition)
     attempt_columns = {row[1] for row in connection.execute("PRAGMA table_info(provider_attempts)")}
     if attempt_columns:
         for name, definition in (("output_text", "TEXT NOT NULL DEFAULT ''"), ("output_offset", "INTEGER NOT NULL DEFAULT 0"), ("failure_json", "TEXT"), ("request_json", "TEXT NOT NULL DEFAULT '{}'"), ("dispatched_at", "TEXT"), ("claim_epoch", "TEXT"), ("cancel_requested", "INTEGER NOT NULL DEFAULT 0")):
             if name not in attempt_columns:
-                connection.execute(f"ALTER TABLE provider_attempts ADD COLUMN {name} {definition}")
+                _add_column_if_missing(connection, "provider_attempts", name, definition)
     context_run_columns = {row[1] for row in connection.execute("PRAGMA table_info(context_runs)")}
     if context_run_columns:
         for name, definition in (("generation_job_id", "TEXT"), ("request_json", "TEXT NOT NULL DEFAULT '{}'"), ("wire_json", "TEXT NOT NULL DEFAULT '{}'"), ("counter_id", "TEXT NOT NULL DEFAULT 'utf8-bytes-div-3'"), ("counter_mode", "TEXT NOT NULL DEFAULT 'estimated'")):
             if name not in context_run_columns:
-                connection.execute(f"ALTER TABLE context_runs ADD COLUMN {name} {definition}")
+                _add_column_if_missing(connection, "context_runs", name, definition)
     turns_columns = {row[1] for row in connection.execute("PRAGMA table_info(turns)")}
     if turns_columns and "input_segments_json" not in turns_columns:
-        connection.execute("ALTER TABLE turns ADD COLUMN input_segments_json TEXT")
+        _add_column_if_missing(connection, "turns", "input_segments_json", "TEXT")
     revisions_columns = {row[1] for row in connection.execute("PRAGMA table_info(turn_revisions)")}
     if revisions_columns and "output_segments_json" not in revisions_columns:
-        connection.execute("ALTER TABLE turn_revisions ADD COLUMN output_segments_json TEXT")
+        _add_column_if_missing(connection, "turn_revisions", "output_segments_json", "TEXT")
     connection.execute("CREATE TABLE IF NOT EXISTS model_profile_versions (id TEXT NOT NULL, owner_id TEXT NOT NULL REFERENCES owners(id) ON DELETE CASCADE, version INTEGER NOT NULL, snapshot_json TEXT NOT NULL, profile_hash TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(owner_id, id, version))")
     connection.execute("CREATE TRIGGER IF NOT EXISTS prevent_model_profile_update BEFORE UPDATE ON model_profile_versions BEGIN SELECT RAISE(ABORT, 'model profiles are immutable'); END")
     connection.execute("CREATE TRIGGER IF NOT EXISTS prevent_model_profile_delete BEFORE DELETE ON model_profile_versions BEGIN SELECT RAISE(ABORT, 'model profiles are immutable'); END")
