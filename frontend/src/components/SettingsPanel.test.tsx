@@ -5,6 +5,28 @@ import { SettingsPanel } from "./SettingsPanel";
 import { ToastProvider } from "./Toast";
 
 describe("SettingsPanel", () => {
+  it("navigates between settings sections without saving or clearing drafts", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ mode: "economy", policy: "free_only", roles: {}, budgets: {} }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<ToastProvider><SettingsPanel demoMode /></ToastProvider>);
+    const secret = await screen.findByLabelText("OpenRouter API key");
+    await user.type(secret, "draft-key");
+    const callsAfterLoad = fetchMock.mock.calls.length;
+
+    await user.click(screen.getByRole("link", { name: "Chi phí" }));
+    await user.click(screen.getByRole("link", { name: "Model" }));
+    await user.click(screen.getByRole("link", { name: "Kết nối" }));
+
+    expect(secret).toHaveValue("draft-key");
+    expect(screen.getByLabelText("Provider")).toBeInTheDocument();
+    expect(screen.getByRole("note", { name: "Chế độ demo tổng hợp" })).toHaveTextContent("không gọi AI thật");
+    expect(fetchMock).toHaveBeenCalledTimes(callsAfterLoad);
+  });
+
   it("waits for the budget save acknowledgement before showing success", async () => {
     let resolveSave!: (response: Response) => void;
     const save = new Promise<Response>((resolve) => { resolveSave = resolve; });
