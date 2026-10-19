@@ -6,6 +6,7 @@ from live_ollama_app_trial import (
     MAX_OUTPUT_TOKENS,
     MAX_TRIAL_USD,
     CountingHttpClient,
+    _run_app_flow,
     trial_contract,
 )
 
@@ -23,6 +24,17 @@ def test_counting_client_rejects_second_provider_post():
     client.record_post("https://ollama.com/v1/chat/completions")
     with pytest.raises(RuntimeError, match="at most one"):
         client.record_post("https://ollama.com/v1/chat/completions")
+
+
+def test_counting_client_rejects_unpinned_provider_post():
+    client = CountingHttpClient(object())
+    with pytest.raises(RuntimeError, match="pinned"):
+        client.record_post("https://example.test/chat/completions")
+
+
+def test_offline_app_flow_exercises_real_verifier_adapter_and_persistence():
+    posts, verifier_gets = _run_app_flow(offline=True)
+    assert (posts, verifier_gets) == (1, 1)
 
 
 def test_live_gate_denies_missing_approval_and_reruns_before_dispatch(monkeypatch):

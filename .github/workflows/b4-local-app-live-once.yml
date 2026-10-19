@@ -36,6 +36,7 @@ jobs:
           uv sync --locked --extra test
           PYTHONPATH=backend uv run --locked --extra test pytest backend/tests/test_live_ollama_app_trial.py -q
           PYTHONPATH=backend B4_DRY_RUN=1 uv run --locked --extra test python backend/tests/live_ollama_app_trial.py
+          PYTHONPATH=backend B4_OFFLINE_FIXTURE=1 uv run --locked --extra test python backend/tests/live_ollama_app_trial.py
 
   one-shot-live-app:
     if: >-
@@ -58,4 +59,5 @@ jobs:
       - name: Install locked dependencies
         run: uv sync --locked --extra test
       - name: Run one authenticated synthetic app trial
-        run: uv run --locked --extra test python backend/tests/live_ollama_app_trial.py
+        run: |
+          uv run --locked --extra test python backend/tests/live_ollama_app_trial.py
