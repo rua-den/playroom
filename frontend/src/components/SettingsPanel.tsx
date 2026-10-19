@@ -612,7 +612,7 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
       </section>
       <section
         id="settings-cost"
-        className="settings-section"
+        className={`settings-section ${customNarrator ? "custom-cost-managed" : ""}`}
         aria-labelledby="settings-cost-title"
       >
         <div className="settings-section-heading">

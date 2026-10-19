@@ -287,3 +287,4 @@ legend { padding: 0 6px; color: var(--accent); font-weight: 620; }
 .auth-intro { line-height: 1.7; }
 .app-modal-body .settings-panel input:not([type="checkbox"]):not([type="radio"]), .app-modal-body .settings-panel select, .app-modal-body .campaign-form input:not([type="checkbox"]):not([type="radio"]), .app-modal-body .campaign-form textarea, .app-modal-body .editor-stack input:not([type="checkbox"]):not([type="radio"]), .app-modal-body .editor-stack select, .app-modal-body .editor-stack textarea { min-height: 44px; }
 @media (max-width: 560px) { .auth-layout { padding: 16px; } .auth-card { padding: 30px 24px; } }
+.custom-cost-managed > fieldset { display: none; }
