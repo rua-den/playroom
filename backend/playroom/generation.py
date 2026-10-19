@@ -507,7 +507,7 @@ class GenerationService:
             "Use selected_characters only; never invent speakers. Dialogue only for selected chars; stable IDs character_id/profile_version_id; narration prose. "
             "Respond to the latest player action or dialogue with eligible context. Avoid generic atmosphere-setting. "
             "Advance with concrete reaction, consequence, or change when context supports it. Preserve selected voice/knowledge; plausibly present. "
-            "Player controls actions and thoughts. Do not force A/B choices, quests, stats, or other game mechanics. "
+            "Player controls actions and thoughts. Never narrate new actions, dialogue, thoughts, or decisions for the player persona. Do not force A/B choices, quests, stats, or other game mechanics. "
             "No invented canon"
         )
         if not profile.get("is_test_profile") and not profile.get("legacy_plain_output"):
