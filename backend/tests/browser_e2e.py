@@ -124,8 +124,8 @@ def _seed_synthetic_narrator_profiles(data_dir: Path) -> dict[str, dict]:
         assert owner is not None
         profiles = {}
         for profile_id, model, label in (
-            ("synthetic-openrouter-free-a", "synthetic/free0pricing-a", "OpenRouter free0pricing A"),
-            ("synthetic-openrouter-free-b", "synthetic/free0pricing-b", "OpenRouter free0pricing B"),
+            ("openrouter-free0pricing-a", "openrouter/free0pricing-a", "OpenRouter free0pricing A"),
+            ("openrouter-free0pricing-b", "openrouter/free0pricing-b", "OpenRouter free0pricing B"),
         ):
             profiles[profile_id] = persist_model_profile(connection, owner["id"], {
                 "id": profile_id,
@@ -1153,7 +1153,8 @@ def browser_synthetic_chat() -> None:
                 # and hand off to Cost settings without stacking dialogs.
                 original_settings = page.context.request.get(f"{origin}/api/provider/settings")
                 assert original_settings.ok
-                original_narrator_id = original_settings.json()["roles"]["narrator"]["id"]
+                baseline_settings = original_settings.json()
+                original_narrator_id = baseline_settings["roles"]["narrator"]["id"]
                 assert original_narrator_id not in seeded_narrators
                 for viewport_width in (375, 1280):
                     page.set_viewport_size({"width": viewport_width, "height": 780})
@@ -1170,13 +1171,15 @@ def browser_synthetic_chat() -> None:
                     listed_ids = {profile["id"] for profile in profiles}
                     assert set(seeded_narrators) <= listed_ids
                     narrator = model_dialog.get_by_label("Model narrator")
-                    expect(narrator).to_be_visible()
-                    option_text = narrator.locator("option").all_text_contents()
-                    assert any("free0pricing-a" in text for text in option_text)
-                    assert any("free0pricing-b" in text for text in option_text)
+                    expect(narrator).to_be_enabled(timeout=12000)
+                    for profile in seeded_narrators.values():
+                        option = narrator.locator(f"option[value='{profile['id']}']")
+                        expect(option).to_have_count(1, timeout=12000)
+                        expect(option).to_contain_text(profile["model_label"])
+                    assert narrator.locator(f"option[value='{original_narrator_id}']").count() == 0
                     _visual_screenshot(page, f"model-picker-{viewport_width}.png", full_page=False)
 
-                    selected_id = "synthetic-openrouter-free-b" if viewport_width == 375 else "synthetic-openrouter-free-a"
+                    selected_id = "openrouter-free0pricing-b" if viewport_width == 375 else "openrouter-free0pricing-a"
                     narrator.select_option(selected_id)
                     save_model = model_dialog.get_by_role("button", name="L\u01b0u model", exact=True)
                     expect(save_model).to_be_enabled()
@@ -1186,10 +1189,15 @@ def browser_synthetic_chat() -> None:
                     expect(toast_region.get_by_role("status")).to_be_visible(timeout=12000)
                     saved_settings = page.context.request.get(f"{origin}/api/provider/settings")
                     assert saved_settings.ok
-                    saved_binding = saved_settings.json()["roles"]["narrator"]
+                    saved_payload = saved_settings.json()
+                    saved_binding = saved_payload["roles"]["narrator"]
                     assert saved_binding["id"] == selected_id
                     assert saved_binding["version"] == seeded_narrators[selected_id]["version"]
                     assert saved_binding.get("profile_hash") == seeded_narrators[selected_id].get("profile_hash")
+                    for key in ("mode", "policy", "confirmed_usd_cap", "budgets"):
+                        assert saved_payload.get(key) == baseline_settings.get(key), key
+                    for role in ("context", "consolidation"):
+                        assert saved_payload.get("roles", {}).get(role) == baseline_settings.get("roles", {}).get(role), role
                     assert len(campaign.calls) == provider_calls_before_model_save
                     _assert_story_preserved(page, modal_title, modal_draft, 1)
 
