@@ -1,17 +1,40 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../api/client";
-import type { CredentialSummary, ModelProfileSummary, ProviderSettings, SettingsUpdatePayload, PaidTrialSummary } from "../api/types";
+import type {
+  CredentialSummary,
+  ModelProfileSummary,
+  ProviderSettings,
+  SettingsUpdatePayload,
+  PaidTrialSummary,
+} from "../api/types";
 import { useToast } from "./Toast";
+import { CustomProviderForm } from "./CustomProviderForm";
 
-const defaults = { input_limit: 12000, requested_output: 4000, wrapper_buffer: 512 };
+const defaults = {
+  input_limit: 12000,
+  requested_output: 4000,
+  wrapper_buffer: 512,
+};
 
 export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
   const toast = useToast();
   const [credentials, setCredentials] = useState<CredentialSummary[]>([]);
   const [profiles, setProfiles] = useState<ModelProfileSummary[]>([]);
   const [settings, setSettings] = useState<ProviderSettings | null>(null);
-  const [secret, setSecret] = useState(""); const [provider, setProvider] = useState<"openrouter" | "ollama">("openrouter"); const [verifyCredential, setVerifyCredential] = useState(""); const [verifyModel, setVerifyModel] = useState(""); const [ollamaModel, setOllamaModel] = useState("gemma4:31b-cloud"); const [verifyEndpoint, setVerifyEndpoint] = useState("https://openrouter.ai/api/v1/chat/completions"); const [verifyTag, setVerifyTag] = useState("");
-  const [narrator, setNarrator] = useState(""); const [contextProfile, setContextProfile] = useState(""); const [consolidationProfile, setConsolidationProfile] = useState("");
+  const [secret, setSecret] = useState("");
+  const [provider, setProvider] = useState<"openrouter" | "ollama" | "custom">(
+    "openrouter",
+  );
+  const [verifyCredential, setVerifyCredential] = useState("");
+  const [verifyModel, setVerifyModel] = useState("");
+  const [ollamaModel, setOllamaModel] = useState("gemma4:31b-cloud");
+  const [verifyEndpoint, setVerifyEndpoint] = useState(
+    "https://openrouter.ai/api/v1/chat/completions",
+  );
+  const [verifyTag, setVerifyTag] = useState("");
+  const [narrator, setNarrator] = useState("");
+  const [contextProfile, setContextProfile] = useState("");
+  const [consolidationProfile, setConsolidationProfile] = useState("");
   const [policy, setPolicy] = useState<ProviderSettings["policy"]>("free_only");
   const [mode, setMode] = useState<ProviderSettings["mode"]>("economy");
   const [cap, setCap] = useState("");
@@ -27,48 +50,845 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  useEffect(() => { let active = true; Promise.all([api.listCredentials(), api.listProviderProfiles(), api.getProviderSettings()]).then(([nextCredentials, nextProfiles, nextSettings]) => { if (!active) return; setCredentials(nextCredentials); setProfiles(nextProfiles); setSettings(nextSettings); setNarrator(nextSettings.roles?.narrator && nextProfiles.some((profile) => profile.id === nextSettings.roles?.narrator?.id && profile.version === nextSettings.roles?.narrator?.version) ? nextSettings.roles.narrator.id : ""); setContextProfile(nextSettings.roles?.context && nextProfiles.some((profile) => profile.id === nextSettings.roles?.context?.id && profile.version === nextSettings.roles?.context?.version) ? nextSettings.roles.context.id : ""); setConsolidationProfile(nextSettings.roles?.consolidation && nextProfiles.some((profile) => profile.id === nextSettings.roles?.consolidation?.id && profile.version === nextSettings.roles?.consolidation?.version) ? nextSettings.roles.consolidation.id : ""); setPolicy(nextSettings.policy); setMode(nextSettings.mode); setCap(nextSettings.confirmed_usd_cap ?? ""); setNarratorBudget(nextSettings.budgets?.narrator ?? defaults); setContextBudget(nextSettings.budgets?.context ?? defaults); setConsolidationBudget(nextSettings.budgets?.consolidation ?? defaults); }).catch(() => active && setError("Không thể tải cấu hình provider.")).finally(() => active && setLoading(false)); return () => { active = false; }; }, []);
-  async function addCredential() { if (!secret.trim()) return; try { const record = await api.addCredential(secret.trim()); setCredentials((current) => [...current, record]); setSecret(""); setError(null); setNotice("Credential đã được lưu và khóa đã xóa khỏi biểu mẫu."); toast.success("Đã lưu khóa API."); } catch (cause) { setError("Không thể lưu credential."); toast.error("Không thể lưu khóa API."); } }
-  async function verifyProfile() { if (!verifyCredential || (provider === "openrouter" && (!verifyModel || !verifyTag))) return; try { const profile = await api.verifyProviderProfile({ provider, credential_id: verifyCredential, model: provider === "ollama" ? ollamaModel : verifyModel, endpoint: provider === "ollama" ? "https://ollama.com/v1" : verifyEndpoint, provider_tag: provider === "ollama" ? undefined : verifyTag }); setProfiles((current) => [...current.filter((item) => item.id !== profile.id), profile]); setVerifyModel(""); setVerifyTag(""); setError(null); setNotice("Profile đã được xác minh từ metadata provider."); toast.success("Đã xác minh model."); } catch (cause) { setError(cause instanceof ApiError ? cause.message : "Không thể xác minh profile."); toast.error("Không thể xác minh model."); } }
-  async function saveBudget() { const payload: SettingsUpdatePayload = { mode, policy, confirmed_usd_cap: policy === "capped_paid" ? cap : null, budgets: { narrator: narratorBudget, ...(mode === "quality" ? { context: contextBudget } : {}), ...(settings?.budgets?.consolidation ? { consolidation: consolidationBudget } : {}) } }; try { const next = await api.updateProviderSettings(payload); setSettings(next); setNarratorBudget(next.budgets.narrator ?? narratorBudget); setContextBudget(next.budgets.context ?? contextBudget); setConsolidationBudget(next.budgets.consolidation ?? consolidationBudget); setError(null); setNotice("Ngân sách và chính sách đã được lưu; role đang ghim được giữ nguyên."); toast.success("Ngân sách và chính sách đã được lưu."); } catch (cause) { setError(cause instanceof ApiError ? cause.message : "Không thể lưu cài đặt."); toast.error("Không thể lưu ngân sách và chính sách."); } }
-  async function switchRole(role: "narrator" | "context" | "consolidation", profileId: string) { if (!profileId) return; try { const payload: SettingsUpdatePayload = role === "narrator" ? { narrator_profile_id: profileId } : role === "context" ? { context_profile_id: profileId } : { consolidation_profile_id: profileId }; const next = await api.updateProviderSettings(payload); setSettings(next); setError(null); setNotice(`Model ${role} đã đổi cho các job mới.`); toast.success("Đã lưu lựa chọn model cho lượt kể mới."); } catch (cause) { setError(cause instanceof ApiError ? cause.message : "Không thể đổi model."); toast.error("Không thể lưu lựa chọn model."); } }
+  useEffect(() => {
+    let active = true;
+    Promise.all([
+      api.listCredentials(),
+      api.listProviderProfiles(),
+      api.getProviderSettings(),
+    ])
+      .then(([nextCredentials, nextProfiles, nextSettings]) => {
+        if (!active) return;
+        setCredentials(nextCredentials);
+        setProfiles(nextProfiles);
+        setSettings(nextSettings);
+        setNarrator(
+          nextSettings.roles?.narrator &&
+            nextProfiles.some(
+              (profile) =>
+                profile.id === nextSettings.roles?.narrator?.id &&
+                profile.version === nextSettings.roles?.narrator?.version,
+            )
+            ? nextSettings.roles.narrator.id
+            : "",
+        );
+        setContextProfile(
+          nextSettings.roles?.context &&
+            nextProfiles.some(
+              (profile) =>
+                profile.id === nextSettings.roles?.context?.id &&
+                profile.version === nextSettings.roles?.context?.version,
+            )
+            ? nextSettings.roles.context.id
+            : "",
+        );
+        setConsolidationProfile(
+          nextSettings.roles?.consolidation &&
+            nextProfiles.some(
+              (profile) =>
+                profile.id === nextSettings.roles?.consolidation?.id &&
+                profile.version === nextSettings.roles?.consolidation?.version,
+            )
+            ? nextSettings.roles.consolidation.id
+            : "",
+        );
+        setPolicy(nextSettings.policy);
+        setMode(nextSettings.mode);
+        setCap(nextSettings.confirmed_usd_cap ?? "");
+        setNarratorBudget(nextSettings.budgets?.narrator ?? defaults);
+        setContextBudget(nextSettings.budgets?.context ?? defaults);
+        setConsolidationBudget(nextSettings.budgets?.consolidation ?? defaults);
+      })
+      .catch(() => active && setError("Không thể tải cấu hình provider."))
+      .finally(() => active && setLoading(false));
+    return () => {
+      active = false;
+    };
+  }, []);
+  async function addCredential() {
+    if (!secret.trim()) return;
+    try {
+      const record = await api.addCredential(secret.trim());
+      setCredentials((current) => [...current, record]);
+      setSecret("");
+      setError(null);
+      setNotice("Credential đã được lưu và khóa đã xóa khỏi biểu mẫu.");
+      toast.success("Đã lưu khóa API.");
+    } catch (cause) {
+      setError("Không thể lưu credential.");
+      toast.error("Không thể lưu khóa API.");
+    }
+  }
+  async function verifyProfile() {
+    if (
+      provider === "custom" ||
+      !verifyCredential ||
+      (provider === "openrouter" && (!verifyModel || !verifyTag))
+    )
+      return;
+    try {
+      const profile = await api.verifyProviderProfile({
+        provider,
+        credential_id: verifyCredential,
+        model: provider === "ollama" ? ollamaModel : verifyModel,
+        endpoint:
+          provider === "ollama" ? "https://ollama.com/v1" : verifyEndpoint,
+        provider_tag: provider === "ollama" ? undefined : verifyTag,
+      });
+      setProfiles((current) => [
+        ...current.filter((item) => item.id !== profile.id),
+        profile,
+      ]);
+      setVerifyModel("");
+      setVerifyTag("");
+      setError(null);
+      setNotice("Profile đã được xác minh từ metadata provider.");
+      toast.success("Đã xác minh model.");
+    } catch (cause) {
+      setError(
+        cause instanceof ApiError
+          ? cause.message
+          : "Không thể xác minh profile.",
+      );
+      toast.error("Không thể xác minh model.");
+    }
+  }
+  async function saveBudget() {
+    const payload: SettingsUpdatePayload = {
+      mode,
+      policy,
+      confirmed_usd_cap: policy === "capped_paid" ? cap : null,
+      budgets: {
+        narrator: narratorBudget,
+        ...(mode === "quality" ? { context: contextBudget } : {}),
+        ...(settings?.budgets?.consolidation
+          ? { consolidation: consolidationBudget }
+          : {}),
+      },
+    };
+    try {
+      const next = await api.updateProviderSettings(payload);
+      setSettings(next);
+      setNarratorBudget(next.budgets.narrator ?? narratorBudget);
+      setContextBudget(next.budgets.context ?? contextBudget);
+      setConsolidationBudget(next.budgets.consolidation ?? consolidationBudget);
+      setError(null);
+      setNotice(
+        "Ngân sách và chính sách đã được lưu; role đang ghim được giữ nguyên.",
+      );
+      toast.success("Ngân sách và chính sách đã được lưu.");
+    } catch (cause) {
+      setError(
+        cause instanceof ApiError ? cause.message : "Không thể lưu cài đặt.",
+      );
+      toast.error("Không thể lưu ngân sách và chính sách.");
+    }
+  }
+  async function switchRole(
+    role: "narrator" | "context" | "consolidation",
+    profileId: string,
+  ) {
+    if (!profileId) return;
+    try {
+      const payload: SettingsUpdatePayload =
+        role === "narrator"
+          ? { narrator_profile_id: profileId }
+          : role === "context"
+            ? { context_profile_id: profileId }
+            : { consolidation_profile_id: profileId };
+      const next = await api.updateProviderSettings(payload);
+      setSettings(next);
+      setError(null);
+      setNotice(`Model ${role} đã đổi cho các job mới.`);
+      toast.success("Đã lưu lựa chọn model cho lượt kể mới.");
+    } catch (cause) {
+      setError(
+        cause instanceof ApiError ? cause.message : "Không thể đổi model.",
+      );
+      toast.error("Không thể lưu lựa chọn model.");
+    }
+  }
   async function loadPaidTrial() {
-    try { setTrial(await api.getPaidTrial()); setError(null); }
-    catch (cause) { setError(cause instanceof ApiError ? cause.message : "Không thể tải hạn mức phiên."); }
+    try {
+      setTrial(await api.getPaidTrial());
+      setError(null);
+    } catch (cause) {
+      setError(
+        cause instanceof ApiError
+          ? cause.message
+          : "Không thể tải hạn mức phiên.",
+      );
+    }
   }
   async function approvePaidTrial() {
     const binding = settings?.roles?.narrator;
-    if (!paidConsent || !binding || policy !== "capped_paid" || mode !== "economy") return;
+    if (
+      !paidConsent ||
+      !binding ||
+      policy !== "capped_paid" ||
+      mode !== "economy"
+    )
+      return;
     try {
       const result = await api.createPaidTrial({
-        profile_id: binding.id, profile_version: binding.version,
-        total_cap_usd: trialTotal, per_send_cap_usd: trialPerSend,
-        max_jobs: Number(trialMaxJobs), expires_at: trialExpiry,
+        profile_id: binding.id,
+        profile_version: binding.version,
+        total_cap_usd: trialTotal,
+        per_send_cap_usd: trialPerSend,
+        max_jobs: Number(trialMaxJobs),
+        expires_at: trialExpiry,
       });
-      setTrial(result); setPaidConsent(false); setError(null);
-      setNotice("Đã lưu chấp thuận ngân sách phiên. Mỗi lượt Gửi vẫn phải do bạn bấm; không tự gọi AI."); toast.success("Đã chấp thuận ngân sách phiên.");
-    } catch (cause) { setError(cause instanceof ApiError ? cause.message : "Không thể tạo hạn mức phiên trả phí."); toast.error("Không thể chấp thuận ngân sách phiên."); }
+      setTrial(result);
+      setPaidConsent(false);
+      setError(null);
+      setNotice(
+        "Đã lưu chấp thuận ngân sách phiên. Mỗi lượt Gửi vẫn phải do bạn bấm; không tự gọi AI.",
+      );
+      toast.success("Đã chấp thuận ngân sách phiên.");
+    } catch (cause) {
+      setError(
+        cause instanceof ApiError
+          ? cause.message
+          : "Không thể tạo hạn mức phiên trả phí.",
+      );
+      toast.error("Không thể chấp thuận ngân sách phiên.");
+    }
   }
   async function revokePaidTrial() {
     if (!trial?.id) return;
-    try { setTrial(await api.revokePaidTrial(trial.id)); setPaidConsent(false); setError(null); setNotice("Đã thu hồi hạn mức phiên trả phí."); toast.success("Đã thu hồi hạn mức phiên trả phí."); }
-    catch (cause) { setError(cause instanceof ApiError ? cause.message : "Không thể thu hồi hạn mức phiên."); toast.error("Không thể thu hồi hạn mức phiên."); }
+    try {
+      setTrial(await api.revokePaidTrial(trial.id));
+      setPaidConsent(false);
+      setError(null);
+      setNotice("Đã thu hồi hạn mức phiên trả phí.");
+      toast.success("Đã thu hồi hạn mức phiên trả phí.");
+    } catch (cause) {
+      setError(
+        cause instanceof ApiError
+          ? cause.message
+          : "Không thể thu hồi hạn mức phiên.",
+      );
+      toast.error("Không thể thu hồi hạn mức phiên.");
+    }
   }
-  const pinnedNarrator = profiles.find((profile) =>
-    profile.id === settings?.roles?.narrator?.id && profile.version === settings?.roles?.narrator?.version
+  const pinnedNarrator = profiles.find(
+    (profile) =>
+      profile.id === settings?.roles?.narrator?.id &&
+      profile.version === settings?.roles?.narrator?.version,
   );
-  const freeEligibilityUnknown = policy === "free_only" && Boolean(pinnedNarrator) && (pinnedNarrator?.provider === "ollama" || pinnedNarrator?.credential_tier !== "free");
-  if (loading) return <section aria-label="Cài đặt provider" className="editor-stack"><p>Đang tải cấu hình…</p></section>;
-  return <section aria-label="Cài đặt provider" className="editor-stack settings-panel">{demoMode && <div className="demo-runtime-notice" role="note" aria-label="Chế độ demo tổng hợp"><strong>Chế độ demo tổng hợp</strong><span>Playroom dùng phản hồi mẫu có thể lặp lại; model đã chọn không thay đổi demo và không gọi AI thật.</span><span>Muốn dùng provider thật, chạy Playroom - Local Test / Start Playroom.cmd, dùng tài khoản và dữ liệu riêng rồi nhập lại key trong Cài đặt.</span></div>}{error && <div role="alert" className="form-error">{error}</div>}{notice && <div role="status" aria-live="off">{notice}</div>}<h2>Cài đặt provider</h2><nav className="settings-nav" aria-label="Mục cài đặt"><a href="#settings-connection">Kết nối</a><a href="#settings-model">Model</a><a href="#settings-cost">Chi phí</a></nav><section id="settings-connection" className="settings-section" aria-labelledby="settings-connection-title"><div className="settings-section-heading"><h3 id="settings-connection-title">Kết nối provider</h3><p>Thêm khóa và xác minh model trước khi dùng.</p></div>{policy === "free_only" && <div className="free-mode-info" aria-label="Thông tin chế độ miễn phí"><h3>Chơi với tài khoản Free</h3><p>Ollama Free dùng credits miễn phí hằng tháng, tính theo token và chỉ dành cho các model starter đủ điều kiện; không có một số lượt Send cố định.</p><p className="details-meta">Playroom không tự mua thêm credits, không tự chuyển sang trả phí, cũng không đoán quota còn lại. Có thể xem mức sử dụng thật trong tài khoản Ollama.</p></div>}<fieldset><legend>Credential</legend><label htmlFor="provider-kind">Provider</label><select className="touch-target" id="provider-kind" aria-label="Provider" value={provider} onChange={(event) => setProvider(event.target.value as "openrouter" | "ollama")}><option value="openrouter">OpenRouter</option><option value="ollama">Ollama Cloud</option></select><label htmlFor="provider-secret">{provider === "ollama" ? "Ollama Cloud API key" : "OpenRouter API key"}</label><input className="touch-target" id="provider-secret" type="password" autoComplete="off" value={secret} onChange={(event) => setSecret(event.target.value)} /><button type="button" className="primary-button touch-target" onClick={addCredential}>Lưu credential</button>{credentials.map((credential) => <p key={credential.id}>Đã lưu: {credential.masked}{credential.revoked ? " · đã thu hồi" : ""}</p>)}</fieldset><fieldset><legend>Xác minh model</legend><label htmlFor="verify-credential">Credential</label><select className="touch-target" id="verify-credential" value={verifyCredential} onChange={(event) => setVerifyCredential(event.target.value)}><option value="">Chọn credential</option>{credentials.filter((credential) => !credential.revoked).map((credential) => <option key={credential.id} value={credential.id}>{credential.masked}</option>)}</select>{provider === "ollama" ? <><label htmlFor="ollama-model">Model Ollama Cloud</label><select className="touch-target" id="ollama-model" value={ollamaModel} onChange={(event) => setOllamaModel(event.target.value)}><option value="gemma4:31b-cloud">Gemma4 31B · Free starter</option><option value="gpt-oss:120b-cloud">GPT-OSS 120B · Paid / purchased credits</option></select><p className="details-meta">Starter dùng credits theo token, không có số lượt cố định. Playroom chưa xác minh được cơ chế cấm trừ credits mua thêm, nên Free only sẽ chặn gọi Ollama Cloud. Muốn thử cần tự bật Capped paid và chấp thuận ngân sách riêng.</p></> : <><label htmlFor="verify-model">Model ID</label><input className="touch-target" id="verify-model" value={verifyModel} onChange={(event) => setVerifyModel(event.target.value)} placeholder="author/model:free" /></>}{provider === "ollama" ? <p className="details-meta">Ollama Cloud endpoint: https://ollama.com/v1</p> : <><label htmlFor="verify-endpoint">Endpoint</label><input className="touch-target" id="verify-endpoint" value={verifyEndpoint} onChange={(event) => setVerifyEndpoint(event.target.value)} /><label htmlFor="verify-provider-tag">Provider tag</label><input className="touch-target" id="verify-provider-tag" value={verifyTag} onChange={(event) => setVerifyTag(event.target.value)} /></>}<button type="button" className="quiet-button touch-target" onClick={verifyProfile}>Xác minh profile</button></fieldset></section><section id="settings-model" className="settings-section" aria-labelledby="settings-model-title"><div className="settings-section-heading"><h3 id="settings-model-title">Model cho từng việc</h3><p>Chọn model kể chuyện và model xử lý ký ức.</p></div>{freeEligibilityUnknown && <div role="alert" className="form-error">{pinnedNarrator?.provider === "ollama" && pinnedNarrator?.credential_tier === "free"
-  ? `Model narrator ${pinnedNarrator.model} thuộc nhóm Free starter, nhưng không thể xác minh Ollama sẽ không trừ credits mua thêm. Free only sẽ chặn gọi Ollama; muốn thử cần chủ động bật Capped paid và chấp thuận ngân sách toàn phiên.`
-  : `Model narrator ${pinnedNarrator?.model} không được xác minh là model miễn phí. Với Free only Playroom chặn model này; muốn thử cần bật Capped paid và chấp thuận ngân sách.`}</div>}<fieldset><legend>Model narrator</legend>{settings?.roles?.narrator && <p className="details-meta">Đang ghim: {settings.roles.narrator.id} · v{settings.roles.narrator.version} · {settings.roles.narrator.profile_hash ?? "hash unknown"}</p>}<label htmlFor="narrator-profile">Model narrator</label><select className="touch-target" id="narrator-profile" value={narrator} onChange={(event) => setNarrator(event.target.value)}><option value="">Chọn model để đổi</option>{profiles.map((profile) => <option key={`${profile.id}-${profile.version}`} value={profile.id}>{profile.model_label ?? profile.model} · v{profile.version} · {profile.credential_tier ?? "unknown"}</option>)}</select><button type="button" className="quiet-button touch-target" onClick={() => switchRole("narrator", narrator)}>Đổi model narrator</button></fieldset><fieldset><legend>Model context / consolidation</legend>{settings?.roles?.context && <p className="details-meta">Context đang ghim: {settings.roles.context.id} · v{settings.roles.context.version} · {settings.roles.context.profile_hash ?? "hash unknown"}</p>}<label htmlFor="context-profile">Model context</label><select className="touch-target" id="context-profile" value={contextProfile} onChange={(event) => setContextProfile(event.target.value)}><option value="">Chưa chọn</option>{profiles.filter(isStrictProfile).map((profile) => <option key={`context-${profile.id}`} value={profile.id}>{profile.model_label ?? profile.model} · v{profile.version}</option>)}</select><button type="button" className="quiet-button touch-target" onClick={() => switchRole("context", contextProfile)}>Đổi model context</button>{settings?.roles?.consolidation && <p className="details-meta">Consolidation đang ghim: {settings.roles.consolidation.id} · v{settings.roles.consolidation.version} · {settings.roles.consolidation.profile_hash ?? "hash unknown"}</p>}<label htmlFor="consolidation-profile">Model consolidation</label><select className="touch-target" id="consolidation-profile" value={consolidationProfile} onChange={(event) => setConsolidationProfile(event.target.value)}><option value="">Chưa chọn</option>{profiles.filter(isStrictProfile).map((profile) => <option key={`consolidation-${profile.id}`} value={profile.id}>{profile.model_label ?? profile.model}</option>)}</select><button type="button" className="quiet-button touch-target" onClick={() => switchRole("consolidation", consolidationProfile)}>Đổi model consolidation</button></fieldset></section><section id="settings-cost" className="settings-section" aria-labelledby="settings-cost-title"><div className="settings-section-heading"><h3 id="settings-cost-title">Chi phí và giới hạn</h3><p>Free only luôn chặn đường gọi trả phí; capped paid cần giới hạn rõ ràng.</p></div><fieldset><legend>Ngân sách và chính sách</legend><label htmlFor="provider-mode">Chế độ</label><select className="touch-target" id="provider-mode" value={mode} onChange={(event) => setMode(event.target.value as ProviderSettings["mode"])}><option value="economy">Economy</option><option value="quality">Quality</option></select><label htmlFor="provider-policy">Chính sách chi phí</label><select className="touch-target" id="provider-policy" value={policy} onChange={(event) => setPolicy(event.target.value as ProviderSettings["policy"])}><option value="free_only">Free only</option><option value="capped_paid">Capped paid</option></select><details><summary>Nâng cao</summary>{policy === "capped_paid" && <><label htmlFor="provider-cap">Giới hạn USD</label><input className="touch-target" id="provider-cap" inputMode="decimal" value={cap} onChange={(event) => setCap(event.target.value)} required /></>}</details>{policy === "capped_paid" && <div className="budget-fields-paid"><p className="details-meta">Giới hạn token nâng cao dành cho chế độ trả phí; không phải số lượt Free của nhà cung cấp.</p><BudgetFields label="Narrator" budget={narratorBudget} onChange={setNarratorBudget} /><BudgetFields label="Context" budget={contextBudget} onChange={setContextBudget} hidden={mode !== "quality"} /><BudgetFields label="Consolidation" budget={consolidationBudget} onChange={setConsolidationBudget} hidden={!settings?.budgets?.consolidation} /></div>}<button type="button" className="primary-button touch-target" onClick={saveBudget}>Lưu ngân sách</button></fieldset>{policy === "capped_paid" && <fieldset><legend>Ngân sách toàn phiên trả phí</legend><p className="details-meta">Giới hạn USD trong phần Nâng cao áp dụng từng lượt. Phiên nhiều lượt cần chấp thuận riêng. Dự toán nội bộ không bảo đảm hóa đơn nhà cung cấp.</p><button type="button" className="quiet-button touch-target" onClick={loadPaidTrial}>Xem hạn mức toàn phiên</button>{trial && <p role="status">Trạng thái: {trial.state} · đã giữ {trial.reserved_usd} USD · còn {trial.remaining_usd} USD · lượt {trial.jobs_used}/{trial.max_jobs ?? 0}</p>}{trial?.state !== "active" && <><label htmlFor="trial-total">Tổng ngân sách được duyệt (USD)</label><input className="touch-target" id="trial-total" inputMode="decimal" value={trialTotal} onChange={(event) => setTrialTotal(event.target.value)} /><label htmlFor="trial-per-send">Tối đa mỗi lượt (USD)</label><input className="touch-target" id="trial-per-send" inputMode="decimal" value={trialPerSend} onChange={(event) => setTrialPerSend(event.target.value)} /><label htmlFor="trial-max-jobs">Số lượt Send tối đa</label><input className="touch-target" id="trial-max-jobs" type="number" min={1} max={100} value={trialMaxJobs} onChange={(event) => setTrialMaxJobs(event.target.value)} /><label htmlFor="trial-expiry">Hết hạn (ISO UTC)</label><input className="touch-target" id="trial-expiry" placeholder="2026-10-15T12:00:00Z" value={trialExpiry} onChange={(event) => setTrialExpiry(event.target.value)} /><label htmlFor="trial-consent"><input className="touch-target" id="trial-consent" type="checkbox" checked={paidConsent} onChange={(event) => setPaidConsent(event.target.checked)} /> Tôi chấp thuận hạn mức phiên trả phí này; chỉ tôi mới bấm Gửi.</label><button type="button" className="primary-button touch-target" disabled={!paidConsent || !settings?.roles?.narrator || mode !== "economy"} onClick={approvePaidTrial}>Chấp thuận ngân sách phiên</button></>}{trial?.state === "active" && <button type="button" className="quiet-button touch-target" onClick={revokePaidTrial}>Thu hồi phiên trả phí</button>}</fieldset>}<details className="details-meta"><summary>Thông số kỹ thuật, pricing và quota (nâng cao)</summary>{profiles.map((profile) => { const strict = isStrictProfile(profile); const pricing = profile.pricing_verified && profile.pricing ? `prompt: ${profile.pricing.prompt ?? "unknown"}, completion: ${profile.pricing.completion ?? "unknown"} ${profile.pricing.currency ?? "unknown"}/${(profile.pricing.unit ?? "unknown").replace(`${profile.pricing.currency ?? ""}/`, "")}` : "unknown"; const quota = profile.credential_metadata?.free_model_daily_requests != null ? `${profile.credential_metadata.free_model_daily_requests} / ${profile.credential_metadata.quota_period ?? "unknown"} · ${profile.credential_metadata.quota_source ?? "unknown"}` : "unknown"; return <p key={`${profile.id}-${profile.version}`}>{profile.model_label ?? profile.model} · tier: {profile.credential_tier ?? "unknown"} · schema: {strict ? "native strict" : "unknown"} · pricing: {pricing} · free quota: {quota}</p>; })}</details><p className="details-meta">Chỉ hiển thị credential dạng masked. Capability, quota và pricing được coi là chưa biết nếu server chưa xác minh. Không suy ra gói Free từ credential_tier của model.</p></section></section>;
+  const customNarrator = pinnedNarrator?.provider === "custom";
+  const freeEligibilityUnknown =
+    policy === "free_only" &&
+    Boolean(pinnedNarrator) &&
+    !customNarrator &&
+    (pinnedNarrator?.provider === "ollama" ||
+      pinnedNarrator?.credential_tier !== "free");
+  if (loading)
+    return (
+      <section aria-label="Cài đặt provider" className="editor-stack">
+        <p>Đang tải cấu hình…</p>
+      </section>
+    );
+  return (
+    <section
+      aria-label="Cài đặt provider"
+      className="editor-stack settings-panel"
+    >
+      {demoMode && (
+        <div
+          className="demo-runtime-notice"
+          role="note"
+          aria-label="Chế độ demo tổng hợp"
+        >
+          <strong>Chế độ demo tổng hợp</strong>
+          <span>
+            Playroom dùng phản hồi mẫu có thể lặp lại; model đã chọn không thay
+            đổi demo và không gọi AI thật.
+          </span>
+          <span>
+            Muốn dùng provider thật, chạy Playroom - Local Test / Start
+            Playroom.cmd, dùng tài khoản và dữ liệu riêng rồi nhập lại key trong
+            Cài đặt.
+          </span>
+        </div>
+      )}
+      {error && (
+        <div role="alert" className="form-error">
+          {error}
+        </div>
+      )}
+      {notice && (
+        <div role="status" aria-live="off">
+          {notice}
+        </div>
+      )}
+      <h2>Cài đặt provider</h2>
+      <nav className="settings-nav" aria-label="Mục cài đặt">
+        <a href="#settings-connection">Kết nối</a>
+        <a href="#settings-model">Model</a>
+        <a href="#settings-cost">Chi phí</a>
+      </nav>
+      <section
+        id="settings-connection"
+        className="settings-section"
+        aria-labelledby="settings-connection-title"
+      >
+        <div className="settings-section-heading">
+          <h3 id="settings-connection-title">Kết nối provider</h3>
+          <p>Thêm khóa và xác minh model trước khi dùng.</p>
+        </div>
+        {policy === "free_only" && (
+          <div
+            className="free-mode-info"
+            aria-label="Thông tin chế độ miễn phí"
+          >
+            <h3>Chơi với tài khoản Free</h3>
+            <p>
+              Ollama Free dùng credits miễn phí hằng tháng, tính theo token và
+              chỉ dành cho các model starter đủ điều kiện; không có một số lượt
+              Send cố định.
+            </p>
+            <p className="details-meta">
+              Playroom không tự mua thêm credits, không tự chuyển sang trả phí,
+              cũng không đoán quota còn lại. Có thể xem mức sử dụng thật trong
+              tài khoản Ollama.
+            </p>
+          </div>
+        )}
+        {provider !== "custom" && (
+          <>
+            <fieldset>
+              <legend>Credential</legend>
+              <label htmlFor="provider-kind">Provider</label>
+              <select
+                className="touch-target"
+                id="provider-kind"
+                aria-label="Provider"
+                value={provider}
+                onChange={(event) =>
+                  setProvider(
+                    event.target.value as "openrouter" | "ollama" | "custom",
+                  )
+                }
+              >
+                <option value="openrouter">OpenRouter</option>
+                <option value="ollama">Ollama Cloud</option>
+                <option value="custom">Custom OpenAI-compatible</option>
+              </select>
+              <label htmlFor="provider-secret">
+                {provider === "ollama"
+                  ? "Ollama Cloud API key"
+                  : "OpenRouter API key"}
+              </label>
+              <input
+                className="touch-target"
+                id="provider-secret"
+                type="password"
+                autoComplete="off"
+                value={secret}
+                onChange={(event) => setSecret(event.target.value)}
+              />
+              <button
+                type="button"
+                className="primary-button touch-target"
+                onClick={addCredential}
+              >
+                Lưu credential
+              </button>
+              {credentials.map((credential) => (
+                <p key={credential.id}>
+                  Đã lưu: {credential.masked}
+                  {credential.revoked ? " · đã thu hồi" : ""}
+                </p>
+              ))}
+            </fieldset>
+            <fieldset>
+              <legend>Xác minh model</legend>
+              <label htmlFor="verify-credential">Credential</label>
+              <select
+                className="touch-target"
+                id="verify-credential"
+                value={verifyCredential}
+                onChange={(event) => setVerifyCredential(event.target.value)}
+              >
+                <option value="">Chọn credential</option>
+                {credentials
+                  .filter((credential) => !credential.revoked)
+                  .map((credential) => (
+                    <option key={credential.id} value={credential.id}>
+                      {credential.masked}
+                    </option>
+                  ))}
+              </select>
+              {provider === "ollama" ? (
+                <>
+                  <label htmlFor="ollama-model">Model Ollama Cloud</label>
+                  <select
+                    className="touch-target"
+                    id="ollama-model"
+                    value={ollamaModel}
+                    onChange={(event) => setOllamaModel(event.target.value)}
+                  >
+                    <option value="gemma4:31b-cloud">
+                      Gemma4 31B · Free starter
+                    </option>
+                    <option value="gpt-oss:120b-cloud">
+                      GPT-OSS 120B · Paid / purchased credits
+                    </option>
+                  </select>
+                  <p className="details-meta">
+                    Starter dùng credits theo token, không có số lượt cố định.
+                    Playroom chưa xác minh được cơ chế cấm trừ credits mua thêm,
+                    nên Free only sẽ chặn gọi Ollama Cloud. Muốn thử cần tự bật
+                    Capped paid và chấp thuận ngân sách riêng.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <label htmlFor="verify-model">Model ID</label>
+                  <input
+                    className="touch-target"
+                    id="verify-model"
+                    value={verifyModel}
+                    onChange={(event) => setVerifyModel(event.target.value)}
+                    placeholder="author/model:free"
+                  />
+                </>
+              )}
+              {provider === "ollama" ? (
+                <p className="details-meta">
+                  Ollama Cloud endpoint: https://ollama.com/v1
+                </p>
+              ) : (
+                <>
+                  <label htmlFor="verify-endpoint">Endpoint</label>
+                  <input
+                    className="touch-target"
+                    id="verify-endpoint"
+                    value={verifyEndpoint}
+                    onChange={(event) => setVerifyEndpoint(event.target.value)}
+                  />
+                  <label htmlFor="verify-provider-tag">Provider tag</label>
+                  <input
+                    className="touch-target"
+                    id="verify-provider-tag"
+                    value={verifyTag}
+                    onChange={(event) => setVerifyTag(event.target.value)}
+                  />
+                </>
+              )}
+              <button
+                type="button"
+                className="quiet-button touch-target"
+                onClick={verifyProfile}
+              >
+                Xác minh profile
+              </button>
+            </fieldset>
+          </>
+        )}
+        {provider === "custom" && (
+          <CustomProviderForm
+            profile={profiles.find((item) => item.provider === "custom")}
+            onSaved={(profile) => {
+              setProfiles((current) => [
+                ...current.filter((item) => item.id !== profile.id),
+                profile,
+              ]);
+              setNotice(
+                "Đã lưu custom provider; chi phí và quota do endpoint quản lý.",
+              );
+            }}
+          />
+        )}
+      </section>
+      <section
+        id="settings-model"
+        className="settings-section"
+        aria-labelledby="settings-model-title"
+      >
+        <div className="settings-section-heading">
+          <h3 id="settings-model-title">Model cho từng việc</h3>
+          <p>Chọn model kể chuyện và model xử lý ký ức.</p>
+        </div>
+        {freeEligibilityUnknown && (
+          <div role="alert" className="form-error">
+            {pinnedNarrator?.provider === "ollama" &&
+            pinnedNarrator?.credential_tier === "free"
+              ? `Model narrator ${pinnedNarrator.model} thuộc nhóm Free starter, nhưng không thể xác minh Ollama sẽ không trừ credits mua thêm. Free only sẽ chặn gọi Ollama; muốn thử cần chủ động bật Capped paid và chấp thuận ngân sách toàn phiên.`
+              : `Model narrator ${pinnedNarrator?.model} không được xác minh là model miễn phí. Với Free only Playroom chặn model này; muốn thử cần bật Capped paid và chấp thuận ngân sách.`}
+          </div>
+        )}
+        <fieldset>
+          <legend>Model narrator</legend>
+          {settings?.roles?.narrator && (
+            <p className="details-meta">
+              Đang ghim: {settings.roles.narrator.id} · v
+              {settings.roles.narrator.version} ·{" "}
+              {settings.roles.narrator.profile_hash ?? "hash unknown"}
+            </p>
+          )}
+          <label htmlFor="narrator-profile">Model narrator</label>
+          <select
+            className="touch-target"
+            id="narrator-profile"
+            value={narrator}
+            onChange={(event) => setNarrator(event.target.value)}
+          >
+            <option value="">Chọn model để đổi</option>
+            {profiles.map((profile) => (
+              <option
+                key={`${profile.id}-${profile.version}`}
+                value={profile.id}
+              >
+                {profile.model_label ?? profile.model} · v{profile.version} ·{" "}
+                {profile.credential_tier ?? "unknown"}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            className="quiet-button touch-target"
+            onClick={() => switchRole("narrator", narrator)}
+          >
+            Đổi model narrator
+          </button>
+        </fieldset>
+        <fieldset>
+          <legend>Model context / consolidation</legend>
+          {settings?.roles?.context && (
+            <p className="details-meta">
+              Context đang ghim: {settings.roles.context.id} · v
+              {settings.roles.context.version} ·{" "}
+              {settings.roles.context.profile_hash ?? "hash unknown"}
+            </p>
+          )}
+          <label htmlFor="context-profile">Model context</label>
+          <select
+            className="touch-target"
+            id="context-profile"
+            value={contextProfile}
+            onChange={(event) => setContextProfile(event.target.value)}
+          >
+            <option value="">Chưa chọn</option>
+            {profiles.filter(isStrictProfile).map((profile) => (
+              <option key={`context-${profile.id}`} value={profile.id}>
+                {profile.model_label ?? profile.model} · v{profile.version}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            className="quiet-button touch-target"
+            onClick={() => switchRole("context", contextProfile)}
+          >
+            Đổi model context
+          </button>
+          {settings?.roles?.consolidation && (
+            <p className="details-meta">
+              Consolidation đang ghim: {settings.roles.consolidation.id} · v
+              {settings.roles.consolidation.version} ·{" "}
+              {settings.roles.consolidation.profile_hash ?? "hash unknown"}
+            </p>
+          )}
+          <label htmlFor="consolidation-profile">Model consolidation</label>
+          <select
+            className="touch-target"
+            id="consolidation-profile"
+            value={consolidationProfile}
+            onChange={(event) => setConsolidationProfile(event.target.value)}
+          >
+            <option value="">Chưa chọn</option>
+            {profiles.filter(isStrictProfile).map((profile) => (
+              <option key={`consolidation-${profile.id}`} value={profile.id}>
+                {profile.model_label ?? profile.model}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            className="quiet-button touch-target"
+            onClick={() => switchRole("consolidation", consolidationProfile)}
+          >
+            Đổi model consolidation
+          </button>
+        </fieldset>
+      </section>
+      <section
+        id="settings-cost"
+        className="settings-section"
+        aria-labelledby="settings-cost-title"
+      >
+        <div className="settings-section-heading">
+          <h3 id="settings-cost-title">Chi phí và giới hạn</h3>
+          <p>
+            Free only luôn chặn đường gọi trả phí; capped paid cần giới hạn rõ
+            ràng.
+          </p>
+          {customNarrator && (
+            <p className="details-meta">
+              Chi phí và quota do endpoint quản lý; Playroom không suy ra giá
+              hoặc hạn mức provider.
+            </p>
+          )}
+        </div>
+        <fieldset>
+          <legend>Ngân sách và chính sách</legend>
+          <label htmlFor="provider-mode">Chế độ</label>
+          <select
+            className="touch-target"
+            id="provider-mode"
+            value={mode}
+            onChange={(event) =>
+              setMode(event.target.value as ProviderSettings["mode"])
+            }
+          >
+            <option value="economy">Economy</option>
+            <option value="quality" disabled={customNarrator}>
+              Quality
+            </option>
+          </select>
+          <label htmlFor="provider-policy">Chính sách chi phí</label>
+          <select
+            className="touch-target"
+            id="provider-policy"
+            value={policy}
+            onChange={(event) =>
+              setPolicy(event.target.value as ProviderSettings["policy"])
+            }
+          >
+            <option value="free_only">Free only</option>
+            <option value="capped_paid">Capped paid</option>
+          </select>
+          <details>
+            <summary>Nâng cao</summary>
+            {policy === "capped_paid" && !customNarrator && (
+              <>
+                <label htmlFor="provider-cap">Giới hạn USD</label>
+                <input
+                  className="touch-target"
+                  id="provider-cap"
+                  inputMode="decimal"
+                  value={cap}
+                  onChange={(event) => setCap(event.target.value)}
+                  required
+                />
+              </>
+            )}
+          </details>
+          {policy === "capped_paid" && !customNarrator && (
+            <div className="budget-fields-paid">
+              <p className="details-meta">
+                Giới hạn token nâng cao dành cho chế độ trả phí; không phải số
+                lượt Free của nhà cung cấp.
+              </p>
+              <BudgetFields
+                label="Narrator"
+                budget={narratorBudget}
+                onChange={setNarratorBudget}
+              />
+              <BudgetFields
+                label="Context"
+                budget={contextBudget}
+                onChange={setContextBudget}
+                hidden={mode !== "quality"}
+              />
+              <BudgetFields
+                label="Consolidation"
+                budget={consolidationBudget}
+                onChange={setConsolidationBudget}
+                hidden={!settings?.budgets?.consolidation}
+              />
+            </div>
+          )}
+          <button
+            type="button"
+            className="primary-button touch-target"
+            onClick={saveBudget}
+          >
+            Lưu ngân sách
+          </button>
+        </fieldset>
+        {policy === "capped_paid" && (
+          <fieldset>
+            <legend>Ngân sách toàn phiên trả phí</legend>
+            <p className="details-meta">
+              Giới hạn USD trong phần Nâng cao áp dụng từng lượt. Phiên nhiều
+              lượt cần chấp thuận riêng. Dự toán nội bộ không bảo đảm hóa đơn
+              nhà cung cấp.
+            </p>
+            <button
+              type="button"
+              className="quiet-button touch-target"
+              onClick={loadPaidTrial}
+            >
+              Xem hạn mức toàn phiên
+            </button>
+            {trial && (
+              <p role="status">
+                Trạng thái: {trial.state} · đã giữ {trial.reserved_usd} USD ·
+                còn {trial.remaining_usd} USD · lượt {trial.jobs_used}/
+                {trial.max_jobs ?? 0}
+              </p>
+            )}
+            {trial?.state !== "active" && (
+              <>
+                <label htmlFor="trial-total">
+                  Tổng ngân sách được duyệt (USD)
+                </label>
+                <input
+                  className="touch-target"
+                  id="trial-total"
+                  inputMode="decimal"
+                  value={trialTotal}
+                  onChange={(event) => setTrialTotal(event.target.value)}
+                />
+                <label htmlFor="trial-per-send">Tối đa mỗi lượt (USD)</label>
+                <input
+                  className="touch-target"
+                  id="trial-per-send"
+                  inputMode="decimal"
+                  value={trialPerSend}
+                  onChange={(event) => setTrialPerSend(event.target.value)}
+                />
+                <label htmlFor="trial-max-jobs">Số lượt Send tối đa</label>
+                <input
+                  className="touch-target"
+                  id="trial-max-jobs"
+                  type="number"
+                  min={1}
+                  max={100}
+                  value={trialMaxJobs}
+                  onChange={(event) => setTrialMaxJobs(event.target.value)}
+                />
+                <label htmlFor="trial-expiry">Hết hạn (ISO UTC)</label>
+                <input
+                  className="touch-target"
+                  id="trial-expiry"
+                  placeholder="2026-10-15T12:00:00Z"
+                  value={trialExpiry}
+                  onChange={(event) => setTrialExpiry(event.target.value)}
+                />
+                <label htmlFor="trial-consent">
+                  <input
+                    className="touch-target"
+                    id="trial-consent"
+                    type="checkbox"
+                    checked={paidConsent}
+                    onChange={(event) => setPaidConsent(event.target.checked)}
+                  />{" "}
+                  Tôi chấp thuận hạn mức phiên trả phí này; chỉ tôi mới bấm Gửi.
+                </label>
+                <button
+                  type="button"
+                  className="primary-button touch-target"
+                  disabled={
+                    !paidConsent ||
+                    !settings?.roles?.narrator ||
+                    mode !== "economy"
+                  }
+                  onClick={approvePaidTrial}
+                >
+                  Chấp thuận ngân sách phiên
+                </button>
+              </>
+            )}
+            {trial?.state === "active" && (
+              <button
+                type="button"
+                className="quiet-button touch-target"
+                onClick={revokePaidTrial}
+              >
+                Thu hồi phiên trả phí
+              </button>
+            )}
+          </fieldset>
+        )}
+        <details className="details-meta">
+          <summary>Thông số kỹ thuật, pricing và quota (nâng cao)</summary>
+          {profiles.map((profile) => {
+            const strict = isStrictProfile(profile);
+            const pricing =
+              profile.pricing_verified && profile.pricing
+                ? `prompt: ${profile.pricing.prompt ?? "unknown"}, completion: ${profile.pricing.completion ?? "unknown"} ${profile.pricing.currency ?? "unknown"}/${(profile.pricing.unit ?? "unknown").replace(`${profile.pricing.currency ?? ""}/`, "")}`
+                : "unknown";
+            const quota =
+              profile.credential_metadata?.free_model_daily_requests != null
+                ? `${profile.credential_metadata.free_model_daily_requests} / ${profile.credential_metadata.quota_period ?? "unknown"} · ${profile.credential_metadata.quota_source ?? "unknown"}`
+                : "unknown";
+            return (
+              <p key={`${profile.id}-${profile.version}`}>
+                {profile.model_label ?? profile.model} · tier:{" "}
+                {profile.credential_tier ?? "unknown"} · schema:{" "}
+                {strict ? "native strict" : "unknown"} · pricing: {pricing} ·
+                free quota: {quota}
+              </p>
+            );
+          })}
+        </details>
+        <p className="details-meta">
+          Chỉ hiển thị credential dạng masked. Capability, quota và pricing được
+          coi là chưa biết nếu server chưa xác minh. Không suy ra gói Free từ
+          credential_tier của model.
+        </p>
+      </section>
+    </section>
+  );
 }
 
-function isStrictProfile(profile: ModelProfileSummary) { return profile.structured_output === true && profile.native_structured_output === true && Boolean(profile.structured_schema_parameter); }
+function isStrictProfile(profile: ModelProfileSummary) {
+  return (
+    profile.structured_output === true &&
+    profile.native_structured_output === true &&
+    Boolean(profile.structured_schema_parameter)
+  );
+}
 
-function BudgetFields({ label, budget, onChange, hidden = false }: { label: string; budget: typeof defaults; onChange: (budget: typeof defaults) => void; hidden?: boolean }) {
+function BudgetFields({
+  label,
+  budget,
+  onChange,
+  hidden = false,
+}: {
+  label: string;
+  budget: typeof defaults;
+  onChange: (budget: typeof defaults) => void;
+  hidden?: boolean;
+}) {
   if (hidden) return null;
   const prefix = label.toLowerCase();
-  const update = (key: keyof typeof defaults, value: string) => onChange({ ...budget, [key]: Number(value) });
-  return <div className="budget-fields"><p>{label} budget</p><label htmlFor={`${prefix}-input`}>{label} input tokens</label><input className="touch-target" id={`${prefix}-input`} type="number" min="1" value={budget.input_limit} onChange={(event) => update("input_limit", event.target.value)} /><label htmlFor={`${prefix}-output`}>{label} output tokens</label><input className="touch-target" id={`${prefix}-output`} type="number" min="1" value={budget.requested_output} onChange={(event) => update("requested_output", event.target.value)} /><label htmlFor={`${prefix}-wrapper`}>{label} wrapper tokens</label><input className="touch-target" id={`${prefix}-wrapper`} type="number" min="1" value={budget.wrapper_buffer} onChange={(event) => update("wrapper_buffer", event.target.value)} /></div>;
+  const update = (key: keyof typeof defaults, value: string) =>
+    onChange({ ...budget, [key]: Number(value) });
+  return (
+    <div className="budget-fields">
+      <p>{label} budget</p>
+      <label htmlFor={`${prefix}-input`}>{label} input tokens</label>
+      <input
+        className="touch-target"
+        id={`${prefix}-input`}
+        type="number"
+        min="1"
+        value={budget.input_limit}
+        onChange={(event) => update("input_limit", event.target.value)}
+      />
+      <label htmlFor={`${prefix}-output`}>{label} output tokens</label>
+      <input
+        className="touch-target"
+        id={`${prefix}-output`}
+        type="number"
+        min="1"
+        value={budget.requested_output}
+        onChange={(event) => update("requested_output", event.target.value)}
+      />
+      <label htmlFor={`${prefix}-wrapper`}>{label} wrapper tokens</label>
+      <input
+        className="touch-target"
+        id={`${prefix}-wrapper`}
+        type="number"
+        min="1"
+        value={budget.wrapper_buffer}
+        onChange={(event) => update("wrapper_buffer", event.target.value)}
+      />
+    </div>
+  );
 }

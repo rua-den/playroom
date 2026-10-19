@@ -144,3 +144,30 @@ def test_custom_reservation_keeps_cost_totals_unknown_without_app_cap(tmp_path):
     assert ledger["cap"] is None and ledger["reserved_total_usd"] is None
     assert ledger["stages"]["narration"]["estimated_cost_usd"] is None
 
+
+def test_custom_profile_can_bind_and_create_context_preview_without_pricing_claim(tmp_path):
+    from fastapi.testclient import TestClient
+    from playroom.app import create_app
+    from playroom.auth import create_owner
+    from playroom.campaigns import create_campaign
+    from playroom.db import connect, migrate
+    from playroom.timeline import get_branch_head
+
+    database = tmp_path / "custom-integration.sqlite3"
+    connection = connect(database); migrate(connection)
+    owner = create_owner(connection, "custom-integration@example.test", "password-integration")
+    campaign = create_campaign(connection, owner.id, "Custom", {"name": "Fixture"}, [], {"name": "Player"})
+    head = get_branch_head(connection, campaign.id, campaign.initial_branch_id)
+    connection.close()
+    app = create_app(database_url=f"sqlite:///{database}", allowed_hosts={"testserver"}, secure_cookies=False, credential_root=tmp_path / "secrets")
+    client = TestClient(app, base_url="https://testserver"); origin = {"origin": "https://testserver"}
+    assert client.post("/api/auth/login", json={"email": owner.email, "password": "password-integration"}, headers=origin).status_code == 200
+    saved = client.post("/api/provider/profiles/custom", json={"endpoint": "http://127.0.0.1:1234/v1", "model": "fixture"}, headers=origin)
+    assert saved.status_code == 201
+    profile = saved.json()
+    settings = client.put("/api/provider/settings", json={"narrator_profile_id": profile["id"], "mode": "economy", "policy": "free_only"}, headers=origin)
+    assert settings.status_code == 200, settings.text
+    preview = client.post(f"/api/campaigns/{campaign.id}/context/previews", json={"branch_id": campaign.initial_branch_id, "action": "Look around", "profile_id": profile["id"]}, headers=origin)
+    assert preview.status_code == 201, preview.text
+    assert preview.json()["status"] in {"ready", "blocked"}
+

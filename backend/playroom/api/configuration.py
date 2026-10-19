@@ -170,6 +170,9 @@ def update_settings(payload: SettingsRequest, connection: sqlite3.Connection = D
         return get_model_profile(connection, owner.id, profile_id, version)
 
     narrator_profile = load_binding("narrator", payload.narrator_profile_id)
+    mode = payload.mode or existing.get("mode", "economy")
+    if mode == "quality" and narrator_profile.get("provider") == "custom":
+        raise ValidationError("Custom provider supports narrator economy only")
     def binding(profile):
         return {"id": profile["id"], "version": profile["version"], "profile_hash": profile.get("profile_hash") or profile_hash({key: value for key, value in profile.items() if key not in {"version", "profile_hash"}})}
     roles = {"narrator": binding(narrator_profile)}
@@ -185,7 +188,6 @@ def update_settings(payload: SettingsRequest, connection: sqlite3.Connection = D
         if not consolidation_profile.get("structured_output") or not consolidation_profile.get("native_structured_output") or not consolidation_profile.get("structured_schema_parameter"):
             raise ValidationError("Consolidation role requires native strict schema support")
         roles["consolidation"] = binding(consolidation_profile)
-    mode = payload.mode or existing.get("mode", "economy")
     policy = payload.policy or existing.get("policy", "free_only")
     cap = payload.confirmed_usd_cap if payload.confirmed_usd_cap is not None else existing.get("confirmed_usd_cap")
     budgets = payload.budgets if payload.budgets is not None else (existing.get("budgets") if existing.get("budgets_configured") else {})

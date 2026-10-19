@@ -27,7 +27,9 @@ export function ModelSwitcher({
 
   useEffect(() => {
     mounted.current = true;
-    return () => { mounted.current = false; };
+    return () => {
+      mounted.current = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -42,7 +44,9 @@ export function ModelSwitcher({
         setProfiles(nextProfiles);
         setSelected(nextSettings.roles?.narrator?.id ?? "");
       })
-      .catch(() => active && setError("Không thể tải danh sách model đã xác minh."))
+      .catch(
+        () => active && setError("Không thể tải danh sách model đã xác minh."),
+      )
       .finally(() => active && setLoading(false));
     return () => {
       active = false;
@@ -50,20 +54,38 @@ export function ModelSwitcher({
   }, [open]);
 
   const current = useMemo(
-    () => profiles.find((profile) => profile.id === settings?.roles?.narrator?.id && profile.version === settings?.roles?.narrator?.version),
+    () =>
+      profiles.find(
+        (profile) =>
+          profile.id === settings?.roles?.narrator?.id &&
+          profile.version === settings?.roles?.narrator?.version,
+      ),
     [profiles, settings],
   );
-  const currentDisplay = current ?? profiles.find((profile) => profile.id === settings?.roles?.narrator?.id);
-  const verifiedProfiles = useMemo(() => profiles.filter(isVerifiedRealProfile), [profiles]);
-  const selectedProfile = verifiedProfiles.find((profile) => profile.id === selected);
-  const changed = Boolean(selectedProfile && (selectedProfile.id !== settings?.roles?.narrator?.id || selectedProfile.version !== settings?.roles?.narrator?.version));
+  const currentDisplay =
+    current ??
+    profiles.find((profile) => profile.id === settings?.roles?.narrator?.id);
+  const verifiedProfiles = useMemo(
+    () => profiles.filter(isVerifiedRealProfile),
+    [profiles],
+  );
+  const selectedProfile = verifiedProfiles.find(
+    (profile) => profile.id === selected,
+  );
+  const changed = Boolean(
+    selectedProfile &&
+    (selectedProfile.id !== settings?.roles?.narrator?.id ||
+      selectedProfile.version !== settings?.roles?.narrator?.version),
+  );
 
   async function save() {
     if (!selected || !changed || busy || saving) return;
     setSaving(true);
     setError(null);
     try {
-      const next = await api.updateProviderSettings({ narrator_profile_id: selected });
+      const next = await api.updateProviderSettings({
+        narrator_profile_id: selected,
+      });
       if (!mounted.current) return;
       setSettings(next);
       setSelected(next.roles?.narrator?.id ?? selected);
@@ -71,9 +93,11 @@ export function ModelSwitcher({
       toast.success("Đã lưu model kể chuyện cho các lượt mới.");
     } catch (cause) {
       if (!mounted.current) return;
-      setError(cause instanceof ApiError && cause.status === 409
-        ? "Model đã thay đổi ở nơi khác. Hãy tải lại danh sách rồi thử lại."
-        : "Không thể lưu model kể chuyện; bản nháp vẫn được giữ.");
+      setError(
+        cause instanceof ApiError && cause.status === 409
+          ? "Model đã thay đổi ở nơi khác. Hãy tải lại danh sách rồi thử lại."
+          : "Không thể lưu model kể chuyện; bản nháp vẫn được giữ.",
+      );
       toast.error("Không thể lưu model kể chuyện.");
     } finally {
       if (mounted.current) setSaving(false);
@@ -82,13 +106,32 @@ export function ModelSwitcher({
 
   return (
     <section className="model-switcher" aria-label="Model kể chuyện">
-      {error && <div role="alert" className="form-error">{error}</div>}
+      {error && (
+        <div role="alert" className="form-error">
+          {error}
+        </div>
+      )}
       <p className="details-meta">Model hiện tại</p>
       <p className="model-switcher-current">
-        {currentDisplay?.model_label ?? currentDisplay?.model ?? settings?.roles?.narrator?.id ?? (loading ? "Đang tải…" : "Chưa ghim model")}
-        {settings?.roles?.narrator && <span> · ghim v{settings.roles.narrator.version}{currentDisplay && currentDisplay.version !== settings.roles.narrator.version ? ` · bản mới v${currentDisplay.version} có sẵn` : ""}</span>}
+        {currentDisplay?.model_label ??
+          currentDisplay?.model ??
+          settings?.roles?.narrator?.id ??
+          (loading ? "Đang tải…" : "Chưa ghim model")}
+        {settings?.roles?.narrator && (
+          <span>
+            {" "}
+            · ghim v{settings.roles.narrator.version}
+            {currentDisplay &&
+            currentDisplay.version !== settings.roles.narrator.version
+              ? ` · bản mới v${currentDisplay.version} có sẵn`
+              : ""}
+          </span>
+        )}
       </p>
-      <p className="details-meta">Chọn một profile đã xác minh cho các lượt kể chuyện mới. Lựa chọn này không đổi chính sách chi phí hay lượt đang chạy.</p>
+      <p className="details-meta">
+        Chọn profile narrator đã lưu cho các lượt mới. Lựa chọn này không đổi
+        bản nháp hay lượt đang chạy.
+      </p>
       <label htmlFor="chat-narrator-profile">Model narrator</label>
       <select
         id="chat-narrator-profile"
@@ -101,32 +144,85 @@ export function ModelSwitcher({
         <option value="">Chọn model</option>
         {verifiedProfiles.map((profile) => (
           <option key={`${profile.id}-${profile.version}`} value={profile.id}>
-            {profile.model_label ?? profile.model} · v{profile.version} · {profile.provider}
+            {profile.model_label ?? profile.model} · v{profile.version} ·{" "}
+            {profile.provider}
           </option>
         ))}
       </select>
-      {verifiedProfiles.length === 0 && !loading && <p role="status">Chưa có profile narrator thật đã xác minh. Hãy mở Cài đặt để xác minh model.</p>}
+      {verifiedProfiles.length === 0 && !loading && (
+        <p role="status">
+          Chưa có profile narrator thật đã xác minh. Hãy mở Cài đặt để xác minh
+          model.
+        </p>
+      )}
       {settings?.roles?.narrator && !current && currentDisplay && (
-        <p role="note" className="form-error">Model đang ghim v{settings.roles.narrator.version}; pricing và tier của bản ghim không còn trong danh sách hiện tại nên được coi là chưa biết. Bản mới v{currentDisplay.version} có thể được chọn để cập nhật, hoặc mở Cài đặt.</p>
+        <p role="note" className="form-error">
+          Model đang ghim v{settings.roles.narrator.version}; pricing và tier
+          của bản ghim không còn trong danh sách hiện tại nên được coi là chưa
+          biết. Bản mới v{currentDisplay.version} có thể được chọn để cập nhật,
+          hoặc mở Cài đặt.
+        </p>
       )}
-      {settings?.policy === "free_only" && (current?.provider === "ollama" || selectedProfile?.provider === "ollama") && (
-        <p role="note" className="form-error">Ollama included credits chưa chứng minh được cơ chế khóa chi phí của provider. Free only vẫn giữ nguyên; hãy mở Cài đặt chi phí và tự chấp thuận Capped paid nếu muốn dùng profile này.</p>
-      )}
-      {settings?.policy === "free_only" && ((current && current.provider !== "ollama" && current.credential_tier !== "free") || (selectedProfile && selectedProfile.provider !== "ollama" && selectedProfile.credential_tier !== "free")) && (
-        <p role="note" className="form-error">Model hiện tại chưa được xác minh là Free. Free only sẽ chặn lượt trả phí; hãy mở Cài đặt chi phí nếu bạn muốn tự chấp thuận Capped paid.</p>
-      )}
+      {settings?.policy === "free_only" &&
+        (current?.provider === "ollama" ||
+          selectedProfile?.provider === "ollama") && (
+          <p role="note" className="form-error">
+            Ollama included credits chưa chứng minh được cơ chế khóa chi phí của
+            provider. Free only vẫn giữ nguyên; hãy mở Cài đặt chi phí và tự
+            chấp thuận Capped paid nếu muốn dùng profile này.
+          </p>
+        )}
+      {settings?.policy === "free_only" &&
+        ((current &&
+          current.provider !== "ollama" &&
+          current.provider !== "custom" &&
+          current.credential_tier !== "free") ||
+          (selectedProfile &&
+            selectedProfile.provider !== "ollama" &&
+            selectedProfile.provider !== "custom" &&
+            selectedProfile.credential_tier !== "free")) && (
+          <p role="note" className="form-error">
+            Model hiện tại chưa được xác minh là Free. Free only sẽ chặn lượt
+            trả phí; hãy mở Cài đặt chi phí nếu bạn muốn tự chấp thuận Capped
+            paid.
+          </p>
+        )}
       <div className="model-switcher-actions">
-        <button type="button" className="primary-button touch-target" disabled={!changed || saving || busy} onClick={save}>
+        <button
+          type="button"
+          className="primary-button touch-target"
+          disabled={!changed || saving || busy}
+          onClick={save}
+        >
           {saving ? "Đang lưu…" : "Lưu model"}
         </button>
-        <button type="button" className="quiet-button touch-target" onClick={onOpenCostSettings}>Cài đặt chi phí</button>
-        <button type="button" className="quiet-button touch-target" onClick={onClose}>Đóng</button>
+        <button
+          type="button"
+          className="quiet-button touch-target"
+          onClick={onOpenCostSettings}
+        >
+          Cài đặt chi phí
+        </button>
+        <button
+          type="button"
+          className="quiet-button touch-target"
+          onClick={onClose}
+        >
+          Đóng
+        </button>
       </div>
     </section>
   );
 }
 
 function isVerifiedRealProfile(profile: ModelProfileSummary) {
-  return (profile.provider === "openrouter" || profile.provider === "ollama") &&
-    profile.pricing_verified === true && profile.is_test_profile !== true;
+  return (
+    ((profile.provider === "openrouter" || profile.provider === "ollama") &&
+      profile.pricing_verified === true &&
+      profile.is_test_profile !== true) ||
+    (profile.provider === "custom" &&
+      profile.custom_billing === "provider_managed" &&
+      profile.limits_source === "application_default" &&
+      profile.pricing_verified === false)
+  );
 }

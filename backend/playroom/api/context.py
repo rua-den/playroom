@@ -10,7 +10,7 @@ from .. import campaigns as campaign_service
 from ..context import build_context_preview, load_context_preview
 from ..domain import Owner, NotFound, ValidationError
 from ..db import request_connection
-from ..model_profiles import get_model_profile
+from ..model_profiles import get_model_profile, is_immutable_profile
 from ..settings import config_hash, get_owner_settings
 from ..wire_cost import normalized_budget
 from .auth import require_owner
@@ -45,7 +45,8 @@ def _profile_config(connection: sqlite3.Connection, request: Request, owner: Own
     profile = get_model_profile(connection, owner.id, profile_id, binding.get("version"))
     context_limit = profile.get("context_limit")
     output_limit = profile.get("output_limit")
-    if not isinstance(context_limit, int) or not isinstance(output_limit, int) or context_limit <= 0 or output_limit <= 0 or not profile.get("pricing_verified"):
+    custom_defaults = profile.get("provider") == "custom" and profile.get("custom_billing") == "provider_managed" and profile.get("limits_source") == "application_default" and profile.get("pricing_verified") is False and profile.get("capabilities_verified") is False and is_immutable_profile(profile)
+    if not isinstance(context_limit, int) or not isinstance(output_limit, int) or context_limit <= 0 or output_limit <= 0 or (not profile.get("pricing_verified") and not custom_defaults):
         raise ValidationError("Requested context profile has no configured verified limits")
     role_budget = (settings.get("budgets") or {}).get(role) or {}
     budget = normalized_budget(profile, role_budget)
@@ -61,7 +62,8 @@ def _profile_config(connection: sqlite3.Connection, request: Request, owner: Own
         "output_limit": output_limit,
         "wrapper_buffer": budget["wrapper_buffer"],
         "requested_output": budget["requested_output"],
-        "capabilities_verified": True,
+        "capabilities_verified": False if custom_defaults else True,
+        "limits_source": "application_default" if custom_defaults else None,
         "token_count_mode": "estimated",
     }
 
