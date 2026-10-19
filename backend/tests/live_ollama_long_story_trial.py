@@ -12,6 +12,8 @@ import os
 import re
 import sys
 import time
+import traceback
+from pathlib import Path
 import urllib.error
 import urllib.request
 from decimal import Decimal, InvalidOperation
@@ -344,7 +346,19 @@ def main() -> int:
             print("Synthetic adapter-only trial, NOT Playroom DB import/persistence or a direct GPT benchmark")
             return 0 if len(completed) == MAX_TURNS else 1
     except Exception as exc:
-        print(f"LONG STORY STOP: {stage} exception={type(exc).__name__} posts_started={posts}")
+        # Do not dump exceptions or frames containing private prompt/credential.
+        # A bounded list of filenames/functions/lines gives enough diagnostic
+        # signal without logging model request bodies or authentication headers.
+        safe_frames = [
+            f"{Path(frame.filename).name}:{frame.name}:{frame.lineno}"
+            for frame in traceback.extract_tb(exc.__traceback__)
+            if frame.filename.endswith((
+                "live_ollama_long_story_trial.py", "provider.py",
+                "provider_wire.py", "model_profiles.py",
+            ))
+        ][-5:]
+        print(f"LONG STORY STOP: {stage} exception={type(exc).__name__} "
+              f"posts_started={posts} trace_functions={'|'.join(safe_frames)}")
         return 1
 
 
