@@ -30,6 +30,13 @@ from playroom.provider import ProviderResult
 REPO = Path(__file__).resolve().parents[2]
 EMAIL = "synthetic-b3@example.test"
 PASSWORD = "synthetic fixture password only"
+VISUAL_SCREENSHOT_DIR = Path(tempfile.gettempdir()) / "playroom-visual-refresh-screenshots"
+
+
+def _visual_screenshot(page, name: str, *, full_page: bool = True) -> None:
+    """Save a synthetic UI state in one predictable temp directory for review."""
+    VISUAL_SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+    page.screenshot(path=str(VISUAL_SCREENSHOT_DIR / name), full_page=full_page)
 
 
 class _BoundedASGIObserver:
@@ -296,6 +303,13 @@ def _assert_modal_scroll_header(page, dialog) -> None:
     )
 
 
+def _assert_modal_heading_readable(dialog) -> None:
+    heading = dialog.get_by_role("heading").first
+    expect(heading).to_be_visible()
+    font_size = heading.evaluate("el => Number.parseFloat(getComputedStyle(el).fontSize)")
+    assert font_size >= 16, f"Modal heading is too small to read: {font_size}px"
+
+
 def _assert_modal_focus(page, dialog, trigger) -> None:
     app_shell_is_inert = page.locator("main.app-shell").evaluate(
         "el => { for (let node = el; node; node = node.parentElement) "
@@ -413,20 +427,21 @@ def browser_synthetic_chat() -> None:
                 page.on("request", lambda r: outbound.append(r.url) if not r.url.startswith(origin) else None)
                 page.goto(origin, wait_until="domcontentloaded")
                 expect(page.get_by_role("heading", name="Đăng nhập Playroom")).to_be_visible()
+                for width, suffix in ((375, "375"), (1280, "1280")):
+                    page.set_viewport_size({"width": width, "height": 900})
+                    _visual_screenshot(page, f"login-{suffix}.png")
                 page.get_by_label("Email").fill(EMAIL)
                 page.get_by_label("Mật khẩu").fill(PASSWORD)
                 page.get_by_role("button", name="Đăng nhập").click()
                 expect(page.get_by_role("heading", name="Thư viện truyện")).to_be_visible(timeout=15000)
-                screenshot_dir = Path(tempfile.gettempdir()) / "playroom-story-library-screenshots"
-                screenshot_dir.mkdir(parents=True, exist_ok=True)
                 page.set_viewport_size({"width": 757, "height": 900})
-                page.screenshot(path=str(screenshot_dir / "library-757.png"), full_page=True)
+                _visual_screenshot(page, "library-empty-757.png")
                 page.get_by_role("button", name="+ Tạo truyện mới").click()
-                page.screenshot(path=str(screenshot_dir / "create-vietnamese-757.png"), full_page=True)
+                _visual_screenshot(page, "create-initial-757.png")
                 page.set_viewport_size({"width": 375, "height": 812})
-                page.screenshot(path=str(screenshot_dir / "create-vietnamese-375.png"), full_page=True)
+                _visual_screenshot(page, "create-initial-375.png")
                 page.get_by_role("button", name="Đóng").click()
-                page.screenshot(path=str(screenshot_dir / "library-375.png"), full_page=True)
+                _visual_screenshot(page, "library-empty-375.png")
                 page.get_by_role("button", name="+ Tạo truyện mới").click()
                 page.get_by_label("Tên truyện").fill("Thử nghiệm sân bóng")
                 page.get_by_label("Tên thế giới").fill("Trường Bangtan")
@@ -484,6 +499,9 @@ def browser_synthetic_chat() -> None:
                 # Real DOM->POST->queue->fake worker->commit->projection cycle.
                 first = "Yuna, sẵn sàng chưa?\n**Henn chỉnh băng đô 💙**"
                 _send_and_wait(page, first, 1)
+                for width, suffix in ((375, "375"), (1280, "1280")):
+                    page.set_viewport_size({"width": width, "height": 900})
+                    _visual_screenshot(page, f"chat-one-turn-{suffix}.png")
                 transcript = _project(page, origin, campaign_id, branch_id)["transcript"]
                 assert len(transcript) == 1
                 assert transcript[0]["input_segments"] == [
@@ -498,6 +516,9 @@ def browser_synthetic_chat() -> None:
 
                 _send_and_wait(page, "Tớ đợi cậu ở vạch sân.", 2)
                 assert len(campaign.calls) == 2
+                for width, suffix in ((375, "375"), (1280, "1280")):
+                    page.set_viewport_size({"width": width, "height": 900})
+                    _visual_screenshot(page, f"chat-two-turns-{suffix}.png")
 
                 # The library must retain multiple stories and restore each
                 # story's own history. Create B through the authenticated API
@@ -537,13 +558,13 @@ def browser_synthetic_chat() -> None:
                 second_card = page.locator("article").filter(has_text="Synthetic history B")
                 expect(first_card).to_have_count(1)
                 expect(second_card).to_have_count(1)
-                for width, filename in ((757, "library-757.png"), (375, "library-375.png")):
+                for width, filename in ((1280, "library-populated-1280.png"), (757, "library-populated-757.png"), (375, "library-populated-375.png")):
                     page.set_viewport_size({"width": width, "height": 900 if width == 757 else 812})
                     expect(page.locator("#library-title")).to_be_visible()
                     expect(first_card.locator("h2")).to_have_text(first_title)
                     expect(second_card.locator("h2")).to_have_text("Synthetic history B")
                     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
-                    page.screenshot(path=str(screenshot_dir / filename), full_page=True)
+                    _visual_screenshot(page, filename)
                 second_card.locator("button").click()
                 expect(page.get_by_role("heading", name="Synthetic history B")).to_be_visible(timeout=12000)
                 expect(page.locator(".story-turn")).to_have_count(0)
@@ -970,8 +991,7 @@ def browser_synthetic_chat() -> None:
                 # Every auxiliary screen must behave as a modal over the
                 # current story, preserving its history and unsent composer.
                 # All text and screenshots below are synthetic fixture data.
-                modal_screenshot_dir = Path(tempfile.gettempdir()) / "playroom-modal-screenshots"
-                modal_screenshot_dir.mkdir(parents=True, exist_ok=True)
+                modal_screenshot_dir = VISUAL_SCREENSHOT_DIR
                 modal_title = "Lanterns"
                 modal_draft = "synthetic unsent draft stays with Lanterns"
                 page.locator("#generation-action").fill(modal_draft)
@@ -987,18 +1007,23 @@ def browser_synthetic_chat() -> None:
                     settings_trigger.click()
                     settings_dialog = page.get_by_role("dialog", name="Cài đặt")
                     expect(settings_dialog).to_be_visible(timeout=12000)
+                    _assert_modal_heading_readable(settings_dialog)
                     expect(settings_dialog.get_by_role("region", name="Cài đặt provider")).to_be_visible(timeout=12000)
+                    section_nav = settings_dialog.get_by_role("navigation", name="Mục cài đặt")
+                    expect(section_nav.get_by_role("link", name="Kết nối", exact=True)).to_have_attribute("href", "#settings-connection")
+                    expect(section_nav.get_by_role("link", name="Model", exact=True)).to_have_attribute("href", "#settings-model")
+                    expect(section_nav.get_by_role("link", name="Chi phí", exact=True)).to_have_attribute("href", "#settings-cost")
                     _assert_modal_geometry(page, settings_dialog, viewport_width)
                     if viewport_width in (375, 1280):
                         theme = "dark" if viewport_width == 375 else "light"
                         settings_dialog.get_by_label("Giao diện").select_option(theme)
-                        page.screenshot(path=str(modal_screenshot_dir / f"settings-opening-{viewport_width}-{theme}.png"))
+                        _visual_screenshot(page, f"settings-opening-{viewport_width}-{theme}.png", full_page=False)
                     endpoint = settings_dialog.get_by_label("Endpoint")
                     endpoint.fill("https://synthetic.invalid/" + "long-provider-path-" * 24)
                     _assert_modal_geometry(page, settings_dialog, viewport_width)
                     if viewport_width in (375, 1280):
                         theme = "dark" if viewport_width == 375 else "light"
-                        page.screenshot(path=str(modal_screenshot_dir / f"settings-{viewport_width}-{theme}.png"))
+                        _visual_screenshot(page, f"settings-{viewport_width}-{theme}.png", full_page=False)
                     _assert_modal_scroll_header(page, settings_dialog)
                     _assert_modal_focus(page, settings_dialog, settings_trigger)
                     _assert_story_preserved(page, modal_title, modal_draft, 1)
@@ -1012,24 +1037,37 @@ def browser_synthetic_chat() -> None:
                 context_dialog = page.get_by_role("dialog", name="Hồ sơ và ký ức")
                 expect(context_dialog).to_be_visible(timeout=12000)
                 _assert_modal_geometry(page, context_dialog, 375)
-                page.screenshot(path=str(modal_screenshot_dir / "context-375.png"))
+                _assert_modal_heading_readable(context_dialog)
+                _visual_screenshot(page, "context-375-dark.png", full_page=False)
+                _assert_modal_focus(page, context_dialog, context_trigger)
+                _assert_story_preserved(page, modal_title, modal_draft, 1)
+                page.set_viewport_size({"width": 1280, "height": 780})
+                context_trigger.click()
+                expect(context_dialog).to_be_visible(timeout=12000)
+                _assert_modal_geometry(page, context_dialog, 1280)
+                _assert_modal_heading_readable(context_dialog)
+                _visual_screenshot(page, "context-1280-dark.png", full_page=False)
                 _assert_modal_focus(page, context_dialog, context_trigger)
                 _assert_story_preserved(page, modal_title, modal_draft, 1)
 
                 for action_name in ("Tạo truyện mới", "Nhập ChatGPT", "Nhập Legacy"):
-                    create_or_import_trigger = page.get_by_role("button", name=re.compile(action_name), exact=False)
-                    create_or_import_trigger.click()
-                    modal_dialog = page.get_by_role("dialog").last
-                    expect(modal_dialog).to_be_visible(timeout=12000)
-                    _assert_modal_geometry(page, modal_dialog, 375)
-                    screenshot_name = {
-                        "Tạo truyện mới": "create-375.png",
-                        "Nhập ChatGPT": "chatgpt-import-375.png",
-                        "Nhập Legacy": "legacy-import-375.png",
+                    prefix = {
+                        "Tạo truyện mới": "create",
+                        "Nhập ChatGPT": "chatgpt-import",
+                        "Nhập Legacy": "legacy-import",
                     }[action_name]
-                    page.screenshot(path=str(modal_screenshot_dir / screenshot_name))
-                    _assert_modal_focus(page, modal_dialog, create_or_import_trigger)
-                    _assert_story_preserved(page, modal_title, modal_draft, 1)
+                    for viewport_width, theme in ((375, "dark"), (1280, "dark")):
+                        page.set_viewport_size({"width": viewport_width, "height": 780})
+                        create_or_import_trigger = page.get_by_role("button", name=re.compile(action_name), exact=False)
+                        create_or_import_trigger.click()
+                        modal_dialog = page.get_by_role("dialog").last
+                        expect(modal_dialog).to_be_visible(timeout=12000)
+                        _assert_modal_geometry(page, modal_dialog, viewport_width)
+                        _assert_modal_heading_readable(modal_dialog)
+                        _assert_modal_scroll_header(page, modal_dialog)
+                        _visual_screenshot(page, f"{prefix}-{viewport_width}-{theme}.png", full_page=False)
+                        _assert_modal_focus(page, modal_dialog, create_or_import_trigger)
+                        _assert_story_preserved(page, modal_title, modal_draft, 1)
 
                 assert len(campaign.calls) == provider_calls_before_modals, (
                     "Opening or closing a modal must not dispatch a provider call"
@@ -1039,14 +1077,14 @@ def browser_synthetic_chat() -> None:
                 # body-level toast above the scrolled settings sheet at both
                 # supported narrow widths. The save itself never calls the
                 # generation provider.
-                toast_screenshot_dir = Path(tempfile.gettempdir()) / "playroom-save-toast-screenshots"
-                toast_screenshot_dir.mkdir(parents=True, exist_ok=True)
+                toast_screenshot_dir = VISUAL_SCREENSHOT_DIR
                 for viewport_width in (757, 375):
                     page.set_viewport_size({"width": viewport_width, "height": 780})
                     page.get_by_role("button", name="Cài đặt").click()
                     settings_dialog = page.get_by_role("dialog", name="Cài đặt")
                     expect(settings_dialog).to_be_visible(timeout=12000)
                     expect(settings_dialog.get_by_role("region", name="Cài đặt provider")).to_be_visible(timeout=12000)
+                    settings_dialog.get_by_role("navigation", name="Mục cài đặt").get_by_role("link", name="Chi phí", exact=True).click()
                     save_budget = settings_dialog.get_by_role("button", name="Lưu ngân sách")
                     save_budget.scroll_into_view_if_needed()
                     provider_calls_before_settings_save = len(campaign.calls)
@@ -1077,7 +1115,7 @@ def browser_synthetic_chat() -> None:
                         }"""
                     )
                     assert toast_z_index > overlay_z_index or toast_center_is_topmost
-                    page.screenshot(path=str(toast_screenshot_dir / f"save-toast-{viewport_width}.png"), full_page=True)
+                    _visual_screenshot(page, f"save-toast-{viewport_width}.png")
                     success_toast.get_by_role("button", name="Đóng thông báo").click()
                     expect(success_toast).not_to_be_visible()
                     page.get_by_role("button", name="Đóng cài đặt").click()
