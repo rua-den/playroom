@@ -333,7 +333,14 @@ def browser_synthetic_chat() -> None:
                 page.get_by_label("Email").fill(EMAIL)
                 page.get_by_label("Mật khẩu").fill(PASSWORD)
                 page.get_by_role("button", name="Đăng nhập").click()
+                screenshot_dir = Path(tempfile.gettempdir()) / "playroom-story-library-screenshots"
+                screenshot_dir.mkdir(parents=True, exist_ok=True)
+                page.set_viewport_size({"width": 757, "height": 900})
+                page.screenshot(path=str(screenshot_dir / "library-757.png"), full_page=True)
                 page.get_by_role("button", name="+ Tạo truyện mới").click()
+                page.screenshot(path=str(screenshot_dir / "create-vietnamese-757.png"), full_page=True)
+                page.set_viewport_size({"width": 375, "height": 812})
+                page.screenshot(path=str(screenshot_dir / "create-vietnamese-375.png"), full_page=True)
                 page.get_by_label("Tên truyện").fill("Thử nghiệm sân bóng")
                 page.get_by_label("Tên thế giới").fill("Trường Bangtan")
                 page.get_by_label("Tên persona").fill("Henn")
@@ -348,6 +355,17 @@ def browser_synthetic_chat() -> None:
                 expect(page.get_by_text("Dùng **...** cho hành động hoặc suy nghĩ;", exact=False)).to_be_visible()
                 campaign = app.state.generation_provider
                 assert campaign.stage_counts == {}
+                provider_before_navigation = len(campaign.calls)
+                draft = page.get_by_label("Bản nháp kể chuyện")
+                draft.fill("Ghi chú chưa gửi")
+                page.get_by_role("button", name="Thư viện truyện").click()
+                expect(page.get_by_role("heading", name="Thư viện truyện")).to_be_visible()
+                page.get_by_role("button", name="Đọc tiếp").click()
+                expect(draft).to_have_value("Ghi chú chưa gửi")
+                assert len(campaign.calls) == provider_before_navigation
+                page.reload(wait_until="domcontentloaded")
+                expect(page.get_by_role("heading", name="Thử nghiệm sân bóng")).to_be_visible(timeout=15000)
+                assert len(campaign.calls) == provider_before_navigation
                 camp_list = page.context.request.get(f"{origin}/api/campaigns").json()
                 assert len(camp_list) == 1
                 campaign_id = camp_list[0]["id"]

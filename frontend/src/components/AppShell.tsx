@@ -129,7 +129,7 @@ export function AppShell({ owner, onLogout, notice }: AppShellProps) {
   const selected = useMemo(() => campaigns.find((item) => item.id === selectedId) ?? null, [campaigns, selectedId]);
   async function refreshProjection() { if (!selectedId) return undefined; const targetId = selectedId; const requestId = ++projectionRequest.current; try { const detail = await api.getCampaign(targetId); const next = await api.getCampaignProjection(targetId, detail.branch_id); if (projectionRequest.current !== requestId || selectedIdRef.current !== targetId) return undefined; setProjection(next); return next; } catch { if (projectionRequest.current === requestId && selectedIdRef.current === targetId) setError("Không thể làm mới truyện."); return undefined; } }
   const editorChanged = () => refreshProjection();
-  function chooseStory(id: string) { setSelectedId(id); writeLastStoryId(owner.id, id); setLibraryOpen(false); setCreateOpen(false); setImportOpen(false); }
+  function chooseStory(id: string) { if (id !== selectedIdRef.current) setProjection(null); setSelectedId(id); writeLastStoryId(owner.id, id); setLibraryOpen(false); setCreateOpen(false); setImportOpen(false); }
   function created(campaign: CampaignSummary) { setCampaigns((current) => [campaign, ...current]); setCreateOpen(false); setImportOpen(false); chooseStory(campaign.id); }
   function openCreate() { setImportOpen(false); setLibraryOpen(false); setCreateOpen(true); }
   function openImport(mode: "chatgpt" | "legacy") { setLibraryOpen(false); setCreateOpen(false); setImportMode(mode); setImportOpen(true); }
