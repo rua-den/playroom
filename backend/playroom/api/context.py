@@ -48,7 +48,7 @@ def _profile_config(connection: sqlite3.Connection, request: Request, owner: Own
     custom_defaults = profile.get("provider") == "custom" and profile.get("custom_billing") == "provider_managed" and profile.get("limits_source") == "application_default" and profile.get("pricing_verified") is False and profile.get("capabilities_verified") is False and is_immutable_profile(profile)
     if not isinstance(context_limit, int) or not isinstance(output_limit, int) or context_limit <= 0 or output_limit <= 0 or (not profile.get("pricing_verified") and not custom_defaults):
         raise ValidationError("Requested context profile has no configured verified limits")
-    role_budget = (settings.get("budgets") or {}).get(role) or {}
+    role_budget = {} if custom_defaults else ((settings.get("budgets") or {}).get(role) or {})
     budget = normalized_budget(profile, role_budget)
     return {
         "profile_id": profile["id"],

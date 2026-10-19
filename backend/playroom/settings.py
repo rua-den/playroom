@@ -113,10 +113,17 @@ def save_owner_settings(connection, owner_id: str, settings: dict) -> dict:
         if row is None:
             continue
         profile = json.loads(row["snapshot_json"])
+        custom_defaults = (
+            profile.get("provider") == "custom"
+            and profile.get("custom_billing") == "provider_managed"
+            and profile.get("limits_source") == "application_default"
+            and profile.get("pricing_verified") is False
+            and profile.get("capabilities_verified") is False
+        )
         verified_input = int(profile.get("input_limit", profile.get("context_limit", 12000)))
         verified_output = int(profile.get("output_limit", 4000))
         budget = validated["budgets"][role]
-        if budget["input_limit"] > verified_input or budget["requested_output"] > verified_output:
+        if not custom_defaults and (budget["input_limit"] > verified_input or budget["requested_output"] > verified_output):
             raise ValidationError("Role budget exceeds the verified profile capability")
     row = connection.execute("SELECT COALESCE(MAX(revision), 0) AS revision FROM owner_settings_versions WHERE owner_id=?", (owner_id,)).fetchone()
     revision = int(row["revision"]) + 1

@@ -157,7 +157,14 @@ class GenerationService:
         return {"narrator": _copy(narrator), "context": _copy(context)}
 
     def _role_budget(self, profile: dict, settings: dict, role: str) -> dict:
-        configured = (settings.get("budgets") or {}).get(role) or {}
+        custom_defaults = (
+            profile.get("provider") == "custom"
+            and profile.get("custom_billing") == "provider_managed"
+            and profile.get("limits_source") == "application_default"
+            and profile.get("pricing_verified") is False
+            and profile.get("capabilities_verified") is False
+        )
+        configured = {} if custom_defaults else ((settings.get("budgets") or {}).get(role) or {})
         return normalized_budget(profile, configured)
 
     def _counter(self, profile: dict):

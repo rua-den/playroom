@@ -53,6 +53,38 @@ def test_custom_profiles_list_newest_first_even_when_ids_sort_inversely(tmp_path
     connection.close()
 
 
+def test_custom_selection_preserves_oversized_owner_budget_but_uses_application_defaults(tmp_path):
+    from playroom.auth import create_owner
+    from playroom.db import connect, migrate
+    from playroom.generation import GenerationService
+    from playroom.model_profiles import persist_model_profile
+    from playroom.provider import FakeProvider
+    from playroom.settings import get_owner_settings, save_owner_settings
+
+    connection = connect(tmp_path / "custom-budget.sqlite3")
+    migrate(connection)
+    owner = create_owner(connection, "budget@example.test", "password-budget")
+    profile = persist_model_profile(
+        connection,
+        owner.id,
+        {**validate_custom_profile(endpoint="http://127.0.0.1:1234/v1", model="fixture"), "id": "custom-budget"},
+    )
+    saved = save_owner_settings(connection, owner.id, {
+        "roles": {"narrator": {"id": profile["id"], "version": profile["version"]}},
+        "mode": "economy",
+        "policy": "free_only",
+        "budgets": {"narrator": {"input_limit": 100000, "requested_output": 8000, "wrapper_buffer": 10000}},
+    })
+    assert saved["budgets"]["narrator"]["input_limit"] == 100000
+    service = GenerationService(connection, FakeProvider([]), profile={"roles": {"narrator": profile}}, settings=saved)
+    budget = service._role_budget(profile, saved, "narrator")
+    assert budget["input_limit"] == 12000
+    assert budget["requested_output"] == 4000
+    assert budget["wrapper_buffer"] == 512
+    assert get_owner_settings(connection, owner.id)["budgets"]["narrator"]["input_limit"] == 100000
+    connection.close()
+
+
 def test_custom_profile_route_rejects_extra_billing_fields_and_cross_owner_key(tmp_path):
     from fastapi.testclient import TestClient
     from playroom.app import create_app
@@ -185,4 +217,3 @@ def test_custom_profile_can_bind_and_create_context_preview_without_pricing_clai
     preview = client.post(f"/api/campaigns/{campaign.id}/context/previews", json={"branch_id": campaign.initial_branch_id, "action": "Look around", "profile_id": profile["id"]}, headers=origin)
     assert preview.status_code == 201, preview.text
     assert preview.json()["status"] in {"ready", "blocked"}
-
