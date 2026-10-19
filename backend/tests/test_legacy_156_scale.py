@@ -130,6 +130,11 @@ def test_chapter_156_scale_import_http_review_restart_idempotency(tmp_path):
     assert db.execute("SELECT COUNT(*) FROM memory_versions WHERE campaign_id=?",
                       (saved["campaign_id"],)).fetchone()[0] >= 68
     head = get_branch_head(db, saved["campaign_id"], saved["branch_id"], owner.id)
+    from playroom.chatgpt_import import assert_import_review_approved
+    from playroom.domain import StateConflict
+    import pytest
+    with pytest.raises(StateConflict, match="review"):
+        assert_import_review_approved(db, owner.id, saved["campaign_id"], head.checkpoint_id)
     approved = approve_import_review(
         db, owner.id, saved["campaign_id"], saved["branch_id"], head.checkpoint_id,
         {"persona": True, "npc_voice_presence": True,
