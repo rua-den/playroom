@@ -912,8 +912,8 @@ def browser_synthetic_chat() -> None:
                     assert 0 <= toast_box["x"] and 0 <= toast_box["y"]
                     assert toast_box["x"] + toast_box["width"] <= viewport["width"]
                     assert toast_box["y"] + toast_box["height"] <= viewport["height"]
-                    toast_z_index = int(success_toast.evaluate("(el) => getComputedStyle(el).zIndex") or 0)
-                    overlay_z_index = int(page.locator(".mobile-overlay").evaluate("(el) => getComputedStyle(el).zIndex") or 0)
+                    toast_z_index = toast_region.evaluate("(el) => Number.parseInt(getComputedStyle(el).zIndex, 10) || 0")
+                    overlay_z_index = page.locator(".mobile-overlay").evaluate("(el) => Number.parseInt(getComputedStyle(el).zIndex, 10) || 0")
                     toast_center_is_topmost = success_toast.evaluate(
                         """(el) => {
                           const box = el.getBoundingClientRect();
