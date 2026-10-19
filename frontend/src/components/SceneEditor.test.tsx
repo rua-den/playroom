@@ -51,13 +51,15 @@ describe("SceneEditor", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ state_version: 5, checkpoint_id: "cp" }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
-    const { rerender } = render(<SceneEditor campaignId="campaign-1" branchId="branch-1" stateVersion={4} onConflict={conflict} />);
+    const { rerender } = render(<ToastProvider><SceneEditor campaignId="campaign-1" branchId="branch-1" stateVersion={4} onConflict={conflict} /></ToastProvider>);
     const input = await screen.findByDisplayValue("Cũ");
     await user.clear(input); await user.type(input, "Bản nháp cảnh"); await user.click(screen.getByRole("button", { name: "Lưu cảnh" }));
     expect(conflict).toHaveBeenCalled();
     expect(screen.getByDisplayValue("Bản nháp cảnh")).toBeInTheDocument();
-    rerender(<SceneEditor campaignId="campaign-1" branchId="branch-1" stateVersion={5} onConflict={conflict} />);
+    rerender(<ToastProvider><SceneEditor campaignId="campaign-1" branchId="branch-1" stateVersion={5} onConflict={conflict} /></ToastProvider>);
     await user.click(screen.getByRole("button", { name: "Lưu cảnh" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Đã lưu cảnh.");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(JSON.parse(fetchMock.mock.calls[2][1].body as string)).toMatchObject({ expected_state_version: 5, scene_state: { scenes: [{ name: "Bản nháp cảnh" }] } });
   });
 });

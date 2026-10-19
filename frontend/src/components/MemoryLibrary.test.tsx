@@ -93,10 +93,12 @@ describe("MemoryLibrary", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify([{ memory_id: "m1", id: "v1", version: 1, kind: "canon", text: "Canon", origin: "user", status: "approved", pinned: false, source_revision_ids: ["r1"], knowledge_scope: "public", known_by: [], entity_ids: [], subject_id: null, predicate: null, value: null, object_id: null, supersedes_memory_id: null }]), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "conflict" }), { status: 409 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ memory_id: "m1", id: "v2", version: 2, kind: "canon", text: "Đã sửa", origin: "user", status: "approved", pinned: false, source_revision_ids: ["r1"], knowledge_scope: "known_by", known_by: ["char-1"], entity_ids: ["char-2"], subject_id: "char-1", predicate: "owns", value: "lantern", object_id: "char-3", supersedes_memory_id: "m0" }), { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ memory_id: "m1", id: "v2", version: 2, kind: "canon", text: "Đã sửa", origin: "user", status: "approved", pinned: false, source_revision_ids: ["r1"], knowledge_scope: "known_by", known_by: ["char-1"], entity_ids: ["char-2"], subject_id: "char-1", predicate: "owns", value: "lantern", object_id: "char-3", supersedes_memory_id: "m0" }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
-    const { rerender } = render(<MemoryLibrary campaignId="campaign-1" branchId="branch-1" stateVersion={3} onConflict={conflict} />);
+    const { rerender } = render(<ToastProvider><MemoryLibrary campaignId="campaign-1" branchId="branch-1" stateVersion={3} onConflict={conflict} /></ToastProvider>);
     await screen.findByText("Canon");
     await user.click(screen.getByRole("button", { name: "Sửa Canon" }));
     await user.clear(screen.getByLabelText("Nội dung Canon")); await user.type(screen.getByLabelText("Nội dung Canon"), "Đã sửa");
@@ -111,8 +113,10 @@ describe("MemoryLibrary", () => {
     await user.click(screen.getByRole("button", { name: "Lưu chỉnh sửa" }));
     expect(conflict).toHaveBeenCalled();
     expect(screen.getByLabelText("Nội dung Canon")).toHaveValue("Đã sửa");
-    rerender(<MemoryLibrary campaignId="campaign-1" branchId="branch-1" stateVersion={4} onConflict={conflict} />);
+    rerender(<ToastProvider><MemoryLibrary campaignId="campaign-1" branchId="branch-1" stateVersion={4} onConflict={conflict} /></ToastProvider>);
     await user.click(screen.getByRole("button", { name: "Lưu chỉnh sửa" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Đã lưu chỉnh sửa ký ức.");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     const payload = JSON.parse(fetchMock.mock.calls[3][1].body as string);
     expect(payload).toMatchObject({ expected_state_version: 4, text: "Đã sửa", known_by: ["char-1"], entity_ids: ["char-2"], subject_id: "char-1", predicate: "owns", value: "lantern", object_id: "char-3", supersedes_id: "m0" });
   });

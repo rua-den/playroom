@@ -1,8 +1,10 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { ToastProvider, useToast } from "./Toast";
 
 function Trigger() { const toast = useToast(); return <><button onClick={() => toast.success("Saved")}>success</button><button onClick={() => toast.error("Failed")}>error</button></>; }
+function CaptureApi({ apis }: { apis: Array<ReturnType<typeof useToast>> }) { apis.push(useToast()); return null; }
 
 describe("ToastProvider", () => {
   it("shows success and error toasts, dismisses manually, and caps the stack", () => {
@@ -39,5 +41,21 @@ describe("ToastProvider", () => {
     fireEvent.focus(toast); act(() => { vi.advanceTimersByTime(6000); }); expect(screen.getByRole("status")).toBeInTheDocument();
     fireEvent.blur(toast); act(() => { vi.advanceTimersByTime(5000); }); expect(screen.queryByRole("status")).toBeNull();
     vi.useRealTimers();
+  });
+
+  it("isolates a remounted owner from late calls through the previous toast API", () => {
+    const apis: Array<ReturnType<typeof useToast>> = [];
+    function Harness() {
+      const [owner, setOwner] = useState("ownerA");
+      return <><button onClick={() => setOwner("ownerB")}>switch owner</button><ToastProvider key={owner}><CaptureApi apis={apis} /><Trigger /></ToastProvider></>;
+    }
+    render(<Harness />);
+    const oldApi = apis[0];
+    fireEvent.click(screen.getByText("switch owner"));
+    expect(apis.length).toBeGreaterThan(1);
+    act(() => oldApi.success("Late stale toast"));
+    expect(screen.getByRole("region", { name: "Thông báo" })).not.toHaveTextContent("Late stale toast");
+    fireEvent.click(screen.getByText("success"));
+    expect(screen.getByRole("status")).toHaveTextContent("Saved");
   });
 });

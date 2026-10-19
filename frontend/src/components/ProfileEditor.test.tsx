@@ -20,17 +20,28 @@ describe("ProfileEditor", () => {
     expect(await screen.findByRole("status")).toHaveTextContent("Đã lưu hồ sơ.");
   });
 
-  it("keeps the edited draft and shows only an error after a failed save", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ detail: "failed" }), { status: 500 }));
+  it("keeps the edited draft after failure and clears the error after a successful retry", async () => {
+    let resolveRetry!: (response: Response) => void;
+    const retry = new Promise<Response>((resolve) => { resolveRetry = resolve; });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "failed" }), { status: 500 }))
+      .mockReturnValueOnce(retry);
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
     render(<ToastProvider><ProfileEditor {...base} profiles={{ world: { kind: "world", data: { name: "Old" } } }} /></ToastProvider>);
     const input = screen.getByLabelText("Tên thế giới");
-    await user.clear(input); await user.type(input, "Báº£n nhÃ¡p");
+    await user.clear(input); await user.type(input, "Synthetic draft");
     await user.click(screen.getByRole("button", { name: /Lưu thế giới/ }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Không thể lưu");
-    expect(input).toHaveValue("Báº£n nhÃ¡p");
+    expect(input).toHaveValue("Synthetic draft");
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Lưu thế giới/ }));
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    resolveRetry(new Response(JSON.stringify({ state_version: 5, checkpoint_id: "cp" }), { status: 200 }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Đã lưu hồ sơ.");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(input).toHaveValue("Synthetic draft");
   });
 
   it("preserves unknown profile keys and submits aliases as arrays with character identity", async () => {
