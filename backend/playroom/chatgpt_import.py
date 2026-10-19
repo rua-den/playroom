@@ -328,8 +328,16 @@ def _import_progress(row: sqlite3.Row, *, already_imported: bool, resumed: bool)
     }
 
 
-def import_conversation(connection: sqlite3.Connection, owner_id: str, source: dict, config: dict, import_key: str) -> dict:
-    """Import at most one bounded chunk and durably resume on repeated calls.
+def import_conversation(
+    connection: sqlite3.Connection,
+    owner_id: str,
+    source: dict,
+    config: dict,
+    import_key: str,
+    *,
+    chunk_turns: int | None = None,
+) -> dict:
+    """Import durably, optionally limiting this call to one bounded chunk.
 
     The selected source and normalized config are hashed together. A repeated
     request with the same import key must match that hash; a new key carrying
@@ -338,6 +346,8 @@ def import_conversation(connection: sqlite3.Connection, owner_id: str, source: d
     """
     from .domain import require_uuid
 
+    if chunk_turns is not None and (not isinstance(chunk_turns, int) or isinstance(chunk_turns, bool) or not 1 <= chunk_turns <= IMPORT_CHUNK_TURNS):
+        raise ValidationError(f"Import chunk must be between 1 and {IMPORT_CHUNK_TURNS} turns")
     key = require_uuid(import_key, "import key")
     parsed = preview_conversation(source)
     title, world, persona, characters = _validated_config(config, owner_id, parsed["conversation_id"])
@@ -436,7 +446,8 @@ def import_conversation(connection: sqlite3.Connection, owner_id: str, source: d
             imported = int(locked["imported_turns"])
             if imported < 0 or imported > len(parsed["turns"]):
                 raise ValidationError("Stored import progress is invalid")
-            stop = min(imported + IMPORT_CHUNK_TURNS, len(parsed["turns"]))
+            step = len(parsed["turns"]) if chunk_turns is None else chunk_turns
+            stop = min(imported + step, len(parsed["turns"]))
             head = get_branch_head(connection, campaign_id, branch_id, owner_id)
             version = head.state_version
             for turn in parsed["turns"][imported:stop]:
