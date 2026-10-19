@@ -1086,6 +1086,29 @@ def browser_synthetic_chat() -> None:
                     _assert_modal_focus(page, settings_dialog, settings_trigger)
                     _assert_story_preserved(page, modal_title, modal_draft, 1)
 
+                # Capture the final dark reading and library surfaces after
+                # selecting the theme through Settings. Return to the current
+                # story through the same visible library control a user uses.
+                for viewport_width in (375, 1280):
+                    page.set_viewport_size({"width": viewport_width, "height": 900})
+                    _assert_no_horizontal_overflow(page, viewport_width, "dark chat")
+                    _visual_screenshot(page, f"chat-current-{viewport_width}-dark.png")
+
+                library_trigger = page.get_by_role("button", name="Thư viện truyện", exact=True)
+                library_trigger.click()
+                expect(page.get_by_role("heading", name="Thư viện truyện")).to_be_visible(timeout=12000)
+                current_story_card = page.locator(".story-card").filter(has_text=modal_title)
+                expect(current_story_card).to_have_count(1)
+                for viewport_width in (375, 1280):
+                    page.set_viewport_size({"width": viewport_width, "height": 900})
+                    _assert_no_horizontal_overflow(page, viewport_width, "dark populated library")
+                    expect(current_story_card.get_by_role("button", name="Đọc tiếp", exact=True)).to_be_visible()
+                    _visual_screenshot(page, f"library-populated-{viewport_width}-dark.png")
+                current_story_card.get_by_role("button", name="Đọc tiếp", exact=True).click()
+                expect(page.get_by_role("heading", name=modal_title)).to_be_visible(timeout=12000)
+                _assert_story_preserved(page, modal_title, modal_draft, 1)
+                assert len(campaign.calls) == provider_calls_before_modals
+
                 # Context, Create, ChatGPT Import and Legacy Import use the
                 # same modal focus and background contract. Keep the current
                 # story mounted beneath each overlay and check no fake Send.
