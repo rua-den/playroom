@@ -127,8 +127,11 @@ SCENES = (
 )
 STEPS = [
     {"scene": scene, "present": cast, "action": action, "chapter": 157 + i}
-    for i, (scene, cast, actions) in enumerate(SCENES)
-    for action in actions
+    for i, (scene, cast, action) in enumerate(
+        (scene, cast, action)
+        for scene, cast, actions in SCENES
+        for action in actions
+    )
 ]
 # The synthetic event ledger contains only PLAYER-authored actions.
 PLAYER_LEDGER = {
@@ -197,6 +200,7 @@ def _messages(index: int, completed: list[tuple[str, str]]) -> list[dict]:
 def _dry() -> None:
     assert len(STEPS) == MAX_TURNS == 24
     assert len(SCENES) == 6
+    assert [s["chapter"] for s in STEPS] == list(range(157, 181))
     assert TOTAL_RESERVE < MAX_TOTAL_USD
     assert OLLAMA_CLOUD_API_MODEL == MODEL
     assert all("Lan" in step["action"] or "Tớ" in step["action"] for step in STEPS)
