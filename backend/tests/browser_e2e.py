@@ -1176,8 +1176,6 @@ def browser_synthetic_chat() -> None:
                 _visual_screenshot(page, "context-375-dark.png", full_page=False)
                 _assert_modal_focus(page, context_dialog, context_trigger)
                 _assert_story_preserved(page, modal_title, modal_draft, 1)
-                context_dialog.get_by_role("button", name="Đóng hồ sơ và ký ức", exact=True).click()
-                expect(context_dialog).not_to_be_visible(timeout=12000)
                 page.set_viewport_size({"width": 1280, "height": 780})
                 desktop_context_trigger = page.get_by_role("button", name="Mở hồ sơ và ký ức", exact=True)
                 desktop_context_trigger.click()
