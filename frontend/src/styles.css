@@ -54,11 +54,11 @@ label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) { display:
 .turn-action { width: fit-content; max-width: 82%; margin: 0 0 12px auto; padding: 10px 14px; border: 1px solid #5b5145; border-radius: 16px 16px 4px 16px; color: #f4dfd0; background: #33291f; font-size: 14px; line-height: 1.5; }
 .markdown-content { color: #ebe0d3; font-family: Inter, ui-sans-serif, system-ui, sans-serif; font-size: 17px; line-height: 1.7; }
 .markdown-content p { margin: 0 0 18px; }
-.markdown-content h2, .markdown-content h3, .markdown-content h4 { font-family: Georgia, serif; color: #fff5e8; }
+.markdown-content h2, .markdown-content h3, .markdown-content h4 { font-family: "Segoe UI", system-ui, sans-serif; color: #fff5e8; letter-spacing: normal; }
 .markdown-content strong { color: #fff8ee; }
-.details-column h2 { font: 22px Georgia, serif; margin: 0 0 22px; }
+.details-column h2 { font: 22px "Segoe UI", system-ui, sans-serif; margin: 0 0 22px; }
 .profile-block { padding: 14px 0; border-bottom: 1px solid #3b342c; }
-.profile-block h3 { margin: 0 0 6px; font: 18px Georgia, serif; }
+.profile-block h3 { margin: 0 0 6px; font: 18px "Segoe UI", system-ui, sans-serif; }
 .profile-block p, .details-meta, .story-empty p, .empty-campaign p { color: #aaa093; line-height: 1.65; }
 .story-empty, .empty-campaign { max-width: 700px; padding: 30px; border: 1px solid #4d453a; border-radius: 18px; background: #25211d99; }
 .empty-campaign { margin: clamp(70px, 15vh, 150px) auto 0; text-align: center; }
@@ -75,7 +75,7 @@ label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) { display:
 .campaign-form { display: grid; gap: 10px; }
 .campaign-form textarea { width: 100%; min-height: 88px; resize: vertical; border: 1px solid #5b5145; border-radius: 12px; padding: 12px 14px; color: #fff; background: #151311; font: inherit; }
 .campaign-form fieldset { display: grid; gap: 10px; margin: 14px 0 0; padding: 16px; border: 1px solid #43392f; border-radius: 14px; }
-.campaign-form legend { padding: 0 6px; color: #d79771; font: 17px Georgia, serif; }
+.campaign-form legend { padding: 0 6px; color: #d79771; font: 17px "Segoe UI", system-ui, sans-serif; }
 .character-row { display: flex; align-items: flex-end; gap: 10px; }
 .character-fields { flex: 1; display: grid; gap: 8px; }
 .campaign-form .primary-button { margin-top: 16px; }
@@ -96,14 +96,14 @@ label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) { display:
 .demo-runtime-notice strong { color: #ffd2ad; }
 @media (max-width: 800px) { .workspace-grid { display: block; margin-top: 24px; } .campaign-nav, .details-column { display: none; } .topbar { align-items: center; } .wordmark { flex: 1 1 auto; min-width: 0; } .account-email { display: none; } .campaign-controls { order: 3; width: 100%; } .campaign-controls select { flex: 1; width: auto; } .topbar .context-trigger { display: none; } .mobile-actions { display: flex; gap: 10px; margin-top: 24px; } .mobile-campaign-trigger { display: none; } .story-column { margin-top: 32px; } .context-overlay { align-items: flex-end; justify-content: initial; padding: 16px 16px calc(16px + env(safe-area-inset-bottom)); } .context-overlay .context-panel { width: min(100%, 420px); height: auto; max-height: 88vh; border-radius: 18px 18px 0 0; } }
 .topbar { max-width: 1240px; margin: auto; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px 16px; }
-.wordmark { display: flex; align-items: center; gap: 10px; font-family: Georgia, serif; font-size: 21px; }
+.wordmark { display: flex; align-items: center; gap: 10px; font-family: "Segoe UI", system-ui, sans-serif; font-size: 21px; }
 .account-menu { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-left: auto; }
 .account-email { color: #a99f92; font-size: 13px; }
 .welcome-panel { max-width: 1240px; margin: clamp(68px, 14vh, 150px) auto 0; }
 .welcome-copy { max-width: 660px; }
 .welcome-copy h1 { font-size: clamp(42px, 8vw, 84px); }
 .empty-state { margin-top: 64px; max-width: 560px; padding: 28px; border-left: 2px solid #c98257; background: #25211d99; }
-.empty-state h2 { font: 27px Georgia, serif; }
+.empty-state h2 { font: 27px "Segoe UI", system-ui, sans-serif; }
 .story-library { max-width: 960px; margin: clamp(48px, 10vh, 110px) auto 0; }
 .story-library h1, .story-library h2 { font-family: "Segoe UI", system-ui, sans-serif; letter-spacing: normal; }
 .library-intro { color: #c2b8aa; line-height: 1.6; }
@@ -215,7 +215,7 @@ label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) { display:
   padding: 18px;
   background: linear-gradient(125deg, rgba(49, 85, 63, .32), rgba(33, 30, 26, .88));
 }
-.free-mode-info h3 { font: 24px Georgia, serif; margin: 0 0 10px; color: #dcf4de; }
+.free-mode-info h3 { font: 24px "Segoe UI", system-ui, sans-serif; margin: 0 0 10px; color: #dcf4de; }
 .free-mode-info p { max-width: 66ch; font-size: 14px; line-height: 1.6; margin: 0 0 8px; }
 .free-mode-info p:last-child { margin-bottom: 0; }
 .settings-panel > details.details-meta {
