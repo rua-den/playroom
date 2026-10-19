@@ -1290,7 +1290,7 @@ def browser_synthetic_chat() -> None:
                     _assert_story_preserved(page, modal_title, modal_draft, 1)
 
                     if viewport_width == 375:
-                        model_dialog.get_by_role("button", name="C\u00e0i \u0111\u1eb7t chi ph\u00ed", exact=True).click()
+                        model_dialog.get_by_role("button", name="Cài đặt API", exact=True).click()
                         settings_dialog = page.get_by_role("dialog", name="C\u00e0i \u0111\u1eb7t")
                         expect(model_dialog).not_to_be_visible()
                         expect(settings_dialog).to_be_visible(timeout=12000)
