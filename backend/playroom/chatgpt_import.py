@@ -393,6 +393,10 @@ def import_conversation(
                     "WHERE owner_id=? AND campaign_id=?",
                     (key, owner_id, row["campaign_id"]),
                 )
+                # The first request already fixed campaign metadata/config. A
+                # reload may reconstruct different editable defaults, but the
+                # exact stored source owns this unfinished import.
+                digest = row["payload_hash"]
             else:
                 row = connection.execute(
                     "SELECT campaign_id, branch_id, payload_hash, paired_turns, imported_turns, import_status "
