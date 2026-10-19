@@ -28,8 +28,25 @@ function ToastViewport({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id:
 function ToastItem({ toast, onDismiss }: { toast: Toast; onDismiss: (id: number) => void }) {
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
+  const remainingMs = useRef(5000);
+  const startedAt = useRef<number | null>(null);
   const paused = hovered || focused;
-  useEffect(() => { if (toast.kind === "error" || paused) return; const timer = window.setTimeout(() => onDismiss(toast.id), 5000); return () => window.clearTimeout(timer); }, [onDismiss, paused, toast.id, toast.kind]);
+  useEffect(() => {
+    if (toast.kind === "error" || paused || remainingMs.current <= 0) return;
+    startedAt.current = performance.now();
+    const timer = window.setTimeout(() => {
+      remainingMs.current = 0;
+      startedAt.current = null;
+      onDismiss(toast.id);
+    }, remainingMs.current);
+    return () => {
+      window.clearTimeout(timer);
+      if (startedAt.current !== null) {
+        remainingMs.current = Math.max(0, remainingMs.current - (performance.now() - startedAt.current));
+        startedAt.current = null;
+      }
+    };
+  }, [onDismiss, paused, toast.id, toast.kind]);
   return <div className={`toast toast-${toast.kind}`} role={toast.kind === "success" ? "status" : "note"} aria-live={toast.kind === "success" ? "polite" : "off"} aria-atomic="true" onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} onFocus={() => setFocused(true)} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocused(false); }}>
     <span>{toast.message}</span><button type="button" className="toast-close touch-target" aria-label="Đóng thông báo" onClick={() => onDismiss(toast.id)}>Đóng</button>
   </div>;

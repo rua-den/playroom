@@ -43,6 +43,31 @@ describe("ToastProvider", () => {
     vi.useRealTimers();
   });
 
+  it("preserves the remaining dismissal time across overlapping focus and hover pauses", () => {
+    vi.useFakeTimers();
+    try {
+      render(<ToastProvider><Trigger /></ToastProvider>);
+      fireEvent.click(screen.getByText("success"));
+      const toast = screen.getByRole("status");
+      const closeButton = within(toast).getByRole("button");
+      act(() => { vi.advanceTimersByTime(4900); });
+      fireEvent.mouseEnter(toast);
+      act(() => closeButton.focus());
+      act(() => { vi.advanceTimersByTime(6000); });
+      expect(screen.getByRole("status")).toBeInTheDocument();
+      act(() => closeButton.blur());
+      act(() => { vi.advanceTimersByTime(6000); });
+      expect(screen.getByRole("status")).toBeInTheDocument();
+      fireEvent.mouseLeave(toast);
+      act(() => { vi.advanceTimersByTime(99); });
+      expect(screen.getByRole("status")).toBeInTheDocument();
+      act(() => { vi.advanceTimersByTime(1); });
+      expect(screen.queryByRole("status")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("isolates a remounted owner from late calls through the previous toast API", () => {
     const apis: Array<ReturnType<typeof useToast>> = [];
     function Harness() {
