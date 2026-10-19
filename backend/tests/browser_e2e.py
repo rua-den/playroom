@@ -246,6 +246,88 @@ def _assert_mobile(page, width: int) -> None:
         expect(details).not_to_be_visible()
 
 
+def _assert_modal_geometry(page, dialog, width: int, height: int = 780) -> None:
+    page.set_viewport_size({"width": width, "height": height})
+    box = dialog.bounding_box()
+    viewport = page.evaluate("() => ({width: window.innerWidth, height: window.innerHeight})")
+    assert box, f"Modal has no bounds at {width}px"
+    assert box["x"] >= 0 and box["y"] >= 0, (width, box)
+    assert box["x"] + box["width"] <= viewport["width"] + 1, (width, box, viewport)
+    assert box["y"] + box["height"] <= viewport["height"] + 1, (width, box, viewport)
+    if width == 1280:
+        center_x = box["x"] + box["width"] / 2
+        center_y = box["y"] + box["height"] / 2
+        assert abs(center_x - viewport["width"] / 2) <= 3, (
+            f"Desktop modal is not horizontally centered: x={box['x']}, "
+            f"width={box['width']}, viewport={viewport['width']}"
+        )
+        assert abs(center_y - viewport["height"] / 2) <= 3, (
+            f"Desktop modal is not vertically centered: y={box['y']}, "
+            f"height={box['height']}, viewport={viewport['height']}"
+        )
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), (
+        f"Page has horizontal overflow at {width}px"
+    )
+    overflow = dialog.evaluate("el => el.scrollWidth - el.clientWidth")
+    assert overflow <= 1, f"Modal has horizontal overflow at {width}px: {overflow}px"
+    body = dialog.locator(".app-modal-body")
+    if body.count():
+        body_overflow = body.evaluate("el => el.scrollWidth - el.clientWidth")
+        assert body_overflow <= 1, f"Modal body has horizontal overflow at {width}px: {body_overflow}px"
+
+
+def _assert_modal_scroll_header(page, dialog) -> None:
+    header = dialog.locator(".app-modal-header")
+    if not header.count():
+        header = dialog.locator(".section-heading").first
+    close = dialog.get_by_role("button", name=re.compile("Đóng|Close"))
+    assert header.count() and close.count(), "Modal must have a visible header and close control"
+    body = dialog.locator(".app-modal-body")
+    scroll_region = body if body.count() else dialog
+    scroll_region.evaluate("el => { el.scrollTop = el.scrollHeight; }")
+    header_box = header.bounding_box()
+    close_box = close.bounding_box()
+    viewport = page.evaluate("() => ({width: window.innerWidth, height: window.innerHeight})")
+    assert header_box and 0 <= header_box["y"] and header_box["y"] + header_box["height"] <= viewport["height"], (
+        "Modal header must remain visible after scrolling its body"
+    )
+    assert close_box and 0 <= close_box["x"] and 0 <= close_box["y"] and close_box["x"] + close_box["width"] <= viewport["width"] and close_box["y"] + close_box["height"] <= viewport["height"], (
+        "Modal close control must remain visible after scrolling its body"
+    )
+
+
+def _assert_modal_focus(page, dialog, trigger) -> None:
+    app_shell_is_inert = page.locator("main.app-shell").evaluate(
+        "el => { for (let node = el; node; node = node.parentElement) "
+        "if (node.inert) return true; return false; }"
+    )
+    assert app_shell_is_inert, "The application background must be inert while a modal is open"
+    focusable = dialog.locator(
+        "button:visible:not([disabled]), input:visible:not([disabled]), "
+        "select:visible:not([disabled]), textarea:visible:not([disabled]), "
+        "a[href]:visible, [tabindex]:not([tabindex='-1']):visible"
+    )
+    assert focusable.count() >= 2, "Modal needs at least two enabled visible focus targets"
+    first, last = focusable.first, focusable.last
+    last.focus()
+    page.keyboard.press("Tab")
+    expect(first).to_be_focused()
+    first.focus()
+    page.keyboard.press("Shift+Tab")
+    expect(last).to_be_focused()
+    page.keyboard.press("Escape")
+    expect(dialog).not_to_be_visible()
+    expect(trigger).to_be_focused()
+
+
+def _assert_story_preserved(page, title: str, draft: str, turns: int) -> None:
+    assert page.locator(".story-column h1").filter(has_text=title).count() == 1, (
+        "Opening or closing a modal must keep the current story mounted"
+    )
+    expect(page.locator(".story-turn")).to_have_count(turns)
+    expect(page.locator("#generation-action")).to_have_value(draft)
+
+
 def _browser_zip_conversations() -> bytes:
     def message(message_id: str, role: str, text: str) -> dict:
         return {"id": message_id, "author": {"role": role}, "recipient": "all",
@@ -883,6 +965,64 @@ def browser_synthetic_chat() -> None:
                 assert len(campaign.calls) == 10
                 page.reload(wait_until="domcontentloaded")
                 expect(page.locator(".story-turn")).to_have_count(1)
+
+                # Every auxiliary screen must behave as a modal over the
+                # current story, preserving its history and unsent composer.
+                # All text and screenshots below are synthetic fixture data.
+                modal_screenshot_dir = Path(tempfile.gettempdir()) / "playroom-modal-screenshots"
+                modal_screenshot_dir.mkdir(parents=True, exist_ok=True)
+                modal_title = "Lanterns"
+                modal_draft = "synthetic unsent draft stays with Lanterns"
+                page.locator("#generation-action").fill(modal_draft)
+                provider_calls_before_modals = len(campaign.calls)
+
+                # Check the real dialog rectangle at all required widths. The
+                # desktop center assertion intentionally uses measured bounds,
+                # so the former bottom-left 420px sheet fails for its actual
+                # placement instead of for a changed selector.
+                for viewport_width in (1280, 757, 375):
+                    page.set_viewport_size({"width": viewport_width, "height": 780})
+                    settings_trigger = page.get_by_role("button", name="Cài đặt", exact=True)
+                    settings_trigger.click()
+                    settings_dialog = page.get_by_role("dialog", name="Cài đặt")
+                    expect(settings_dialog).to_be_visible(timeout=12000)
+                    expect(settings_dialog.get_by_role("region", name="Cài đặt provider")).to_be_visible(timeout=12000)
+                    _assert_modal_geometry(page, settings_dialog, viewport_width)
+                    endpoint = settings_dialog.get_by_label("Endpoint")
+                    endpoint.fill("https://synthetic.invalid/" + "long-provider-path-" * 24)
+                    _assert_modal_geometry(page, settings_dialog, viewport_width)
+                    if viewport_width in (375, 1280):
+                        theme = "dark" if viewport_width == 375 else "light"
+                        settings_dialog.get_by_label("Giao diện").select_option(theme)
+                        page.screenshot(path=str(modal_screenshot_dir / f"settings-{viewport_width}-{theme}.png"))
+                    _assert_modal_scroll_header(page, settings_dialog)
+                    _assert_modal_focus(page, settings_dialog, settings_trigger)
+                    _assert_story_preserved(page, modal_title, modal_draft, 1)
+
+                # Context, Create, ChatGPT Import and Legacy Import use the
+                # same modal focus and background contract. Keep the current
+                # story mounted beneath each overlay and check no fake Send.
+                page.set_viewport_size({"width": 375, "height": 780})
+                context_trigger = page.get_by_role("button", name="AI đang nhớ gì", exact=True)
+                context_trigger.click()
+                context_dialog = page.get_by_role("dialog", name="Hồ sơ và ký ức")
+                expect(context_dialog).to_be_visible(timeout=12000)
+                _assert_modal_geometry(page, context_dialog, 375)
+                _assert_modal_focus(page, context_dialog, context_trigger)
+                _assert_story_preserved(page, modal_title, modal_draft, 1)
+
+                for action_name in ("Tạo truyện mới", "Nhập ChatGPT", "Nhập Legacy"):
+                    create_or_import_trigger = page.get_by_role("button", name=re.compile(action_name), exact=False)
+                    create_or_import_trigger.click()
+                    modal_dialog = page.get_by_role("dialog").last
+                    expect(modal_dialog).to_be_visible(timeout=12000)
+                    _assert_modal_geometry(page, modal_dialog, 375)
+                    _assert_modal_focus(page, modal_dialog, create_or_import_trigger)
+                    _assert_story_preserved(page, modal_title, modal_draft, 1)
+
+                assert len(campaign.calls) == provider_calls_before_modals, (
+                    "Opening or closing a modal must not dispatch a provider call"
+                )
 
                 # Saving unchanged provider budget settings must surface a
                 # body-level toast above the scrolled settings sheet at both
