@@ -201,6 +201,23 @@ def test_http_import_is_bounded_and_repeated_post_finishes_same_campaign(tmp_pat
     assert first_body["review_required"] is True
     campaign_id = first_body["campaign_id"]
 
+    blocked_review = client.post(
+        f"/api/transfers/chatgpt/{campaign_id}/review",
+        json={
+            "branch_id": first_body["branch_id"],
+            "checkpoint_id": first_body["checkpoint_id"],
+            "review": {
+                "persona": True,
+                "npc_voice_presence": True,
+                "canon_known_by_narrator_only": True,
+                "missing_history": True,
+            },
+        },
+        headers=headers,
+    )
+    assert blocked_review.status_code == 409
+    assert "progress" in blocked_review.text.lower()
+
     second = client.post("/api/transfers/chatgpt/import", json=payload, headers=headers)
     assert second.status_code == 201, second.text
     second_body = second.json()
