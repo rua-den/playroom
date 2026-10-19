@@ -416,6 +416,30 @@ def _exercise_story_management_action(page, width: int, title: str, draft: str, 
     _assert_story_preserved(page, title, draft, turns)
 
 
+def _click_story_management_action(page, action: str):
+    """Use the direct nav control when visible, otherwise open its mobile menu."""
+    direct_action = page.get_by_role("button", name=action, exact=True)
+    if direct_action.is_visible():
+        direct_action.click()
+        return direct_action
+
+    management_trigger = page.get_by_role("button", name="Truyện và tác vụ", exact=True)
+    expect(management_trigger).to_be_visible()
+    management_trigger.click()
+    story_menu = page.get_by_role("dialog", name="Danh sách truyện")
+    expect(story_menu).to_be_visible(timeout=12000)
+    current_title = page.locator(".story-column h1").inner_text()
+    selected_story = story_menu.locator("button[aria-pressed='true']")
+    expect(selected_story).to_have_count(1)
+    expect(selected_story).to_have_text(current_title)
+    menu_action = story_menu.get_by_role("button", name=action, exact=True)
+    expect(menu_action).to_be_visible()
+    expect(menu_action).to_be_enabled()
+    menu_action.click()
+    expect(story_menu).not_to_be_visible()
+    return management_trigger
+
+
 def _browser_zip_conversations() -> bytes:
     def message(message_id: str, role: str, text: str) -> dict:
         return {"id": message_id, "author": {"role": role}, "recipient": "all",
@@ -848,7 +872,7 @@ def browser_synthetic_chat() -> None:
                         "a2": {"parent": "u2", "message": {"id": "a2", "author": {"role": "assistant"}, "recipient": "all", "content": {"content_type": "text", "parts": ["Vy gật đầu. 💙"]}}},
                     }, "current_node": "a2",
                 }
-                page.get_by_role("button", name="Nhập ChatGPT").click()
+                json_import_focus_return = _click_story_management_action(page, "Nhập ChatGPT")
                 page.get_by_label("Tệp xuất từ ChatGPT").set_input_files({
                     "name": "conversations.json", "mimeType": "application/json",
                     "buffer": json.dumps([sample], ensure_ascii=False).encode("utf-8"),
@@ -860,6 +884,7 @@ def browser_synthetic_chat() -> None:
                 page.get_by_role("button", name="Nhập và mở chiến dịch").click()
                 expect(page.get_by_role("heading", name="Nhập thử từ ChatGPT")).to_be_visible(timeout=12000)
                 expect(page.locator(".story-turn")).to_have_count(2, timeout=12000)
+                expect(json_import_focus_return).to_be_focused()
                 # Imported history remains locked until the separate review checkpoint.
                 expect(page.locator(".generation-composer")).to_have_count(0)
                 campaigns_after_import = page.context.request.get(f"{origin}/api/campaigns").json()
@@ -900,7 +925,7 @@ def browser_synthetic_chat() -> None:
                 before_zip_calls = len(campaign.calls)
                 zip_bytes = _browser_zip_conversations()
                 capture_zip_transfers = True
-                page.get_by_role("button", name="Nhập ChatGPT").click()
+                zip_import_focus_return = _click_story_management_action(page, "Nhập ChatGPT")
                 page.get_by_label("Tệp xuất từ ChatGPT").set_input_files({
                     "name": "chatgpt-export.zip", "mimeType": "application/zip", "buffer": zip_bytes,
                 })
@@ -927,6 +952,7 @@ def browser_synthetic_chat() -> None:
                 page.get_by_role("button", name="Nhập và mở chiến dịch").click()
                 expect(page.get_by_role("heading", name="ZIP selected 125 — Unicode")).to_be_visible(timeout=12000)
                 expect(page.locator(".story-turn")).to_have_count(125, timeout=25000)
+                expect(zip_import_focus_return).to_be_focused()
                 expect(page.locator(".generation-composer")).to_have_count(0)
                 zip_campaigns = page.context.request.get(f"{origin}/api/campaigns").json()
                 zip_campaign = next(c for c in zip_campaigns if c["title"] == "ZIP selected 125 — Unicode")
@@ -1025,7 +1051,7 @@ def browser_synthetic_chat() -> None:
                 # No private material, no historical turn fabrication, no model call on import.
                 from test_legacy_import import synthetic_bundle
                 source = synthetic_bundle()
-                page.get_by_role("button", name="Nhập Legacy").click()
+                legacy_import_focus_return = _click_story_management_action(page, "Nhập Legacy")
                 page.get_by_label("Bundle JSON (tối đa 20 MiB)").set_input_files({
                     "name": "legacy-synthetic.json", "mimeType": "application/json",
                     "buffer": json.dumps(source, ensure_ascii=False).encode("utf-8"),
@@ -1037,6 +1063,7 @@ def browser_synthetic_chat() -> None:
                 expect(page.get_by_role("heading", name="Lanterns")).to_be_visible(timeout=12000)
                 expect(page.locator(".story-turn")).to_have_count(0)
                 expect(page.locator(".generation-composer")).to_have_count(0)
+                expect(legacy_import_focus_return).to_be_focused()
                 imported_campaigns = page.context.request.get(f"{origin}/api/campaigns").json()
                 imported_legacy = next(c for c in imported_campaigns if c["title"] == "Lanterns")
                 legacy_detail = page.context.request.get(f"{origin}/api/campaigns/{imported_legacy['id']}").json()
