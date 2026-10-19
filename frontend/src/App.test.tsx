@@ -184,7 +184,22 @@ describe("authentication shell", () => {
     const dialog = await screen.findByRole("dialog", { name: "Cài đặt" });
     expect(screen.getByRole("main").querySelector(".story-library")).toHaveAttribute("aria-hidden", "true");
     expect(dialog.querySelector("button")).toHaveFocus();
-    const focusable = Array.from(dialog.querySelectorAll<HTMLElement>("button, input, select, textarea, [href], [tabindex]:not([tabindex='-1'])"));
+    const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(
+      "button, input, select, textarea, summary, a[href], [tabindex]:not([tabindex='-1'])",
+    )).filter((element) => {
+      if (element.matches(":disabled, input[type=hidden]") || element.tabIndex < 0) return false;
+      if (element.closest("[hidden], [aria-hidden='true'], [inert]")) return false;
+      const collapsedDetails = element.closest("details:not([open])");
+      if (collapsedDetails && !element.matches("summary")) return false;
+
+      let ancestor: HTMLElement | null = element;
+      while (ancestor && dialog.contains(ancestor)) {
+        const style = window.getComputedStyle(ancestor);
+        if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse") return false;
+        ancestor = ancestor.parentElement;
+      }
+      return true;
+    });
     focusable.at(-1)?.focus();
     await user.keyboard("{Tab}");
     expect(dialog.querySelector("button")).toHaveFocus();
@@ -193,7 +208,7 @@ describe("authentication shell", () => {
     expect(trigger).toHaveFocus();
   });
 
-  it("hides the active campaign form when settings opens", async () => {
+  it("isolates settings from an active create form and preserves the create draft", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ id: "owner-1", email: "owner@example.test" }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
@@ -203,12 +218,20 @@ describe("authentication shell", () => {
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
     render(<App />);
-    await user.click(await screen.findByRole("button", { name: "+ Tạo truyện mới" }));
+    const createTrigger = await screen.findByRole("button", { name: "+ Tạo truyện mới" });
+    await user.click(createTrigger);
     await user.type(screen.getByLabelText("Tên truyện"), "Bản nháp không mất");
-    await user.click(screen.getByRole("button", { name: "Cài đặt" }));
+    expect(screen.queryByRole("button", { name: "Cài đặt" })).not.toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(createTrigger).toHaveFocus();
+    const settingsTrigger = screen.getByRole("button", { name: "Cài đặt" });
+    await user.click(settingsTrigger);
     expect(screen.getByRole("dialog", { name: "Cài đặt" })).toBeInTheDocument();
-    expect(screen.getByText("Tạo truyện mới").closest("section")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.queryByRole("dialog", { name: "Tạo truyện mới" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Đóng cài đặt" }));
+    expect(settingsTrigger).toHaveFocus();
+    await user.click(createTrigger);
+    expect(await screen.findByRole("dialog", { name: "Tạo truyện mới" })).toBeInTheDocument();
     expect(screen.getByLabelText("Tên truyện")).toHaveValue("Bản nháp không mất");
   });
 });

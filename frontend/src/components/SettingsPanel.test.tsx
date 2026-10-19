@@ -1,9 +1,46 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { SettingsPanel } from "./SettingsPanel";
+import { ToastProvider } from "./Toast";
 
 describe("SettingsPanel", () => {
+  it("waits for the budget save acknowledgement before showing success", async () => {
+    let resolveSave!: (response: Response) => void;
+    const save = new Promise<Response>((resolve) => { resolveSave = resolve; });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ mode: "economy", policy: "free_only", roles: {}, budgets: {} }), { status: 200 }))
+      .mockReturnValueOnce(save));
+    const user = userEvent.setup();
+    render(<ToastProvider><SettingsPanel /></ToastProvider>);
+    await screen.findByRole("heading", { name: "Cài đặt provider" });
+    await user.click(screen.getByRole("button", { name: "Lưu ngân sách" }));
+    expect(within(screen.getByRole("region", { name: "Thông báo" })).queryByRole("status")).not.toBeInTheDocument();
+    resolveSave(new Response(JSON.stringify({ mode: "economy", policy: "free_only", roles: {}, budgets: {} }), { status: 200 }));
+    expect(await within(screen.getByRole("region", { name: "Thông báo" })).findByRole("status")).toHaveTextContent("Ngân sách");
+  });
+
+  it("preserves the draft and shows only generic toast feedback when save fails", async () => {
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ mode: "economy", policy: "free_only", roles: {}, budgets: {} }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "private server detail" }), { status: 409 })));
+    const user = userEvent.setup();
+    render(<ToastProvider><SettingsPanel /></ToastProvider>);
+    await screen.findByRole("heading", { name: "Cài đặt provider" });
+    await user.selectOptions(screen.getByLabelText("Chính sách chi phí"), "capped_paid");
+    await user.click(screen.getByText("Nâng cao"));
+    await user.type(screen.getByLabelText("Giới hạn USD"), "0.25");
+    await user.click(screen.getByRole("button", { name: "Lưu ngân sách" }));
+    const toastRegion = screen.getByRole("region", { name: "Thông báo" });
+    expect(await within(toastRegion).findByRole("note")).toHaveTextContent("Không thể lưu ngân sách");
+    expect(within(toastRegion).getByRole("note")).not.toHaveTextContent("private server detail");
+    expect(screen.getByLabelText("Giới hạn USD")).toHaveValue("0.25");
+  });
+
   it("keeps the independent demo note across prop changes and settings saves", async () => {
     vi.stubGlobal("fetch", vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))

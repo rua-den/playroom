@@ -220,6 +220,21 @@ label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) { display:
 .input-segment.dialogue { color: #f4dfd0; background: #33291f; }
 .input-segment.action { color: #d79771; background: transparent; font-style: italic; }
 
+.toast-viewport { position: fixed; z-index: 20; top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); display: grid; gap: 10px; width: min(380px, calc(100vw - 32px)); pointer-events: none; }
+.toast { display: flex; align-items: flex-start; gap: 12px; justify-content: space-between; padding: 12px 12px 12px 16px; border: 1px solid #80634f; border-radius: 12px; color: #fff8ee; background: #30251e; box-shadow: 0 10px 28px #08070666; overflow-wrap: anywhere; pointer-events: auto; }
+.toast-success { border-color: #64866d; background: #213429; }
+.toast-error { border-color: #a56861; background: #3a2423; }
+.toast-close { flex: 0 0 auto; min-width: 44px; min-height: 44px; margin: -4px -4px -4px 0; padding: 0 8px; border: 0; color: inherit; background: transparent; text-decoration: underline; }
+@media (max-width: 480px) { .toast-viewport { right: 12px; width: calc(100vw - 24px); } }
+:root[data-theme="light"] .toast { color: #332a23; background: #fffaf3; border-color: #b7a795; }
+:root[data-theme="light"] .toast-success { background: #e7f3e8; border-color: #789d7e; }
+:root[data-theme="light"] .toast-error { background: #f9e0dc; border-color: #c8786d; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) .toast { color: #332a23; background: #fffaf3; border-color: #b7a795; }
+  :root:not([data-theme]) .toast-success { background: #e7f3e8; border-color: #789d7e; }
+  :root:not([data-theme]) .toast-error { background: #f9e0dc; border-color: #c8786d; }
+}
+
 
 /* Free-first: explain the real token-credit boundary, without fake Send counts. */
 .free-mode-info {
@@ -244,4 +259,71 @@ label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) { display:
 :root[data-theme="light"] .free-mode-info h3 { color: #234d35; }
 @media (prefers-color-scheme: light) {
   :root:not([data-theme]) .free-mode-info h3 { color: #234d35; }
+}
+
+/* Shared dialog surface for settings, context, create and import flows. */
+.app-modal-portal[hidden] { display: none; }
+.app-modal-backdrop.mobile-overlay { position: fixed; inset: 0; z-index: 15; display: grid; place-items: center; overflow: auto; padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); background: #080706b8; }
+.app-modal { display: flex; flex-direction: column; width: min(720px, 100%); max-height: calc(100dvh - 32px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); min-height: 0; overflow: hidden; border: 1px solid #6b5946; border-radius: 18px; color: #f6f1e9; background: #211d19; box-shadow: 0 24px 80px #08070688; text-align: left; }
+.app-modal-wide { width: min(900px, 100%); }
+.app-modal-header { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 16px; min-width: 0; padding: 18px 24px; border-bottom: 1px solid #453b30; }
+.app-modal-header h2 { min-width: 0; margin: 0; color: inherit; font: 600 21px/1.3 "Segoe UI", system-ui, sans-serif; letter-spacing: normal; overflow-wrap: anywhere; }
+.app-modal-header .quiet-button { flex: 0 0 auto; }
+.app-modal-body { flex: 1 1 auto; min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; overflow-wrap: anywhere; padding: 22px 24px 26px; scrollbar-gutter: stable; }
+.app-modal-body > .create-card { width: 100%; min-width: 0; margin: 0; padding: 0; border: 0; border-radius: 0; color: inherit; background: transparent; }
+.app-modal-body > .create-card > .section-heading { align-items: flex-start; margin: 0 0 16px; }
+.app-modal-body > .create-card > .section-heading h2,
+.app-modal-body > .create-card > .section-heading .eyebrow,
+.app-modal-body > .create-card > .section-heading > button { display: none; }
+.app-modal-body fieldset { min-width: 0; max-width: 100%; }
+.app-modal-body input:not([type="checkbox"]):not([type="radio"]),
+.app-modal-body select,
+.app-modal-body textarea { box-sizing: border-box; width: 100%; min-width: 0; max-width: 100%; }
+.app-modal-body .settings-panel,
+.app-modal-body .editor-stack,
+.app-modal-body .campaign-form,
+.app-modal-body .import-review-panel { min-width: 0; max-width: 100%; }
+.app-modal-body .settings-panel { width: 100%; }
+.app-modal-body .settings-panel fieldset { display: grid; gap: 10px; margin: 0 0 16px; padding: 16px; border: 1px solid #514538; border-radius: 14px; }
+.app-modal-body .settings-panel legend { padding: 0 6px; color: #d6b879; font: 600 16px/1.4 "Segoe UI", system-ui, sans-serif; }
+.app-modal-body .settings-panel input:not([type="checkbox"]):not([type="radio"]),
+.app-modal-body .settings-panel select,
+.app-modal-body .campaign-form input:not([type="checkbox"]):not([type="radio"]),
+.app-modal-body .campaign-form textarea,
+.app-modal-body .editor-stack input:not([type="checkbox"]):not([type="radio"]),
+.app-modal-body .editor-stack select,
+.app-modal-body .editor-stack textarea { min-height: 44px; border: 1px solid #615341; border-radius: 12px; padding: 10px 12px; color: #f6f1e9; background: #151311; font: inherit; }
+.app-modal-body label { min-width: 0; overflow-wrap: anywhere; }
+.app-modal-body .character-row > * { min-width: 0; }
+.app-modal-body .character-fields { min-width: 0; }
+.app-modal-body input[type="checkbox"], .app-modal-body input[type="radio"] { width: 18px; min-width: 18px; height: 18px; min-height: 18px; padding: 0; }
+.app-modal-body :focus-visible, .app-modal-header :focus-visible { outline: 3px solid #d6b879; outline-offset: 3px; }
+:root[data-theme="light"] .app-modal { color: #332a23; background: #fffaf3; border-color: #c6b6a5; }
+:root[data-theme="light"] .app-modal-header { border-color: #d7c9ba; }
+:root[data-theme="light"] .app-modal-body .settings-panel legend { color: #76542c; }
+:root[data-theme="light"] .app-modal-body .settings-panel input:not([type="checkbox"]):not([type="radio"]),
+:root[data-theme="light"] .app-modal-body .settings-panel select,
+:root[data-theme="light"] .app-modal-body .campaign-form input:not([type="checkbox"]):not([type="radio"]),
+:root[data-theme="light"] .app-modal-body .campaign-form textarea,
+:root[data-theme="light"] .app-modal-body .editor-stack input:not([type="checkbox"]):not([type="radio"]),
+:root[data-theme="light"] .app-modal-body .editor-stack select,
+:root[data-theme="light"] .app-modal-body .editor-stack textarea { color: #2b241e; background: #fff; border-color: #b7a795; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) .app-modal { color: #332a23; background: #fffaf3; border-color: #c6b6a5; }
+  :root:not([data-theme]) .app-modal-header { border-color: #d7c9ba; }
+  :root:not([data-theme]) .app-modal-body .settings-panel legend { color: #76542c; }
+  :root:not([data-theme]) .app-modal-body .settings-panel input:not([type="checkbox"]):not([type="radio"]),
+  :root:not([data-theme]) .app-modal-body .settings-panel select,
+  :root:not([data-theme]) .app-modal-body .campaign-form input:not([type="checkbox"]):not([type="radio"]),
+  :root:not([data-theme]) .app-modal-body .campaign-form textarea,
+  :root:not([data-theme]) .app-modal-body .editor-stack input:not([type="checkbox"]):not([type="radio"]),
+  :root:not([data-theme]) .app-modal-body .editor-stack select,
+  :root:not([data-theme]) .app-modal-body .editor-stack textarea { color: #2b241e; background: #fff; border-color: #b7a795; }
+}
+@media (max-width: 560px) {
+  .app-modal-backdrop.mobile-overlay { padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); }
+  .app-modal, .app-modal-wide { width: 100%; max-height: calc(100dvh - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); border-radius: 16px; }
+  .app-modal-header { padding: 14px 16px; }
+  .app-modal-body { padding: 16px 16px 20px; scrollbar-gutter: auto; }
+  .app-modal-body .settings-panel fieldset { padding: 14px 12px; }
 }

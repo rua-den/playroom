@@ -10,6 +10,10 @@
 
 Trong **Thư viện truyện**, chọn **Mở truyện / Đọc tiếp** để trở lại truyện đã lưu. Màn trò chuyện ghi rõ **Đang đọc** và tên truyện. Tải lại sẽ mở truyện gần nhất đã chọn trên trình duyệt này; nếu chưa có lựa chọn hợp lệ, app mở thư viện. Nút **Thư viện truyện** luôn có để quay về danh sách. Chỉ nhấn **Tạo truyện mới** khi muốn bắt đầu một truyện riêng.
 
+**Cài đặt**, **Hồ sơ và ký ức**, **Tạo truyện mới** và **Nhập dữ liệu** mở trong modal. Nút **Đóng** luôn ở đầu bảng; có thể nhấn **Esc** để quay lại truyện. Đóng rồi mở lại form tạo/nhập sẽ giữ bản nháp chưa lưu; sau khi tạo hoặc nhập thành công, form được làm mới. Lời đang gõ trong truyện vẫn được giữ khi mở các bảng này.
+
+Khi lưu cấu hình, hồ sơ, ký ức hoặc cảnh, thông báo nổi xuất hiện ở góc trên màn hình. Thành công hiện khoảng 5 giây và tạm dừng khi rê chuột hoặc dùng bàn phím trên thông báo; lỗi có nút **Đóng** và vẫn có chi tiết cạnh form.
+
 Key đã lưu trong GitHub Actions được giữ riêng trong môi trường kiểm thử đó. Bản local không tự lấy key từ GitHub; bạn nhập credential của mình ở **Cài đặt**, không gửi key qua chat.
 
 Những lần sau chỉ cần mở lại cùng file **Start Playroom.cmd**. Tài khoản, chiến dịch và cấu hình được giữ trong `.playroom-live/`. Không cần tạo tài khoản lại. Giữ cửa sổ chạy app mở; nhấn **Ctrl+C** trong cửa sổ đó để dừng.
