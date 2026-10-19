@@ -3,6 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import getpass
+import sqlite3
+import threading
+import time
+import urllib.error
+import urllib.request
+import webbrowser
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -10,6 +17,9 @@ from fastapi import Request
 from fastapi.responses import FileResponse, JSONResponse
 
 from .app import create_app
+from .auth import create_owner
+from .db import connect, migrate, transaction
+from .domain import ValidationError
 
 
 def _frontend_root(frontend_dist: str | Path | None) -> Path:
@@ -113,18 +123,139 @@ def _validate_cli(args: argparse.Namespace) -> None:
         raise ValueError("port must be between 1 and 65535")
 
 
+def setup_owner_if_needed(data_dir: str | Path, *, input_fn=None, password_fn=None) -> bool:
+    """Create the first owner interactively, without changing an existing owner."""
+    input_fn = input if input_fn is None else input_fn
+    password_fn = getpass.getpass if password_fn is None else password_fn
+    root = Path(data_dir).expanduser()
+    connection = None
+    for attempt in range(20):
+        try:
+            connection = connect(root / "playroom.sqlite3")
+            migrate(connection)
+            break
+        except sqlite3.OperationalError as exc:
+            if connection is not None:
+                connection.close()
+                connection = None
+            if "locked" not in str(exc).casefold() or attempt == 19:
+                raise
+            time.sleep(0.05)
+    assert connection is not None
+    try:
+        if connection.execute("SELECT 1 FROM owners LIMIT 1").fetchone() is not None:
+            return False
+        email = input_fn("Owner email: ").strip()
+        password = password_fn("Owner password (minimum 12 characters): ")
+        confirmation = password_fn("Confirm owner password: ")
+        if password != confirmation:
+            raise ValueError("Passwords do not match")
+        with transaction(connection):
+            # Serialize the final check and insert so two terminals cannot each
+            # create a different owner after prompting concurrently.
+            if connection.execute("SELECT 1 FROM owners LIMIT 1").fetchone() is not None:
+                return False
+            try:
+                owner = create_owner(connection, email, password)
+            except ValidationError as exc:
+                raise ValueError(str(exc)) from exc
+        print(f"Created owner {owner.email}", flush=True)
+        return True
+    finally:
+        connection.close()
+
+
+def serve_with_browser(app, host: str, port: int) -> None:
+    """Run uvicorn in the foreground and open the UI only after /health responds."""
+    import uvicorn
+
+    server = uvicorn.Server(uvicorn.Config(app, host=host, port=port))
+    app.state.local_server = server
+
+    def run_server():
+        try:
+            server.run()
+        except BaseException as exc:
+            # Uvicorn uses SystemExit for bind/startup failures. The caller observes
+            # the stopped thread and raises a bounded, actionable RuntimeError.
+            app.state.local_server_error = exc
+
+    thread = threading.Thread(target=run_server, name="playroom-local-server", daemon=True)
+    thread.start()
+    url = f"http://{host}:{port}/"
+    deadline = time.monotonic() + 30
+    try:
+        while thread.is_alive() and time.monotonic() < deadline:
+            if getattr(server, "started", False):
+                try:
+                    with urllib.request.urlopen(f"http://{host}:{port}/health", timeout=1) as response:
+                        if 200 <= response.status < 300:
+                            webbrowser.open(url)
+                            break
+                except (OSError, urllib.error.URLError):
+                    pass
+            time.sleep(0.1)
+        else:
+            _stop_server(thread, server)
+            startup_error = getattr(app.state, "local_server_error", None)
+            if startup_error is not None:
+                raise RuntimeError(f"Playroom server failed to start at {url}") from startup_error
+            raise RuntimeError(f"Playroom server did not become ready at {url}")
+        _join_server(thread, server)
+        startup_error = getattr(app.state, "local_server_error", None)
+        if startup_error is not None:
+            raise RuntimeError(f"Playroom server failed to start at {url}") from startup_error
+    except KeyboardInterrupt:
+        _stop_server(thread, server)
+    except BaseException:
+        _stop_server(thread, server)
+        raise
+
+
+def _join_server(thread: threading.Thread, server) -> None:
+    while thread.is_alive():
+        try:
+            thread.join(timeout=0.2)
+        except KeyboardInterrupt:
+            server.should_exit = True
+            raise
+
+
+def _stop_server(thread: threading.Thread, server) -> None:
+    server.should_exit = True
+    deadline = time.monotonic() + 5
+    while thread.is_alive() and time.monotonic() < deadline:
+        try:
+            thread.join(timeout=0.2)
+        except KeyboardInterrupt:
+            continue
+    if thread.is_alive():
+        server.should_exit = True
+        try:
+            thread.join(timeout=0.2)
+        except KeyboardInterrupt:
+            return
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the real Playroom application locally")
     parser.add_argument("--data-dir", default=".playroom-live")
     parser.add_argument("--frontend-dist")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--setup-owner", action="store_true", help="Prompt for the first owner when no owner exists")
+    parser.add_argument("--open-browser", action="store_true", help="Open the loopback UI after the server is ready")
     args = parser.parse_args()
     _validate_cli(args)
     app = create_live_local_app(args.data_dir, frontend_dist=args.frontend_dist)
-    import uvicorn
+    if args.setup_owner:
+        setup_owner_if_needed(args.data_dir)
+    if args.open_browser:
+        serve_with_browser(app, "127.0.0.1", args.port)
+    else:
+        import uvicorn
 
-    uvicorn.run(app, host="127.0.0.1", port=args.port)
+        uvicorn.run(app, host="127.0.0.1", port=args.port)
 
 
 if __name__ == "__main__":

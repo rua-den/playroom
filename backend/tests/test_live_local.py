@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import os
+import socket
 import stat
 import sys
+import threading
+import time
 import types
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from playroom.app import create_app
@@ -14,7 +19,7 @@ from playroom.auth import create_owner
 from playroom.db import connect, migrate
 from playroom.provider import default_provider_factory
 from playroom.model_profiles import persist_model_profile
-from playroom.live_local import create_live_local_app, main
+from playroom.live_local import create_live_local_app, main, serve_with_browser, setup_owner_if_needed
 
 
 def _dist(tmp_path, *, index="<html>live</html>"):
@@ -204,6 +209,245 @@ def test_live_cli_forwards_loopback_host_and_port(tmp_path, monkeypatch, capsys)
     main()
     assert calls == [{"host": "127.0.0.1", "port": 8123}]
     assert capsys.readouterr().out == ""
+
+
+def test_live_setup_prompts_once_and_creates_first_owner(tmp_path, monkeypatch):
+    prompts = iter(["owner@example.test"])
+    passwords = iter(["a secure owner password", "a secure owner password"])
+    monkeypatch.setattr("builtins.input", lambda prompt: next(prompts))
+    monkeypatch.setattr("getpass.getpass", lambda prompt: next(passwords))
+
+    assert setup_owner_if_needed(tmp_path / "data") is True
+    connection = connect(tmp_path / "data" / "playroom.sqlite3")
+    try:
+        assert connection.execute("SELECT email FROM owners").fetchone()["email"] == "owner@example.test"
+    finally:
+        connection.close()
+
+
+def test_live_setup_existing_owner_does_not_prompt_or_reset(tmp_path, monkeypatch):
+    connection = connect(tmp_path / "data" / "playroom.sqlite3")
+    migrate(connection)
+    create_owner(connection, "owner@example.test", "a secure owner password")
+    connection.close()
+    monkeypatch.setattr("builtins.input", lambda prompt: pytest.fail("email prompt must not run"))
+    monkeypatch.setattr("getpass.getpass", lambda prompt: pytest.fail("password prompt must not run"))
+
+    assert setup_owner_if_needed(tmp_path / "data") is False
+    connection = connect(tmp_path / "data" / "playroom.sqlite3")
+    try:
+        from playroom.auth import verify_owner_password
+        assert verify_owner_password(connection, "owner@example.test", "a secure owner password").email == "owner@example.test"
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize("values", [("owner@example.test", "short", "short"), ("owner@example.test", "a secure owner password", "different password")])
+def test_live_setup_invalid_or_mismatched_password_creates_no_owner(tmp_path, monkeypatch, values):
+    prompts = iter([values[0]])
+    passwords = iter(values[1:])
+    monkeypatch.setattr("builtins.input", lambda prompt: next(prompts))
+    monkeypatch.setattr("getpass.getpass", lambda prompt: next(passwords))
+
+    with pytest.raises(ValueError):
+        setup_owner_if_needed(tmp_path / "data")
+    connection = connect(tmp_path / "data" / "playroom.sqlite3")
+    try:
+        assert connection.execute("SELECT COUNT(*) FROM owners").fetchone()[0] == 0
+    finally:
+        connection.close()
+
+
+def test_live_cli_dispatches_open_browser_mode(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setitem(sys.modules, "uvicorn", types.SimpleNamespace(run=lambda *args, **kwargs: pytest.fail("run shortcut must not be used")))
+    monkeypatch.setattr("playroom.live_local.serve_with_browser", lambda app, host, port: calls.append((app, host, port)))
+    monkeypatch.setattr(sys, "argv", ["playroom-live-local", "--data-dir", str(tmp_path / "data"), "--frontend-dist", str(_dist(tmp_path)), "--port", "8123", "--open-browser"])
+
+    main()
+
+    assert calls and calls[0][1:] == ("127.0.0.1", 8123)
+
+
+def _free_port():
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def _health_app():
+    app = FastAPI()
+
+    @app.get("/health")
+    def health():
+        return {"status": "ok"}
+
+    return app
+
+
+def test_serve_with_browser_opens_only_after_real_health_and_stops_cleanly(monkeypatch):
+    app = _health_app()
+    opened = []
+    opened_event = threading.Event()
+
+    def open_browser(url):
+        opened.append(url)
+        opened_event.set()
+        return True
+
+    monkeypatch.setattr("webbrowser.open", open_browser)
+    thread = threading.Thread(target=serve_with_browser, args=(app, "127.0.0.1", _free_port()), daemon=True)
+    thread.start()
+    assert opened_event.wait(timeout=5)
+    time.sleep(6)
+    assert thread.is_alive()
+    app.state.local_server.should_exit = True
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+
+    assert len(opened) == 1
+    assert opened[0].endswith("/")
+
+
+def test_serve_with_browser_rejects_occupied_port_without_opening(monkeypatch):
+    import uvicorn
+
+    port = _free_port()
+    holder = uvicorn.Server(uvicorn.Config(_health_app(), host="127.0.0.1", port=port, log_level="error"))
+    thread = threading.Thread(target=holder.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 5
+    while not holder.started and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert holder.started
+    opened = []
+    monkeypatch.setattr("webbrowser.open", lambda url: opened.append(url))
+    try:
+        with pytest.raises(RuntimeError, match="failed to start|did not become ready"):
+            serve_with_browser(_health_app(), "127.0.0.1", port)
+    finally:
+        holder.should_exit = True
+        thread.join(timeout=5)
+    assert opened == []
+
+
+def test_serve_with_browser_startup_failure_exits_without_waiting_full_timeout(monkeypatch):
+    @asynccontextmanager
+    async def failing_lifespan(app):
+        raise RuntimeError("synthetic startup failure")
+        yield
+
+    app = FastAPI(lifespan=failing_lifespan)
+    app.add_api_route("/health", lambda: {"status": "ok"}, methods=["GET"])
+    opened = []
+    monkeypatch.setattr("webbrowser.open", lambda url: opened.append(url))
+    started = time.monotonic()
+    with pytest.raises(RuntimeError, match="failed to start|did not become ready"):
+        serve_with_browser(app, "127.0.0.1", _free_port())
+    assert time.monotonic() - started < 5
+    assert opened == []
+
+
+def test_serve_with_browser_handles_keyboard_interrupt_during_join(monkeypatch):
+    class FakeThread:
+        def __init__(self, target, **kwargs):
+            self.alive = True
+            self.join_calls = 0
+
+        def start(self):
+            return None
+
+        def is_alive(self):
+            return self.alive
+
+        def join(self, timeout=None):
+            self.join_calls += 1
+            if self.join_calls == 1:
+                raise KeyboardInterrupt
+            self.alive = False
+
+    class FakeServer:
+        def __init__(self, config):
+            self.started = True
+            self.should_exit = False
+
+        def run(self):
+            return None
+
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+    monkeypatch.setattr("playroom.live_local.threading.Thread", FakeThread)
+    monkeypatch.setitem(sys.modules, "uvicorn", types.SimpleNamespace(Server=FakeServer, Config=lambda *args, **kwargs: object()))
+    monkeypatch.setattr("playroom.live_local.urllib.request.urlopen", lambda *args, **kwargs: FakeResponse())
+    monkeypatch.setattr("webbrowser.open", lambda url: (_ for _ in ()).throw(KeyboardInterrupt))
+
+    app = _health_app()
+    serve_with_browser(app, "127.0.0.1", _free_port())
+    assert app.state.local_server.should_exit is True
+
+
+def test_serve_with_browser_cleans_server_when_browser_open_fails(monkeypatch):
+    app = _health_app()
+    opened = threading.Event()
+
+    def fail_open(url):
+        opened.set()
+        raise RuntimeError("synthetic browser failure")
+
+    monkeypatch.setattr("webbrowser.open", fail_open)
+    errors = []
+
+    def run():
+        try:
+            serve_with_browser(app, "127.0.0.1", _free_port())
+        except BaseException as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    assert opened.wait(timeout=5)
+    thread.join(timeout=5)
+
+    assert not thread.is_alive()
+    assert len(errors) == 1 and isinstance(errors[0], RuntimeError)
+    assert app.state.local_server.should_exit is True
+
+
+def test_two_first_live_setup_attempts_leave_only_one_owner(tmp_path):
+    barrier = threading.Barrier(2)
+    outcomes = []
+
+    def setup():
+        def email(_):
+            barrier.wait(timeout=5)
+            return f"owner-{threading.current_thread().name}@example.test"
+
+        try:
+            outcomes.append(setup_owner_if_needed(tmp_path / "data", input_fn=email, password_fn=lambda _: "a secure owner password"))
+        except BaseException as exc:
+            outcomes.append(exc)
+
+    threads = [threading.Thread(target=setup) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+        assert not thread.is_alive()
+    assert len(outcomes) == 2
+    assert all(isinstance(outcome, bool) for outcome in outcomes), outcomes
+    assert sorted(outcomes, key=str) == [False, True]
+    connection = connect(tmp_path / "data" / "playroom.sqlite3")
+    try:
+        assert connection.execute("SELECT COUNT(*) FROM owners").fetchone()[0] == 1
+    finally:
+        connection.close()
 
 
 def test_fresh_live_start_does_not_invoke_provider_factory(tmp_path, monkeypatch):
