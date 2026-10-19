@@ -153,7 +153,9 @@ def test_custom_provider_authenticated_generation_commits_and_reloads(
         assert attempt["profile_snapshot"]["provider"] == "custom"
         assert "synthetic-owner-key" not in json.dumps(attempt["profile_snapshot"])
         wire = attempt["request"]["prepared_wire"]
-        assert hashlib.sha256(canonical_json(wire).encode("utf-8")).hexdigest() == attempt["request"]["wire_metadata"]["payload_hash"]
+        wire_hash = hashlib.sha256(canonical_json(wire).encode("utf-8")).hexdigest()
+        assert wire_hash == attempt["request"]["wire_metadata"]["payload_hash"]
+        assert wire_hash == attempt["payload_hash"]
         assert wire == calls[0]["payload"]
 
         committed = client.post(f"/api/generation/jobs/{job['id']}/commit", headers=headers)
@@ -187,5 +189,8 @@ def test_custom_provider_authenticated_generation_commits_and_reloads(
     try:
         assert persisted.execute("SELECT COUNT(*) FROM paid_trial_authorizations").fetchone()[0] == 0
         assert persisted.execute("SELECT COUNT(*) FROM paid_trial_reservations").fetchone()[0] == 0
+        context_run = persisted.execute("SELECT payload_hash, wire_json FROM context_runs WHERE generation_job_id=?", (job["id"],)).fetchone()
+        assert context_run["payload_hash"] == wire_hash
+        assert json.loads(context_run["wire_json"])["narrator"] == calls[0]["payload"]
     finally:
         persisted.close()
