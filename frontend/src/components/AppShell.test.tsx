@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { lastStoryStorageKey, recoverableJobCount, recoverableJobSummary } from "./AppShell";
 import { AppShell, ImportReviewPanel } from "./AppShell";
 import { api } from "../api/client";
+import type { CampaignProjection } from "../api/types";
 
 vi.mock("./GenerationComposer", () => ({ GenerationComposer: () => <div data-testid="generation-composer" /> }));
 vi.mock("./ProfileEditor", () => ({ ProfileEditor: () => <div data-testid="profile-editor" /> }));
@@ -298,6 +299,31 @@ describe("story library navigation and last-story persistence", () => {
     vi.spyOn(api, "getCampaignProjection").mockImplementation(async (id) => projection(id));
   }
 
+  it("keeps story creation and both import routes available from the story menu", async () => {
+    mockStories();
+    const user = userEvent.setup();
+    render(<AppShell owner={{ id: "mobile-menu-owner", email: "owner@example.test" }} onLogout={() => undefined} />);
+    await user.click((await screen.findAllByRole("button", { name: "Mở truyện" }))[0]);
+    await user.click(await screen.findByRole("button", { name: "Truyện và tác vụ" }));
+    const storyMenu = screen.getByRole("dialog", { name: "Danh sách truyện" });
+    expect(within(storyMenu).getByRole("button", { name: "Mùa hạ" })).toBeInTheDocument();
+
+    await user.click(within(storyMenu).getByRole("button", { name: "Tạo truyện mới" }));
+    expect(await screen.findByRole("dialog", { name: "Tạo truyện mới" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+
+    await user.click(screen.getByRole("button", { name: "Truyện và tác vụ" }));
+    const chatMenu = screen.getByRole("dialog", { name: "Danh sách truyện" });
+    await user.click(within(chatMenu).getByRole("button", { name: "Nhập ChatGPT" }));
+    expect(await screen.findByRole("dialog", { name: "Nhập hội thoại ChatGPT" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+
+    await user.click(screen.getByRole("button", { name: "Truyện và tác vụ" }));
+    const legacyMenu = screen.getByRole("dialog", { name: "Danh sách truyện" });
+    await user.click(within(legacyMenu).getByRole("button", { name: "Nhập Legacy" }));
+    expect(await screen.findByRole("dialog", { name: "Nhập Legacy Story Bundle" })).toBeInTheDocument();
+  });
+
   it("keeps the real ChatGPT import metadata draft and current story across modal close and reopen", async () => {
     mockStories();
     vi.spyOn(api, "previewChatGptImport").mockResolvedValue({
@@ -351,6 +377,48 @@ describe("story library navigation and last-story persistence", () => {
     await userEvent.setup().click(within(library).getAllByRole("button", { name: "Mở truyện" })[0]);
     expect(await screen.findByRole("heading", { name: "Mùa hạ" })).toBeInTheDocument();
     expect(api.getCampaign).toHaveBeenCalledWith("story-a");
+  });
+
+  it("explains the empty library and keeps the existing create and import actions", async () => {
+    vi.spyOn(api, "listCampaigns").mockResolvedValue([]);
+    render(<AppShell owner={{ id: "empty-library-owner", email: "owner@example.test" }} onLogout={() => undefined} />);
+    expect(await screen.findByRole("heading", { name: "Chưa có truyện nào" })).toBeInTheDocument();
+    expect(document.querySelector(".library-empty svg")).toHaveAttribute("aria-hidden", "true");
+    const library = screen.getByRole("heading", { name: "Thư viện truyện" }).closest("section")!;
+    expect(within(library).getByRole("button", { name: "+ Tạo truyện mới" })).toBeInTheDocument();
+    expect(within(library).getByRole("button", { name: "Nhập hội thoại ChatGPT" })).toBeInTheDocument();
+    expect(within(library).getByRole("button", { name: "Nhập Legacy Bundle" })).toBeInTheDocument();
+  });
+
+  it("puts the selected story first in the library DOM without changing campaign order", async () => {
+    mockStories();
+    window.localStorage.setItem(lastStoryStorageKey("selected-first-owner"), "story-b");
+    const user = userEvent.setup();
+    render(<AppShell owner={{ id: "selected-first-owner", email: "owner@example.test" }} onLogout={() => undefined} />);
+    expect(await screen.findByRole("heading", { name: "Đêm mưa" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Thư viện truyện" }));
+    const titles = Array.from(document.querySelectorAll(".story-library-grid .story-card h2")).map((heading) => heading.textContent);
+    expect(titles).toEqual(["Đêm mưa", "Mùa hạ"]);
+    expect(summaries.map((item) => item.id)).toEqual(["story-a", "story-b"]);
+  });
+
+  it("offers the context panel only after the selected story projection is ready", async () => {
+    mockStories();
+    let resolveProjection: (value: CampaignProjection) => void = () => undefined;
+    vi.mocked(api.getCampaignProjection).mockReturnValueOnce(new Promise((resolve) => { resolveProjection = resolve; }));
+    const user = userEvent.setup();
+    render(<AppShell owner={{ id: "pending-context-owner", email: "owner@example.test" }} onLogout={() => undefined} />);
+    await user.click((await screen.findAllByRole("button", { name: "Mở truyện" }))[0]);
+    const storyMenuTrigger = await screen.findByRole("button", { name: "Truyện và tác vụ" });
+    expect(screen.queryByRole("button", { name: "AI đang nhớ gì" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Hồ sơ và ký ức" })).not.toBeInTheDocument();
+
+    resolveProjection(projection("story-a") as CampaignProjection);
+    const contextTrigger = await screen.findByRole("button", { name: "AI đang nhớ gì" });
+    expect(contextTrigger).toBeInTheDocument();
+    await user.click(contextTrigger);
+    expect(await screen.findByRole("dialog", { name: "Hồ sơ và ký ức" })).toBeInTheDocument();
+    expect(storyMenuTrigger).toBeInTheDocument();
   });
 
   it("restores only an accessible last story and isolates owners", async () => {

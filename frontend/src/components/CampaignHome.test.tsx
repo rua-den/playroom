@@ -115,7 +115,7 @@ describe("CampaignHome", () => {
     render(<AppShell owner={owner} onLogout={vi.fn()} />);
     await user.click(await screen.findByRole("button", { name: "Mở truyện" }));
     await screen.findByText("Câu chuyện");
-    const drawerButton = screen.getByRole("button", { name: "Truyện" });
+    const drawerButton = screen.getByRole("button", { name: "Truyện và tác vụ" });
     await user.click(drawerButton);
     const drawer = screen.getByRole("dialog", { name: "Danh sách truyện" });
     expect(drawer).toBeInTheDocument();

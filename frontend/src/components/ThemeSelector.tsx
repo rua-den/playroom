@@ -19,5 +19,5 @@ applyStoredTheme();
 export function ThemeSelector() {
   const [theme, setTheme] = useState<ThemeChoice>(() => readTheme());
   useEffect(() => { applyTheme(theme); localStorage.setItem(STORAGE_KEY, theme); }, [theme]);
-  return <label className="theme-selector" htmlFor="theme-choice">Giao diện<select id="theme-choice" className="touch-target" value={theme} onChange={(event) => setTheme(event.target.value as ThemeChoice)}><option value="system">Theo thiết bị</option><option value="light">Sáng</option><option value="dark">Tối</option></select></label>;
+  return <label className="theme-selector" htmlFor="theme-choice"><span>Giao diện</span><select id="theme-choice" className="touch-target" value={theme} onChange={(event) => setTheme(event.target.value as ThemeChoice)}><option value="system">Theo thiết bị</option><option value="light">Sáng</option><option value="dark">Tối</option></select></label>;
 }

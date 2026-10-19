@@ -32,8 +32,8 @@ export function AuthView({ onAuthenticated, notice }: AuthViewProps) {
   return (
     <main className="auth-layout">
       <section className="auth-card" aria-labelledby="login-title">
-        <div className="brand-mark" aria-hidden="true">✦</div>
-        <p className="eyebrow">PLAYROOM / PRIVATE STORY SPACE</p>
+        <div className="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" width="25" height="25" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M4 5.5c3.2-.8 5.9-.1 8 1.9v12c-2.1-2-4.8-2.7-8-1.9z"/><path d="M20 5.5c-3.2-.8-5.9-.1-8 1.9v12c2.1-2 4.8-2.7 8-1.9z"/><path d="M7 9h2M15 9h2M7 12h2M15 12h2"/></svg></div>
+        <p className="eyebrow">PLAYROOM</p>
         <h1 id="login-title">Đăng nhập Playroom</h1>
         <p className="auth-intro">Một căn phòng riêng cho những câu chuyện còn đang tiếp diễn.</p>
         {notice && <div role="alert" className="form-error">{notice}</div>}
@@ -45,7 +45,7 @@ export function AuthView({ onAuthenticated, notice }: AuthViewProps) {
           {error && <div role="alert" className="form-error">{error}</div>}
           <button type="submit" className="primary-button" disabled={pending}>{pending ? "Đang xác thực…" : "Đăng nhập"}</button>
         </form>
-        <p className="security-note">Mật khẩu chỉ được gửi khi đăng nhập và phiên dùng cookie HttpOnly. Dữ liệu riêng trong bộ nhớ trình duyệt được xóa khi bạn đăng xuất.</p>
+        <p className="security-note">Dùng tài khoản bạn đã tạo khi khởi chạy Playroom.</p>
       </section>
     </main>
   );
