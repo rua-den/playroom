@@ -213,6 +213,7 @@ describe("recoverable job summary", () => {
 });
 
 describe("story library navigation and last-story persistence", () => {
+  afterEach(() => { try { window.localStorage.clear(); } catch { /* blocked storage is part of coverage */ } });
   const summaries = [
     { id: "story-a", title: "Mùa hạ", created_at: "2026-01-01", updated_at: "2026-01-02", archived_at: null },
     { id: "story-b", title: "Đêm mưa", created_at: "2026-01-01", updated_at: "2026-01-03", archived_at: null },
@@ -242,9 +243,10 @@ describe("story library navigation and last-story persistence", () => {
     const first = render(<AppShell owner={{ id: "owner-a", email: "a@example.test" }} onLogout={() => undefined} />);
     expect(await screen.findByRole("heading", { name: "Đêm mưa" })).toBeInTheDocument();
     first.unmount();
+    vi.mocked(api.getCampaign).mockClear();
     render(<AppShell owner={{ id: "owner-b", email: "b@example.test" }} onLogout={() => undefined} />);
     expect(await screen.findByRole("heading", { name: "Thư viện truyện" })).toBeInTheDocument();
-    expect(api.getCampaign).toHaveBeenCalledWith("story-b");
+    expect(api.getCampaign).not.toHaveBeenCalled();
   });
 
   it("falls back to the library when storage is stale or blocked", async () => {
@@ -253,8 +255,11 @@ describe("story library navigation and last-story persistence", () => {
     const stale = render(<AppShell owner={{ id: "stale-owner", email: "stale@example.test" }} onLogout={() => undefined} />);
     expect(await screen.findByRole("heading", { name: "Thư viện truyện" })).toBeInTheDocument();
     stale.unmount();
-    vi.spyOn(window.localStorage, "getItem").mockImplementation(() => { throw new Error("blocked"); });
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("blocked"); });
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("blocked"); });
     render(<AppShell owner={{ id: "blocked-owner", email: "blocked@example.test" }} onLogout={() => undefined} />);
     expect(await screen.findByRole("heading", { name: "Thư viện truyện" })).toBeInTheDocument();
+    await userEvent.setup().click(within(screen.getByRole("heading", { name: "Thư viện truyện" }).closest("section")!).getAllByRole("button", { name: "Mở truyện" })[0]);
+    expect(await screen.findByRole("heading", { name: "Mùa hạ" })).toBeInTheDocument();
   });
 });
