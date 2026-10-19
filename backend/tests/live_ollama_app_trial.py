@@ -118,7 +118,11 @@ def ensure_live_gate() -> bool:
 def _balance_preflight(secret: str) -> None:
     request = urllib.request.Request("https://ollama.com/api/balance", headers={"Authorization": "Bearer " + secret, "Accept": "application/json"}, method="GET")
     try:
-        with urllib.request.urlopen(request, timeout=18) as response:
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                return None
+        opener = urllib.request.build_opener(NoRedirect)
+        with opener.open(request, timeout=18) as response:
             payload = json.load(response)
         included = Decimal(str(payload["included"]["balance_usd"]))
         purchased = Decimal(str(payload["purchased"]["balance_usd"]))

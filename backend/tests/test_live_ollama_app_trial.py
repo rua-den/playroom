@@ -60,7 +60,21 @@ def test_balance_preflight_denies_insufficient_purchased_or_unknown(monkeypatch,
         def json(self):
             return payload
 
-    monkeypatch.setattr("urllib.request.urlopen", lambda *args, **kwargs: Response())
+    class Opener:
+        def open(self, *args, **kwargs):
+            return Response()
+    monkeypatch.setattr("urllib.request.build_opener", lambda *args, **kwargs: Opener())
+    with pytest.raises(RuntimeError, match="balance preflight"):
+        _balance_preflight("fixture-key")
+
+
+def test_balance_preflight_does_not_follow_redirect(monkeypatch):
+    class RedirectingOpener:
+        def open(self, request, **kwargs):
+            raise __import__("urllib.error", fromlist=["HTTPError"]).HTTPError(
+                request.full_url, 302, "redirect", {"Location": "https://evil.example/balance"}, None
+            )
+    monkeypatch.setattr("urllib.request.build_opener", lambda *args, **kwargs: RedirectingOpener())
     with pytest.raises(RuntimeError, match="balance preflight"):
         _balance_preflight("fixture-key")
 
