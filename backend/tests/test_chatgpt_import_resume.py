@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+from fastapi.testclient import TestClient
+
 from playroom.auth import create_owner
 from playroom.chatgpt_import import IMPORT_CHUNK_TURNS, import_conversation, import_review
 from playroom.db import connect, migrate
@@ -146,3 +148,64 @@ def test_same_payload_with_new_import_key_resumes_instead_of_creating_duplicate(
     assert reopened.execute("SELECT COUNT(*) FROM campaigns WHERE owner_id=?", (owner.id,)).fetchone()[0] == 1
     assert reopened.execute("SELECT COUNT(*) FROM chatgpt_import_sources WHERE owner_id=?", (owner.id,)).fetchone()[0] == 1
     reopened.close()
+
+
+
+def test_http_import_is_bounded_and_repeated_post_finishes_same_campaign(tmp_path):
+    from playroom.app import create_app
+
+    path = tmp_path / "resume-http.sqlite3"
+    db = connect(path)
+    migrate(db)
+    owner = create_owner(db, "resume-http@example.test", "synthetic strong password")
+    db.close()
+
+    app = create_app(
+        database_url=f"sqlite:///{path}",
+        allowed_hosts={"testserver"},
+        secure_cookies=False,
+        credential_root=tmp_path / "secrets",
+    )
+    client = TestClient(app, base_url="https://testserver")
+    headers = {"origin": "https://testserver"}
+    assert client.post(
+        "/api/auth/login",
+        json={"email": owner.email, "password": "synthetic strong password"},
+        headers=headers,
+    ).status_code == 200
+
+    payload = {
+        "conversation": _conversation(),
+        "config": _config(),
+        "import_key": str(uuid4()),
+    }
+    first = client.post("/api/transfers/chatgpt/import", json=payload, headers=headers)
+    assert first.status_code == 201, first.text
+    first_body = first.json()
+    assert first_body["complete"] is False
+    assert first_body["imported_turns"] == IMPORT_CHUNK_TURNS
+    assert first_body["turn_count"] == PAIR_COUNT
+    assert first_body["review_required"] is True
+    campaign_id = first_body["campaign_id"]
+
+    second = client.post("/api/transfers/chatgpt/import", json=payload, headers=headers)
+    assert second.status_code == 201, second.text
+    second_body = second.json()
+    assert second_body["campaign_id"] == campaign_id
+    assert second_body["complete"] is True
+    assert second_body["imported_turns"] == PAIR_COUNT
+
+    replay = client.post("/api/transfers/chatgpt/import", json=payload, headers=headers)
+    assert replay.status_code == 201, replay.text
+    assert replay.json()["already_imported"] is True
+    assert replay.json()["campaign_id"] == campaign_id
+
+    db = connect(path)
+    try:
+        assert db.execute("SELECT COUNT(*) FROM campaigns WHERE owner_id=?", (owner.id,)).fetchone()[0] == 1
+        assert db.execute("SELECT COUNT(*) FROM chatgpt_import_sources WHERE owner_id=?", (owner.id,)).fetchone()[0] == 1
+        assert db.execute("SELECT COUNT(*) FROM import_review_checkpoints WHERE campaign_id=?", (campaign_id,)).fetchone()[0] == 1
+        assert db.execute("SELECT COUNT(*) FROM generation_jobs").fetchone()[0] == 0
+        assert db.execute("SELECT COUNT(*) FROM provider_attempts").fetchone()[0] == 0
+    finally:
+        db.close()
