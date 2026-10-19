@@ -76,6 +76,22 @@ function isQuota(error: unknown) {
       /quota|schema|unsupported capability/i.test(error.message))
   );
 }
+function generationFailure(error: unknown): { message: string; economyRetry: boolean } {
+  const raw = error instanceof ApiError ? `${error.code ?? ""} ${error.message}`.toLowerCase() : "";
+  const validation = error instanceof ApiError && [400, 422].includes(error.status);
+  if (validation && /free_only cannot exclude purchased-credit billing|cannot exclude purchased-credit billing/.test(raw))
+    return { message: "Ollama chưa chứng minh được giới hạn chi phí cho profile này. Hãy mở Cài đặt chi phí và tự chấp thuận Capped paid trước khi gửi.", economyRetry: false };
+  if (validation && /free_only|free only|verified free|credential tier/.test(raw))
+    return { message: "Free only đang chặn model trả phí này. Hãy chọn profile Free đã xác minh hoặc mở Cài đặt chi phí để tự chấp thuận Capped paid.", economyRetry: false };
+  if (validation && /ollama|purchased credit|included credit|spending authorization|requires.*grant/.test(raw))
+    return { message: "Ollama chưa chứng minh được giới hạn chi phí cho profile này. Hãy mở Cài đặt chi phí và tự chấp thuận Capped paid trước khi gửi.", economyRetry: false };
+  if (validation && /trial model|profile does not match|trial.*(missing|revoked|expired|mismatched)|active trial authorization|cumulative budget|job count exhausted|per-send cap/.test(raw))
+    return { message: "Hạn mức trả phí chưa được chấp thuận cho đúng profile, đã hết hoặc vượt giới hạn lượt này. Hãy kiểm tra Cài đặt chi phí.", economyRetry: false };
+  if (validation && /context budget|blocked context|input limit|requested output|token budget/.test(raw))
+    return { message: "Context hoặc ngân sách lượt kể không đáp ứng model này. Hãy mở Cài đặt chi phí để xem giới hạn đã chấp thuận.", economyRetry: false };
+  if (isQuota(error)) return { message: "Không thể gửi vì quota hoặc khả năng model không đáp ứng. Chỉ model được xác minh Free mới được gửi với Free only; bản nháp được giữ.", economyRetry: true };
+  return { message: "Không thể bắt đầu lượt kể chuyện; bản nháp vẫn được giữ.", economyRetry: false };
+}
 function isQuotaFailure(failure: GenerationJob["failure"]) {
   return Boolean(
     failure &&
@@ -84,8 +100,7 @@ function isQuotaFailure(failure: GenerationJob["failure"]) {
       "UNSUPPORTED_SCHEMA",
       "SCHEMA_INVALID",
       "UNSUPPORTED_CAPABILITY",
-    ].includes(failure.code ?? "") ||
-      /quota|schema|unsupported capability/i.test(failure.message ?? "")),
+    ].includes(failure.code ?? "")),
   );
 }
 
@@ -94,12 +109,14 @@ export function GenerationComposer({
   projection,
   profileId,
   onCommitted,
+  onOpenModelSettings,
   demoMode = false,
 }: {
   ownerId: string;
   projection: CampaignProjection;
   profileId: string;
   onCommitted: () => Promise<CampaignProjection | void> | void;
+  onOpenModelSettings?: () => void;
   demoMode?: boolean;
 }) {
   const [action, setAction] = useState("");
@@ -688,17 +705,21 @@ export function GenerationComposer({
       await startGeneration(projection, retryMode, submitContext);
     } catch (cause) {
       if (!isCurrentEpoch(submitEpoch)) return;
-      const quota = isQuota(cause);
-      setEconomyRetry(quota);
+      const failure = generationFailure(cause);
+      setEconomyRetry(failure.economyRetry);
       setError(
         cause instanceof ApiError && cause.status === 409
           ? "Tác vụ đã thay đổi. Hãy tải lại chiến dịch."
           : cause instanceof Error && /Chưa cấu hình/.test(cause.message)
             ? cause.message
-            : quota
+            : failure.message !== "Không thể bắt đầu lượt kể chuyện; bản nháp vẫn được giữ."
+              ? failure.message
+              : failure.economyRetry
               ? "Không thể gửi vì quota hoặc khả năng model không đáp ứng. Chỉ model được xác minh Free mới được gửi với Free only; bản nháp được giữ."
               : "Không thể bắt đầu lượt kể chuyện; bản nháp vẫn được giữ.",
       );
+      if (!failure.economyRetry && !(cause instanceof ApiError && cause.status === 409) && !(cause instanceof Error && /cấu hình|cáº¥u hÃ¬nh/.test(cause.message)))
+        setError(failure.message);
     } finally {
       if (isCurrentEpoch(submitEpoch)) setPending(false);
     }
@@ -708,6 +729,7 @@ export function GenerationComposer({
     job && ["queued", "running", "cancelling"].includes(job.status),
   );
   const busy = pending || active;
+  const modelBlocked = busy || job?.status === "candidate" || Boolean(identity?.idempotencyKey && !job);
   return (
     <section className="generation-composer" aria-label="Lượt kể chuyện">
       {demoMode && (
@@ -743,6 +765,7 @@ export function GenerationComposer({
           placeholder="Bạn muốn nói hoặc làm gì?"
           required
         />
+        <div className="composer-actions">
         <button
           type="submit"
           className="primary-button touch-target"
@@ -750,6 +773,12 @@ export function GenerationComposer({
         >
           {busy ? "Đang gửi…" : "Gửi"}
         </button>
+        {onOpenModelSettings && (
+          <button type="button" className="quiet-button touch-target" onClick={onOpenModelSettings} disabled={modelBlocked}>
+            Đổi model
+          </button>
+        )}
+        </div>
       </form>
       {error && (
         <div role="alert" className="form-error">
