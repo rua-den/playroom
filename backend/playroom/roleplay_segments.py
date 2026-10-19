@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Mapping, Sequence
 import json
+import re
 
 from .domain import ValidationError
 
@@ -104,7 +105,24 @@ def parse_narrator_payload(raw: str, selected_characters: Mapping[str, str]) -> 
     """Decode structured narrator output, retaining ordinary text compatibility."""
     if not isinstance(raw, str):
         raise ValidationError("Narrator output must be text")
-    if not raw.lstrip().startswith(("{", "[")):
+    leading = raw.lstrip()
+    if leading.startswith("```"):
+        # Gemma4 may wrap otherwise valid segments in one complete JSON fence.
+        # Strip ONLY the exact, entire Markdown wrapper: never trust mixed prose,
+        # malformed/unclosed fences or unknown code languages.
+        match = re.fullmatch(
+            r"[ \t]*```(?:json)?[ \t]*\r?\n"
+            r"(?P<body>[\s\S]*?)"
+            r"\r?\n```[ \t]*(?:\r?\n)?",
+            leading,
+            flags=re.IGNORECASE,
+        )
+        if match is None:
+            raise ValidationError("Fenced narrator JSON must have one complete JSON-only code block")
+        raw = match.group("body").strip()
+        if not raw.startswith(("{", "[")):
+            raise ValidationError("Fenced narrator content must be JSON segments")
+    elif not leading.startswith(("{", "[")):
         return raw, None
     try:
         value = json.loads(raw)
