@@ -12,6 +12,8 @@ from live_ollama_app_trial import (
     OLLAMA_CLOUD_ENDPOINT,
     OfflineProviderTransport,
     NPC_VERSION,
+    NPC_ID,
+    _response_shape_summary,
     _balance_preflight,
     _run_app_flow,
     trial_contract,
@@ -63,6 +65,25 @@ def test_old_invented_npc_version_fixture_is_red():
     )
     with pytest.raises(RuntimeError, match="invented"):
         fixture(request)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("null", {"json_valid": True, "segment_kind_valid": False, "selected_attribution_match": False}),
+        ('{"segments": [{"kind": "narration"}, null]}', {"json_valid": True, "segment_kind_valid": False, "selected_attribution_match": False}),
+        ('{"segments": [{"kind": "dialogue", "character_id": "x", "profile_version_id": "wrong"}]}', {"json_valid": True, "segment_kind_valid": True, "selected_attribution_match": False}),
+        (json.dumps({"segments": [{"kind": "dialogue", "character_id": NPC_ID, "profile_version_id": "persisted"}]}), {"json_valid": True, "segment_kind_valid": True, "selected_attribution_match": True}),
+        ('```json\n{"segments": []}\n```', {"json_valid": False, "fenced": True, "segment_kind_valid": False, "selected_attribution_match": False}),
+    ],
+)
+def test_response_shape_summary_is_strict_and_redacts_content(text, expected):
+    summary = _response_shape_summary(text, "persisted")
+    assert {key: summary[key] for key in expected} == expected
+    rendered = json.dumps(summary)
+    assert "persisted" not in rendered
+    assert NPC_ID not in rendered
+    assert "wrong" not in rendered
 
 
 def test_offline_app_flow_exercises_real_verifier_adapter_and_persistence():

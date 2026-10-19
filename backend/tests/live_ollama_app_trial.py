@@ -156,17 +156,12 @@ def _assert_ok(response, expected: int | set[int] = 200) -> dict:
     return response.json()
 
 
-def _diagnose_schema_failure(database_url: str, job_id: str, selected_profile_version: str) -> None:
-    """Emit only bounded response-shape facts before the temp DB disappears."""
-    connection = connect(database_url)
-    try:
-        row = connection.execute("SELECT output_text FROM provider_attempts WHERE generation_job_id=? AND stage='narration'", (job_id,)).fetchone()
-        text_value = str(row["output_text"] or "") if row else ""
-    finally:
-        connection.close()
+def _response_shape_summary(text_value: str, selected_profile_version: str) -> dict:
     parsed = None
+    parsed_ok = False
     try:
         parsed = json.loads(text_value)
+        parsed_ok = True
     except (TypeError, ValueError, json.JSONDecodeError):
         pass
     fenced = "```" in text_value
@@ -175,17 +170,29 @@ def _diagnose_schema_failure(database_url: str, job_id: str, selected_profile_ve
     segments = parsed.get("segments") if isinstance(parsed, dict) else None
     segment_items = segments if isinstance(segments, list) else []
     valid_kinds = {"narration", "dialogue"}
+    all_mappings = all(isinstance(item, dict) for item in segment_items)
     kinds = [item.get("kind") for item in segment_items if isinstance(item, dict)]
     dialogue = [item for item in segment_items if isinstance(item, dict) and item.get("kind") == "dialogue"]
-    attribution_match = [item.get("profile_version_id") == selected_profile_version for item in dialogue if isinstance(item, dict) and "profile_version_id" in item]
-    print("SCHEMA DIAGNOSTIC:", json.dumps({
-        "has_text": bool(text_value), "length": len(text_value), "json_valid": parsed is not None,
+    attribution_match = [item.get("character_id") == NPC_ID and item.get("profile_version_id") == selected_profile_version for item in dialogue]
+    return {
+        "has_text": bool(text_value), "length": len(text_value), "json_valid": parsed_ok,
         "fenced": fenced, "root_keys": [key for key in root_keys if key in allowlist],
         "unknown_root_key_count": len([key for key in root_keys if key not in allowlist]),
-        "segment_kind_valid": bool(segment_items) and all(kind in valid_kinds for kind in kinds),
+        "segment_kind_valid": bool(segment_items) and all_mappings and all(kind in valid_kinds for kind in kinds),
         "dialogue_count": len(dialogue),
-        "selected_attribution_match": bool(attribution_match) and all(attribution_match),
-    }, sort_keys=True))
+        "selected_attribution_match": bool(attribution_match) and len(attribution_match) == len(dialogue) and all(attribution_match),
+    }
+
+
+def _diagnose_schema_failure(database_url: str, job_id: str, selected_profile_version: str) -> None:
+    """Emit only bounded response-shape facts before the temp DB disappears."""
+    connection = connect(database_url)
+    try:
+        row = connection.execute("SELECT output_text FROM provider_attempts WHERE generation_job_id=? AND stage='narration'", (job_id,)).fetchone()
+        text_value = str(row["output_text"] or "") if row else ""
+    finally:
+        connection.close()
+    print("SCHEMA DIAGNOSTIC:", json.dumps(_response_shape_summary(text_value, selected_profile_version), sort_keys=True))
 
 
 def _create_app(root: Path, *, transport: OfflineProviderTransport | None = None, live: bool = False, guard: DispatchGuard | None = None):
