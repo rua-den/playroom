@@ -120,12 +120,15 @@ label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) { display:
 .story-card .quiet-button { align-self: flex-start; }
 .library-import-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 24px; }
 .form-hint { max-width: 48ch; margin: 8px 0 0; color: #c2b8aa; line-height: 1.5; }
-.create-card .eyebrow { font-size: 0; }
-.create-card .eyebrow::after { content: "TRUYỆN MỚI"; font-size: 11px; }
-:root[data-theme="light"] .form-hint, :root:not([data-theme]) .form-hint { color: #6d5c4d; }
+:root[data-theme="light"] .form-hint { color: #6d5c4d; }
 @media (max-width: 560px) { .story-library .section-heading { align-items: flex-start; flex-direction: column; } .story-library .section-heading > .primary-button { width: 100%; } }
-:root[data-theme="light"] .story-card, :root:not([data-theme]) .story-card { color: #332a23; background: #fffaf3; border-color: #c6b6a5; }
-:root[data-theme="light"] .library-intro, :root:not([data-theme]) .library-intro { color: #6d5c4d; }
+:root[data-theme="light"] .story-card { color: #332a23; background: #fffaf3; border-color: #c6b6a5; }
+:root[data-theme="light"] .library-intro { color: #6d5c4d; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) .form-hint { color: #6d5c4d; }
+  :root:not([data-theme]) .story-card { color: #332a23; background: #fffaf3; border-color: #c6b6a5; }
+  :root:not([data-theme]) .library-intro { color: #6d5c4d; }
+}
 .story-card h2 { overflow-wrap: anywhere; }
 .empty-icon { color: #d79771; font-size: 42px; }
 @media (max-width: 560px) {
