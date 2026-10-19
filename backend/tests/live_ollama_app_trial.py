@@ -89,9 +89,6 @@ class CountingHttpClient:
     def record_post(self, url: str) -> None:
         self.guard.check("POST", url, {"model": OLLAMA_FREE_CLOUD_API_MODEL, "max_tokens": MAX_OUTPUT_TOKENS})
 
-    def get(self, *args, **kwargs):
-        return self.client.get(*args, **kwargs)
-
     def stream(self, method, url, *args, **kwargs):
         self.guard.check(method, str(url), kwargs.get("json"))
         return self.client.stream(method, url, *args, **kwargs)
@@ -109,6 +106,8 @@ class OfflineProviderTransport:
 
     def __call__(self, request):
         url = str(request.url)
+        if request.headers.get("authorization") != f"Bearer {FIXTURE_KEY}":
+            raise RuntimeError("offline fixture rejected credential")
         if request.method == "GET" and url == f"{OLLAMA_CLOUD_ENDPOINT}/models":
             self.verifier_gets += 1
             return httpx.Response(200, json={"data": [{"id": OLLAMA_FREE_CLOUD_API_MODEL}]})

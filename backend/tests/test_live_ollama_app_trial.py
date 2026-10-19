@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import json
 import pytest
+import httpx2 as httpx
 
 from live_ollama_app_trial import (
     MAX_OUTPUT_TOKENS,
     MAX_TRIAL_USD,
     CountingHttpClient,
+    FIXTURE_KEY,
+    OLLAMA_CLOUD_ENDPOINT,
+    OfflineProviderTransport,
     _balance_preflight,
     _run_app_flow,
     trial_contract,
@@ -38,6 +42,14 @@ def test_counting_client_rejects_non_post_before_transport():
     client = CountingHttpClient(object())
     with pytest.raises(RuntimeError, match="method"):
         client.guard.check("GET", "https://ollama.com/v1/chat/completions", {"model": "gemma4:31b", "max_tokens": 1})
+
+
+def test_offline_fixture_rejects_wrong_persisted_credential():
+    fixture = OfflineProviderTransport()
+    client = httpx.Client(transport=httpx.MockTransport(fixture))
+    with pytest.raises(RuntimeError, match="credential"):
+        client.get(f"{OLLAMA_CLOUD_ENDPOINT}/models", headers={"Authorization": "Bearer wrong-key"})
+    client.close()
 
 
 def test_offline_app_flow_exercises_real_verifier_adapter_and_persistence():
