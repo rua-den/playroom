@@ -8,6 +8,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+import threading
 from decimal import Decimal, InvalidOperation
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -39,25 +40,48 @@ def trial_contract() -> dict:
     return {"max_provider_posts": 1, "max_output_tokens": MAX_OUTPUT_TOKENS, "max_usd": MAX_TRIAL_USD, "private_fixture": True, "endpoint": OLLAMA_CLOUD_ENDPOINT}
 
 
+class DispatchGuard:
+    def __init__(self, *, preflight=None):
+        self._lock = threading.Lock()
+        self.provider_posts = 0
+        self.preflight = preflight
+
+    def check(self, method: str, url: str, payload: dict | None) -> None:
+        with self._lock:
+            if method.upper() != "POST" or url != f"{OLLAMA_CLOUD_ENDPOINT}/chat/completions":
+                raise RuntimeError("provider dispatch method or URL is not pinned")
+            if not isinstance(payload, dict) or payload.get("model") != OLLAMA_FREE_CLOUD_API_MODEL:
+                raise RuntimeError("provider dispatch model is not pinned")
+            output_limit = payload.get("max_tokens")
+            if not isinstance(output_limit, int) or output_limit <= 0 or output_limit > MAX_OUTPUT_TOKENS:
+                raise RuntimeError("provider dispatch output limit exceeds trial bound")
+            if self.provider_posts >= 1:
+                raise RuntimeError("provider completion allows at most one POST")
+            if self.preflight is not None:
+                self.preflight()
+                self.preflight = None
+            self.provider_posts += 1
+
+
 class CountingHttpClient:
     """Strict client wrapper: only one exact completion URL is dispatchable."""
-    def __init__(self, client):
+    def __init__(self, client, guard: DispatchGuard | None = None):
         self.client = client
-        self.provider_posts = 0
+        self.guard = guard or DispatchGuard()
+
+    @property
+    def provider_posts(self):
+        return self.guard.provider_posts
 
     def record_post(self, url: str) -> None:
-        if url != f"{OLLAMA_CLOUD_ENDPOINT}/chat/completions":
-            raise RuntimeError("provider POST URL is not the pinned Ollama completion endpoint")
-        self.provider_posts += 1
-        if self.provider_posts > 1:
-            raise RuntimeError("provider completion allows at most one POST")
+        self.guard.check("POST", url, {"model": OLLAMA_FREE_CLOUD_API_MODEL, "max_tokens": MAX_OUTPUT_TOKENS})
 
     def get(self, *args, **kwargs):
         return self.client.get(*args, **kwargs)
 
     def stream(self, method, url, *args, **kwargs):
         if method.upper() == "POST":
-            self.record_post(str(url))
+            self.guard.check(method, str(url), kwargs.get("json"))
         return self.client.stream(method, url, *args, **kwargs)
 
     def close(self):
@@ -100,7 +124,7 @@ def _balance_preflight(secret: str) -> None:
         purchased = Decimal(str(payload["purchased"]["balance_usd"]))
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, KeyError, TypeError, ValueError, InvalidOperation):
         raise RuntimeError("balance preflight unavailable; no provider POST") from None
-    if not included.is_finite() or not purchased.is_finite() or included < ESTIMATED_RESERVE_USD or purchased != 0:
+    if not included.is_finite() or not purchased.is_finite() or included < MAX_TRIAL_USD or purchased != 0:
         raise RuntimeError("balance preflight did not establish included allowance and zero purchased credits")
 
 
@@ -111,7 +135,7 @@ def _assert_ok(response, expected: int | set[int] = 200) -> dict:
     return response.json()
 
 
-def _create_app(root: Path, *, transport: OfflineProviderTransport | None = None, live: bool = False):
+def _create_app(root: Path, *, transport: OfflineProviderTransport | None = None, live: bool = False, guard: DispatchGuard | None = None):
     frontend = root / "frontend"
     frontend.mkdir(exist_ok=True)
     (frontend / "index.html").write_text("<html>synthetic</html>", encoding="utf-8")
@@ -119,13 +143,15 @@ def _create_app(root: Path, *, transport: OfflineProviderTransport | None = None
     counted = None
     if transport is not None or live:
         shared = httpx.Client(transport=httpx.MockTransport(transport), timeout=30) if transport is not None else httpx.Client(timeout=httpx.Timeout(90.0, connect=15.0))
+        app.router.add_event_handler("shutdown", shared.close)
         app.state.provider_verifier = OllamaCloudVerifier(http_client=shared)
         # The production route constructs its pinned Ollama verifier directly;
         # inject the fixture client at the harness boundary without changing
         # application code or permitting a real network call.
         import playroom.api.configuration as configuration_api
-        configuration_api.OllamaCloudVerifier = lambda: OllamaCloudVerifier(http_client=shared)
-        counted = CountingHttpClient(shared)
+        if transport is not None:
+            configuration_api.OllamaCloudVerifier = lambda: OllamaCloudVerifier(http_client=shared)
+        counted = CountingHttpClient(shared, guard or DispatchGuard())
 
         def factory(*, owner_id, stage, profile, credential, http_client=None):
             if stage != "narration":
@@ -147,8 +173,9 @@ def _create_owner(root: Path) -> None:
         connection.close()
 
 
-def _poll_job(client: TestClient, job_id: str, *, interval: float = 0.05) -> dict:
-    for _ in range(120):
+def _poll_job(client: TestClient, job_id: str, *, timeout: float = 120.0, interval: float = 0.05) -> dict:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
         job = _assert_ok(client.get(f"/api/generation/jobs/{job_id}"))
         if job.get("status") in {"candidate", "failed", "cancelled", "interrupted"}:
             return job
@@ -156,12 +183,14 @@ def _poll_job(client: TestClient, job_id: str, *, interval: float = 0.05) -> dic
     raise RuntimeError("generation job polling exceeded bounded timeout")
 
 
-def _run_app_flow(*, offline: bool) -> tuple[int, int]:
+def _run_app_flow_impl(*, offline: bool) -> tuple[int, int]:
     transport = OfflineProviderTransport() if offline else None
+    secret = os.environ.get("OLLAMA_API_KEY", "")
+    guard = DispatchGuard(preflight=None if offline else lambda: _balance_preflight(secret))
     with tempfile.TemporaryDirectory(prefix="playroom-app-trial-") as directory:
         root = Path(directory)
         _create_owner(root)
-        app = _create_app(root, transport=transport, live=not offline)
+        app = _create_app(root, transport=transport, live=not offline, guard=guard)
         counted = getattr(app.state, "_trial_http_client", None)
         headers = {"origin": "http://127.0.0.1"}
         with TestClient(app, base_url="http://127.0.0.1") as client:
@@ -180,18 +209,18 @@ def _run_app_flow(*, offline: bool) -> tuple[int, int]:
             preview = _assert_ok(client.post(f"/api/campaigns/{campaign['id']}/context/previews", json={"branch_id": campaign["branch_id"], "action": ACTION, "profile_id": profile["id"]}, headers=headers), 201)
             if preview.get("status") != "ready" or preview.get("budget", {}).get("fits") is not True:
                 raise RuntimeError("verified context preview did not fit the bounded input/output wire budget")
+            selected = preview.get("selected_characters") or []
+            npc = next((item for item in selected if item.get("character_id") == NPC_ID), None)
+            if npc is None or not npc.get("profile_version_id"):
+                raise RuntimeError("context preview did not expose the persisted NPC profile version")
+            expected_npc_version = npc["profile_version_id"]
             if transport is not None:
-                selected = preview.get("selected_characters") or []
-                npc = next((item for item in selected if item.get("character_id") == NPC_ID), None)
-                if npc is None or not npc.get("profile_version_id"):
-                    raise RuntimeError("context preview did not expose the persisted NPC profile version")
-                transport.npc_profile_version = npc["profile_version_id"]
+                transport.npc_profile_version = expected_npc_version
             job = _assert_ok(client.post(f"/api/campaigns/{campaign['id']}/generate", json={"branch_id": campaign["branch_id"], "action": ACTION, "idempotency_key": "synthetic-app-trial-once", "checkpoint_id": detail["checkpoint_id"], "preview_id": preview["id"], "mode": "economy", "policy": "capped_paid", "cap": str(MAX_TRIAL_USD)}, headers=headers), 201)
             job = _poll_job(client, job["id"])
             if job.get("status") != "candidate":
                 raise RuntimeError(f"generation stopped before candidate: {job.get('failure', {}).get('code', 'unknown')}")
             output = job.get("output_segments") or []
-            expected_npc_version = transport.npc_profile_version if transport is not None else NPC_VERSION
             if not any(segment.get("character_id") == NPC_ID and segment.get("profile_version_id") == expected_npc_version for segment in output):
                 raise RuntimeError("candidate output lost persisted NPC profile attribution")
             _assert_ok(client.post(f"/api/generation/jobs/{job['id']}/commit", headers=headers))
@@ -200,18 +229,29 @@ def _run_app_flow(*, offline: bool) -> tuple[int, int]:
             if len(transcript) != 1 or transcript[0].get("action_text") != ACTION or not any(segment.get("character_id") == NPC_ID and segment.get("profile_version_id") == expected_npc_version for segment in transcript[0].get("output_segments") or []):
                 raise RuntimeError("committed projection did not retain exact input and NPC output attribution")
         reload_transport = OfflineProviderTransport() if offline else None
-        app2 = _create_app(root, transport=reload_transport, live=not offline)
+        app2 = _create_app(root, transport=reload_transport, live=not offline, guard=guard)
         with TestClient(app2, base_url="http://127.0.0.1") as client2:
             _assert_ok(client2.post("/api/auth/login", json={"email": OWNER_EMAIL, "password": OWNER_PASSWORD}, headers=headers))
             restored = _assert_ok(client2.get(f"/api/campaigns/{campaign['id']}/projection?branch_id={campaign['branch_id']}"))
             restored_turn = (restored.get("transcript") or [None])[0]
             if not restored_turn or restored_turn.get("action_text") != ACTION or not any(segment.get("character_id") == NPC_ID and segment.get("profile_version_id") == expected_npc_version for segment in restored_turn.get("output_segments") or []):
                 raise RuntimeError("reload verification did not recover persisted NPC output attribution")
-        return (counted.provider_posts if counted else 0), (transport.verifier_gets if transport else 0)
+        if guard.provider_posts != 1:
+            raise RuntimeError(f"expected exactly one total provider POST, observed {guard.provider_posts}")
+        return guard.provider_posts, (transport.verifier_gets if transport else 0)
+
+
+def _run_app_flow(*, offline: bool) -> tuple[int, int]:
+    """Run a flow and always restore the offline-only verifier injection."""
+    import playroom.api.configuration as configuration_api
+    original = configuration_api.OllamaCloudVerifier
+    try:
+        return _run_app_flow_impl(offline=offline)
+    finally:
+        configuration_api.OllamaCloudVerifier = original
 
 
 def _run_live() -> int:
-    _balance_preflight(os.environ["OLLAMA_API_KEY"])
     posts, _ = _run_app_flow(offline=False)
     if posts != 1:
         raise RuntimeError(f"expected one provider completion POST, observed {posts}")

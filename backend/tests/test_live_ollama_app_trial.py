@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import pytest
 
 from live_ollama_app_trial import (
     MAX_OUTPUT_TOKENS,
     MAX_TRIAL_USD,
     CountingHttpClient,
+    _balance_preflight,
     _run_app_flow,
     trial_contract,
 )
@@ -35,6 +37,39 @@ def test_counting_client_rejects_unpinned_provider_post():
 def test_offline_app_flow_exercises_real_verifier_adapter_and_persistence():
     posts, verifier_gets = _run_app_flow(offline=True)
     assert (posts, verifier_gets) == (1, 1)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"included": {"balance_usd": "0.009"}, "purchased": {"balance_usd": "0"}},
+        {"included": {"balance_usd": "0.01"}, "purchased": {"balance_usd": "0.001"}},
+        {"included": {"balance_usd": "NaN"}, "purchased": {"balance_usd": "0"}},
+    ],
+)
+def test_balance_preflight_denies_insufficient_purchased_or_unknown(monkeypatch, payload):
+    class Response:
+        def __enter__(self):
+            return self
+        def __exit__(self, *_):
+            return False
+        def read(self):
+            return json.dumps(payload).encode()
+        def __iter__(self):
+            return iter(())
+        def json(self):
+            return payload
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda *args, **kwargs: Response())
+    with pytest.raises(RuntimeError, match="balance preflight"):
+        _balance_preflight("fixture-key")
+
+
+def test_offline_verifier_patch_is_restored():
+    import playroom.api.configuration as configuration_api
+    original = configuration_api.OllamaCloudVerifier
+    _run_app_flow(offline=True)
+    assert configuration_api.OllamaCloudVerifier is original
 
 
 def test_live_gate_denies_missing_approval_and_reruns_before_dispatch(monkeypatch):
