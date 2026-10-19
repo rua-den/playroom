@@ -40,7 +40,7 @@ jobs:
 
   one-shot-live-app:
     if: >-
-      ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && startsWith(github.event.head_commit.message, 'ci(ollama): run one synthetic app trial 2026-10-18') }}
+      ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && startsWith(github.event.head_commit.message, 'ci(ollama): verify corrected app fixture 2026-10-19') }}
     needs: offline-contract
     runs-on: ubuntu-latest
     timeout-minutes: 8
@@ -58,6 +58,6 @@ jobs:
       - name: Run one authenticated synthetic app trial
         env:
           OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
-          B4_LOCAL_APP_APPROVAL: B4_LOCAL_APP_TRIAL_2026_10_18
+          B4_LOCAL_APP_APPROVAL: B4_LOCAL_APP_TRIAL_2026_10_19
         run: |
           uv run --locked --extra test python backend/tests/live_ollama_app_trial.py

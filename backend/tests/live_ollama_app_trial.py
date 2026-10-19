@@ -22,7 +22,7 @@ from playroom.live_local import create_live_local_app
 from playroom.model_profiles import OLLAMA_CLOUD_ENDPOINT, OLLAMA_FREE_CLOUD_API_MODEL, OLLAMA_FREE_CLOUD_MODEL, OllamaCloudVerifier
 from playroom.provider import default_provider_factory
 
-APPROVAL = "B4_LOCAL_APP_TRIAL_2026_10_18"
+APPROVAL = "B4_LOCAL_APP_TRIAL_2026_10_19"
 MODEL = OLLAMA_FREE_CLOUD_MODEL
 MAX_OUTPUT_TOKENS = 640
 MAX_TRIAL_USD = Decimal("0.01")
@@ -156,6 +156,38 @@ def _assert_ok(response, expected: int | set[int] = 200) -> dict:
     return response.json()
 
 
+def _diagnose_schema_failure(database_url: str, job_id: str, selected_profile_version: str) -> None:
+    """Emit only bounded response-shape facts before the temp DB disappears."""
+    connection = connect(database_url)
+    try:
+        row = connection.execute("SELECT output_text FROM provider_attempts WHERE generation_job_id=? AND stage='narration'", (job_id,)).fetchone()
+        text_value = str(row["output_text"] or "") if row else ""
+    finally:
+        connection.close()
+    parsed = None
+    try:
+        parsed = json.loads(text_value)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        pass
+    fenced = "```" in text_value
+    root_keys = sorted(parsed.keys()) if isinstance(parsed, dict) else []
+    allowlist = {"segments", "type", "kind", "text", "message", "content"}
+    segments = parsed.get("segments") if isinstance(parsed, dict) else None
+    segment_items = segments if isinstance(segments, list) else []
+    valid_kinds = {"narration", "dialogue"}
+    kinds = [item.get("kind") for item in segment_items if isinstance(item, dict)]
+    dialogue = [item for item in segment_items if isinstance(item, dict) and item.get("kind") == "dialogue"]
+    attribution_match = [item.get("profile_version_id") == selected_profile_version for item in dialogue if isinstance(item, dict) and "profile_version_id" in item]
+    print("SCHEMA DIAGNOSTIC:", json.dumps({
+        "has_text": bool(text_value), "length": len(text_value), "json_valid": parsed is not None,
+        "fenced": fenced, "root_keys": [key for key in root_keys if key in allowlist],
+        "unknown_root_key_count": len([key for key in root_keys if key not in allowlist]),
+        "segment_kind_valid": bool(segment_items) and all(kind in valid_kinds for kind in kinds),
+        "dialogue_count": len(dialogue),
+        "selected_attribution_match": bool(attribution_match) and all(attribution_match),
+    }, sort_keys=True))
+
+
 def _create_app(root: Path, *, transport: OfflineProviderTransport | None = None, live: bool = False, guard: DispatchGuard | None = None):
     frontend = root / "frontend"
     frontend.mkdir(exist_ok=True)
@@ -244,6 +276,8 @@ def _run_app_flow_impl(*, offline: bool, state: TrialState | None = None) -> tup
             job = _poll_job(client, job["id"])
             if job.get("status") != "candidate":
                 if state: state.failure_code = (job.get("failure") or {}).get("code")
+                if (job.get("failure") or {}).get("code") == "SCHEMA_INVALID":
+                    _diagnose_schema_failure(app.state.database_url, job["id"], expected_npc_version)
                 raise RuntimeError(f"generation stopped before candidate: {job.get('failure', {}).get('code', 'unknown')}")
             output = job.get("output_segments") or []
             if not any(segment.get("character_id") == NPC_ID and segment.get("profile_version_id") == expected_npc_version for segment in output):
