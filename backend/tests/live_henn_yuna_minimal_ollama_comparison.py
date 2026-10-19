@@ -62,7 +62,7 @@ def reserve(model_label: str) -> Decimal:
 
 
 def safe_excerpt(text: str) -> str:
-    return re.sub(r"[\\x00-\\x1f\\x7f]", " ", text)[:1800]
+    return re.sub(r"[\x00-\x1f\x7f]", " ", text)[:1800]
 
 
 def _gate_contract() -> None:
@@ -72,10 +72,10 @@ def _gate_contract() -> None:
         assert model in OLLAMA_CLOUD_MODELS
         assert OLLAMA_CLOUD_MODELS[model]["api_model"] in {"gemma4:31b", "gpt-oss:120b"}
     # The exact fenced Gemma JSON format is accepted by production's parser.
-    raw = '```json\\n{"segments":[{"kind":"narration","text":"Yuna cười."},' + (
+    raw = '```json\n{"segments":[{"kind":"narration","text":"Yuna cười."},' + (
         '{"kind":"dialogue","text":"Mai tập nhé!",'
         '"character_id":"npc-yuna-test-public","profile_version_id":"yuna-profile-test-v1"}]'
-        '}\\n```'
+        '}\n```'
     )
     display, segments = parse_narrator_payload(raw, CAST)
     assert len(segments) == 2 and "Mai tập nhé!" in display
@@ -85,9 +85,9 @@ def _gate_contract() -> None:
 def _agency_warnings(text: str, action: str) -> list[str]:
     # Heuristic reviewer hints only; not an authoritative semantic detector.
     patterns = {
-        "new_Henn_thought": r"Henn[^.!?\\n]{0,100}(?:nghĩ thầm|thầm nghĩ|chợt nhận ra|tự nhủ)",
-        "new_Henn_unrelated_action": r"Henn[^.!?\\n]{0,100}(?:đứng dậy|bước ra|rời phòng|ngủ thiếp)",
-        "Yuna_physical_teleport": r"Yuna[^.!?\\n]{0,120}(?:bước vào phòng Henn|ngồi xuống cạnh Henn|đứng sau lưng Henn)",
+        "new_Henn_thought": r"Henn[^.!?\n]{0,100}(?:nghĩ thầm|thầm nghĩ|chợt nhận ra|tự nhủ)",
+        "new_Henn_unrelated_action": r"Henn[^.!?\n]{0,100}(?:đứng dậy|bước ra|rời phòng|ngủ thiếp)",
+        "Yuna_physical_teleport": r"Yuna[^.!?\n]{0,120}(?:bước vào phòng Henn|ngồi xuống cạnh Henn|đứng sau lưng Henn)",
     }
     return [name for name, pat in patterns.items()
             if re.search(pat, text, re.I) and not re.search(pat, action, re.I)]
