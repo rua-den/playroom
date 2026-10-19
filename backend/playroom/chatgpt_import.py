@@ -18,12 +18,17 @@ from .timeline import _create_committed_revision_in_transaction
 from .timeline import get_branch_head
 
 MAX_SOURCE_BYTES = 20 * 1024 * 1024
-MAX_NODES = 6000
-MAX_TURNS = 1500
+MAX_NODES = 12000
+MAX_TURNS = 5000
+IMPORT_CHUNK_TURNS = 100
 
 
 def import_review(connection: sqlite3.Connection, owner_id: str, campaign_id: str, current_checkpoint_id: str | None = None) -> dict:
-    source = connection.execute("SELECT source_conversation_id, paired_turns, warnings_json, skipped_messages FROM chatgpt_import_sources WHERE owner_id=? AND campaign_id=?", (owner_id, campaign_id)).fetchone()
+    source = connection.execute(
+        "SELECT source_conversation_id, paired_turns, warnings_json, skipped_messages, "
+        "import_status, imported_turns FROM chatgpt_import_sources WHERE owner_id=? AND campaign_id=?",
+        (owner_id, campaign_id),
+    ).fetchone()
     legacy = connection.execute(
         "SELECT canon_count, event_count, excerpt_count, warnings_json, selected_source_json FROM legacy_import_sources WHERE owner_id=? AND campaign_id=?",
         (owner_id, campaign_id),
@@ -83,7 +88,15 @@ def import_review(connection: sqlite3.Connection, owner_id: str, campaign_id: st
         skipped = source["skipped_messages"]
         if skipped is None:
             warnings = [*warnings, "Skipped-message count unavailable for this legacy import"]
-        source_meta = {"source_conversation_id": source["source_conversation_id"], "paired_turns": source["paired_turns"], "skipped_messages": skipped, "skipped_messages_known": skipped is not None, "warnings": sorted(set(warnings))}
+        source_meta = {
+            "source_conversation_id": source["source_conversation_id"],
+            "paired_turns": source["paired_turns"],
+            "import_status": source["import_status"],
+            "imported_turns": source["imported_turns"],
+            "skipped_messages": skipped,
+            "skipped_messages_known": skipped is not None,
+            "warnings": sorted(set(warnings)),
+        }
     row = connection.execute("SELECT source_checkpoint_id, approved_checkpoint_id, review_json, approved_at FROM import_review_checkpoints WHERE owner_id=? AND campaign_id=?", (owner_id, campaign_id)).fetchone()
     if row is None:
         return {"required": source is not None or legacy is not None, "approved": source is None and legacy is None, "approved_checkpoint_id": None, "review": {}, **source_meta}
@@ -300,53 +313,171 @@ def _validated_config(config: dict, owner_id: str, source_id: str) -> tuple[str,
     return title.strip(), world, persona, normalized
 
 
+def _import_progress(row: sqlite3.Row, *, already_imported: bool, resumed: bool) -> dict:
+    total = int(row["paired_turns"])
+    imported = int(row["imported_turns"])
+    complete = row["import_status"] == "complete"
+    return {
+        "campaign_id": row["campaign_id"],
+        "branch_id": row["branch_id"],
+        "turn_count": total,
+        "imported_turns": imported,
+        "complete": complete,
+        "already_imported": already_imported,
+        "resumed": resumed,
+    }
+
+
 def import_conversation(connection: sqlite3.Connection, owner_id: str, source: dict, config: dict, import_key: str) -> dict:
+    """Import at most one bounded chunk and durably resume on repeated calls.
+
+    The selected source and normalized config are hashed together. A repeated
+    request with the same import key must match that hash; a new key carrying
+    the identical payload resumes the existing source instead of creating a
+    second campaign. Each chunk and its progress marker commit atomically.
+    """
     from .domain import require_uuid
+
     key = require_uuid(import_key, "import key")
     parsed = preview_conversation(source)
     title, world, persona, characters = _validated_config(config, owner_id, parsed["conversation_id"])
     original = _serialized_source(source)
-    config_json = json.dumps({"title": title, "world": world, "persona": persona, "characters": characters},
-                             ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    config_json = json.dumps(
+        {"title": title, "world": world, "persona": persona, "characters": characters},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
     digest = hashlib.sha256((original + "\n" + config_json).encode("utf-8")).hexdigest()
+    created_new = False
+
     with transaction(connection):
-        existing = connection.execute(
-            "SELECT campaign_id, branch_id, payload_hash, paired_turns FROM chatgpt_import_sources WHERE owner_id=? AND import_key=?",
+        row = connection.execute(
+            "SELECT campaign_id, branch_id, payload_hash, paired_turns, imported_turns, import_status "
+            "FROM chatgpt_import_sources WHERE owner_id=? AND import_key=?",
             (owner_id, key),
         ).fetchone()
-        if existing:
-            if existing["payload_hash"] != digest:
+        if row is not None:
+            if row["payload_hash"] != digest:
                 raise ValidationError("Import key was already used for a different payload")
-            return {"campaign_id": existing["campaign_id"], "branch_id": existing["branch_id"],
-                    "turn_count": existing["paired_turns"], "already_imported": True}
-        duplicate = connection.execute(
-            "SELECT campaign_id, branch_id, paired_turns FROM chatgpt_import_sources WHERE owner_id=? AND payload_hash=?",
-            (owner_id, digest),
-        ).fetchone()
-        if duplicate:
-            return {"campaign_id": duplicate["campaign_id"], "branch_id": duplicate["branch_id"],
-                    "turn_count": duplicate["paired_turns"], "already_imported": True}
-        created = create_campaign(connection, owner_id, title, world, [dict(c) for c in characters],
-                                  persona, _within_transaction=True)
-        version = 1
-        for turn in parsed["turns"]:
-            _create_committed_revision_in_transaction(
-                connection, created.id, created.initial_branch_id,
-                turn["action_text"], turn["narrative_text"],
-                expected_state_version=version,
+        else:
+            row = connection.execute(
+                "SELECT campaign_id, branch_id, payload_hash, paired_turns, imported_turns, import_status "
+                "FROM chatgpt_import_sources WHERE owner_id=? AND payload_hash=?",
+                (owner_id, digest),
+            ).fetchone()
+
+        if row is None:
+            created = create_campaign(
+                connection,
+                owner_id,
+                title,
+                world,
+                [dict(character) for character in characters],
+                persona,
+                _within_transaction=True,
             )
-            version += 1
-        connection.execute(
-            "INSERT INTO chatgpt_import_sources(id,owner_id,campaign_id,branch_id,import_key,payload_hash,source_conversation_id,selected_source_json,paired_turns,warnings_json,imported_at,skipped_messages) VALUES(?,?,?,?,?,?,?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),?)",
-            (str(uuid4()), owner_id, created.id, created.initial_branch_id, key, digest,
-             parsed["conversation_id"], original, len(parsed["turns"]),
-             json.dumps(parsed["warnings"], ensure_ascii=False), parsed["skipped_messages"]),
-        )
-        checkpoint = connection.execute("SELECT head_checkpoint_id FROM branches WHERE id=?", (created.initial_branch_id,)).fetchone()[0]
-        connection.execute(
-            "INSERT INTO import_review_checkpoints(campaign_id,owner_id,source_checkpoint_id,review_json,created_at) VALUES(?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
-            (created.id, owner_id, checkpoint, "{}"),
-        )
-    return {"campaign_id": created.id, "branch_id": created.initial_branch_id,
-            "turn_count": len(parsed["turns"]), "already_imported": False,
-            "skipped_messages": parsed["skipped_messages"], "warnings": parsed["warnings"]}
+            connection.execute(
+                "INSERT INTO chatgpt_import_sources("
+                "id,owner_id,campaign_id,branch_id,import_key,payload_hash,source_conversation_id,"
+                "selected_source_json,paired_turns,warnings_json,imported_at,skipped_messages,"
+                "import_status,imported_turns,import_updated_at"
+                ") VALUES(?,?,?,?,?,?,?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),?,"
+                "'importing',0,strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+                (
+                    str(uuid4()),
+                    owner_id,
+                    created.id,
+                    created.initial_branch_id,
+                    key,
+                    digest,
+                    parsed["conversation_id"],
+                    original,
+                    len(parsed["turns"]),
+                    json.dumps(parsed["warnings"], ensure_ascii=False),
+                    parsed["skipped_messages"],
+                ),
+            )
+            row = connection.execute(
+                "SELECT campaign_id, branch_id, payload_hash, paired_turns, imported_turns, import_status "
+                "FROM chatgpt_import_sources WHERE owner_id=? AND campaign_id=?",
+                (owner_id, created.id),
+            ).fetchone()
+            created_new = True
+
+    if row is None:
+        raise RuntimeError("ChatGPT import source was not created")
+    if int(row["paired_turns"]) != len(parsed["turns"]):
+        raise ValidationError("Stored import progress does not match the selected conversation")
+    if row["import_status"] == "complete":
+        result = _import_progress(row, already_imported=True, resumed=False)
+        result["skipped_messages"] = parsed["skipped_messages"]
+        result["warnings"] = parsed["warnings"]
+        return result
+
+    campaign_id = row["campaign_id"]
+    branch_id = row["branch_id"]
+    resumed = not created_new
+
+    with transaction(connection):
+        locked = connection.execute(
+            "SELECT campaign_id, branch_id, payload_hash, paired_turns, imported_turns, import_status "
+            "FROM chatgpt_import_sources WHERE owner_id=? AND campaign_id=?",
+            (owner_id, campaign_id),
+        ).fetchone()
+        if locked is None or locked["payload_hash"] != digest:
+            raise ValidationError("Stored import progress no longer matches the selected conversation")
+        if int(locked["paired_turns"]) != len(parsed["turns"]):
+            raise ValidationError("Stored import progress does not match the selected conversation")
+
+        if locked["import_status"] == "complete":
+            row = locked
+        else:
+            imported = int(locked["imported_turns"])
+            if imported < 0 or imported > len(parsed["turns"]):
+                raise ValidationError("Stored import progress is invalid")
+            stop = min(imported + IMPORT_CHUNK_TURNS, len(parsed["turns"]))
+            head = get_branch_head(connection, campaign_id, branch_id, owner_id)
+            version = head.state_version
+            for turn in parsed["turns"][imported:stop]:
+                _create_committed_revision_in_transaction(
+                    connection,
+                    campaign_id,
+                    branch_id,
+                    turn["action_text"],
+                    turn["narrative_text"],
+                    expected_state_version=version,
+                )
+                version += 1
+
+            complete = stop == len(parsed["turns"])
+            status = "complete" if complete else "importing"
+            connection.execute(
+                "UPDATE chatgpt_import_sources SET imported_turns=?, import_status=?, "
+                "import_updated_at=strftime('%Y-%m-%dT%H:%M:%fZ', 'now') "
+                "WHERE owner_id=? AND campaign_id=?",
+                (stop, status, owner_id, campaign_id),
+            )
+            if complete:
+                checkpoint = connection.execute(
+                    "SELECT head_checkpoint_id FROM branches WHERE id=?",
+                    (branch_id,),
+                ).fetchone()[0]
+                connection.execute(
+                    "INSERT OR IGNORE INTO import_review_checkpoints("
+                    "campaign_id,owner_id,source_checkpoint_id,review_json,created_at"
+                    ") VALUES(?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+                    (campaign_id, owner_id, checkpoint, "{}"),
+                )
+            row = connection.execute(
+                "SELECT campaign_id, branch_id, payload_hash, paired_turns, imported_turns, import_status "
+                "FROM chatgpt_import_sources WHERE owner_id=? AND campaign_id=?",
+                (owner_id, campaign_id),
+            ).fetchone()
+
+    if row is None:
+        raise RuntimeError("ChatGPT import progress disappeared")
+    result = _import_progress(row, already_imported=False, resumed=resumed)
+    result["skipped_messages"] = parsed["skipped_messages"]
+    result["warnings"] = parsed["warnings"]
+    return result
