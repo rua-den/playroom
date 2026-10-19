@@ -87,6 +87,10 @@ def _agency_warnings(text: str, action: str) -> list[str]:
     patterns = {
         "new_Henn_thought": r"Henn[^.!?\n]{0,100}(?:nghĩ thầm|thầm nghĩ|chợt nhận ra|tự nhủ)",
         "new_Henn_unrelated_action": r"Henn[^.!?\n]{0,100}(?:đứng dậy|bước ra|rời phòng|ngủ thiếp)",
+        "invented_Henn_emotion_or_decision": (
+            r"\bHenn\s+(?:cảm thấy|nở nụ cười|thở dài|gật đầu|lắc bút|"
+            r"tưởng tượng|mỉm cười|quyết định|chợt nhớ|tự nhủ)\b"
+        ),
         "Yuna_physical_teleport": r"Yuna[^.!?\n]{0,120}(?:bước vào phòng Henn|ngồi xuống cạnh Henn|đứng sau lưng Henn)",
     }
     return [name for name, pat in patterns.items()
