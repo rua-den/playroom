@@ -182,7 +182,7 @@ describe("authentication shell", () => {
     const trigger = screen.getByRole("button", { name: "Cài đặt" });
     await user.click(trigger);
     const dialog = await screen.findByRole("dialog", { name: "Cài đặt" });
-    expect(screen.getByRole("main").querySelector(".story-library")).toBeInTheDocument();
+    expect(screen.getByRole("main").querySelector(".story-library")).toHaveAttribute("aria-hidden", "true");
     expect(dialog.querySelector("button")).toHaveFocus();
     const focusable = Array.from(dialog.querySelectorAll<HTMLElement>("button, input, select, textarea, [href], [tabindex]:not([tabindex='-1'])"));
     focusable.at(-1)?.focus();

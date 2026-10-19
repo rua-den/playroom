@@ -244,8 +244,10 @@ describe("story library navigation and last-story persistence", () => {
     expect(await screen.findByRole("heading", { name: "Đêm mưa" })).toBeInTheDocument();
     first.unmount();
     vi.mocked(api.getCampaign).mockClear();
+    vi.mocked(api.listCampaigns).mockRejectedValueOnce(new Error("owner load failed"));
     render(<AppShell owner={{ id: "owner-b", email: "b@example.test" }} onLogout={() => undefined} />);
     expect(await screen.findByRole("heading", { name: "Thư viện truyện" })).toBeInTheDocument();
+    expect(screen.queryByText("Đêm mưa")).not.toBeInTheDocument();
     expect(api.getCampaign).not.toHaveBeenCalled();
   });
 
