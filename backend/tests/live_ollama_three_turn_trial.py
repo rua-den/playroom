@@ -87,9 +87,9 @@ def _quality_flags(segments: list[dict]) -> tuple[bool, bool, bool]:
     ))
     # A live gpt-oss:120b response invented walking to the drawer after the
     # player merely said they *would* check it. The motion can appear later
-    # in the same clause rather than immediately after the name.
+    # in the passage, even across a sentence boundary.
     agency = agency or bool(re.search(
-        r"\bLan\b[^.!?\n]{0,180}\b(?:rồi\s+)?(?:bước|chạy|rời|tiến)\s+(?:về|tới|đến|ra|vào)\b",
+        r"\bLan\b[\s\S]{0,220}\b(?:rồi\s+)?(?:bước|chạy|rời|tiến)\s+(?:về|tới|đến|ra|vào)\b",
         text, re.I,
     ))
     absent = any(s.get("character_id") != VY_ID for s in segments if s["kind"] == "dialogue")
