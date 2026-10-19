@@ -71,7 +71,7 @@ def migrate(connection: sqlite3.Connection) -> None:
         "UPDATE chatgpt_import_sources "
         "SET imported_turns=paired_turns, import_status='complete', "
         "import_updated_at=COALESCE(import_updated_at, imported_at) "
-        "WHERE imported_turns=0"
+        "WHERE import_status='complete' AND imported_turns=0"
     )
     columns = {row[1] for row in connection.execute("PRAGMA table_info(campaigns)")}
     if "archived_at" not in columns:
