@@ -1054,7 +1054,11 @@ def browser_synthetic_chat() -> None:
                     assert toast_box["x"] + toast_box["width"] <= viewport["width"]
                     assert toast_box["y"] + toast_box["height"] <= viewport["height"]
                     toast_z_index = toast_region.evaluate("(el) => Number.parseInt(getComputedStyle(el).zIndex, 10) || 0")
-                    overlay_z_index = page.locator(".mobile-overlay").evaluate("(el) => Number.parseInt(getComputedStyle(el).zIndex, 10) || 0")
+                    active_overlay = settings_dialog.locator(
+                        "xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), ' mobile-overlay ')]"
+                    )
+                    assert active_overlay.count() == 1, "Settings dialog must have one active modal backdrop"
+                    overlay_z_index = active_overlay.evaluate("(el) => Number.parseInt(getComputedStyle(el).zIndex, 10) || 0")
                     toast_center_is_topmost = success_toast.evaluate(
                         """(el) => {
                           const box = el.getBoundingClientRect();
