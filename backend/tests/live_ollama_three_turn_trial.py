@@ -82,7 +82,7 @@ def _quality_flags(segments: list[dict]) -> tuple[bool, bool, bool]:
     # Do NOT flag Lan opening/looking/placing the box: those are the user's
     # original actions. Flag NEW player choices and motions not in the prompt.
     agency = bool(re.search(
-        r"Lan\s+(?:nghĩ|quyết định|tự nhủ|bước|chạy|rời|hứa|đồng ý|đáp|nói|cười|gật đầu)",
+        r"Lan\s+(?:nghĩ|quyết định|tự nhủ|bắt đầu|bước|chạy|rời|hứa|đồng ý|đáp|nói|cười|gật đầu)",
         text, re.I,
     ))
     absent = any(s.get("character_id") != VY_ID for s in segments if s["kind"] == "dialogue")
