@@ -14,8 +14,11 @@ describe("GenerationComposer", () => {
   });
   it("explains synthetic demo behavior when demo mode is enabled", () => {
     render(<GenerationComposer ownerId="owner-1" projection={projection} profileId="profile-1" onCommitted={vi.fn()} demoMode />);
-    expect(screen.getByRole("status", { name: "Chế độ demo tổng hợp" })).toHaveTextContent("Phản hồi mẫu có thể lặp lại");
-    expect(screen.getByRole("status")).toHaveTextContent("model đã chọn không thay đổi demo");
+    const notice = screen.getByRole("status", { name: "Chế độ demo tổng hợp" });
+    expect(notice).toHaveClass("composer-runtime-notice");
+    expect(notice).toHaveTextContent("Phản hồi mẫu có thể lặp lại");
+    expect(notice).toHaveTextContent("Đổi model không gọi AI thật");
+    expect(notice).not.toHaveTextContent("Cài đặt");
   });
 
   it("does not show synthetic demo messaging by default", () => {

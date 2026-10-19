@@ -362,6 +362,18 @@ describe("story library navigation and last-story persistence", () => {
     expect(within(library).getByRole("button", { name: "Nhập Legacy Bundle" })).toBeInTheDocument();
   });
 
+  it("puts the selected story first in the library DOM without changing campaign order", async () => {
+    mockStories();
+    window.localStorage.setItem(lastStoryStorageKey("selected-first-owner"), "story-b");
+    const user = userEvent.setup();
+    render(<AppShell owner={{ id: "selected-first-owner", email: "owner@example.test" }} onLogout={() => undefined} />);
+    expect(await screen.findByRole("heading", { name: "Đêm mưa" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Thư viện truyện" }));
+    const titles = Array.from(document.querySelectorAll(".story-library-grid .story-card h2")).map((heading) => heading.textContent);
+    expect(titles).toEqual(["Đêm mưa", "Mùa hạ"]);
+    expect(summaries.map((item) => item.id)).toEqual(["story-a", "story-b"]);
+  });
+
   it("offers the context panel only after the selected story projection is ready", async () => {
     mockStories();
     let resolveProjection: (value: CampaignProjection) => void = () => undefined;
