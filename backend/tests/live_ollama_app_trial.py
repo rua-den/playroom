@@ -115,6 +115,12 @@ class OfflineProviderTransport:
             self.provider_posts += 1
             if self.provider_posts > 1:
                 raise RuntimeError("fixture observed more than one completion POST")
+            wire = json.loads(request.content)
+            serialized = json.dumps(wire, ensure_ascii=False)
+            if NPC_VERSION in serialized:
+                raise RuntimeError("offline wire contains invented NPC profile version")
+            if self.npc_profile_version not in serialized:
+                raise RuntimeError("offline wire omitted selected persisted NPC profile version")
             payload = json.dumps({"segments": [{"kind": "narration", "text": "Vy đặt tờ giấy xanh lên mặt bàn."}, {"kind": "dialogue", "text": "Có, ngay đây.", "character_id": NPC_ID, "profile_version_id": self.npc_profile_version}]}, ensure_ascii=False)
             frames = [{"choices": [{"delta": {"content": payload[:len(payload) // 2]}}]}, {"choices": [{"delta": {"content": payload[len(payload) // 2:]}}]}, {"choices": [{"finish_reason": "stop"}], "usage": {"prompt_tokens": 30, "completion_tokens": 28, "total_tokens": 58}}]
             body = "".join(f"data: {json.dumps(frame, ensure_ascii=False)}\n\n" for frame in frames) + "data: [DONE]\n\n"
@@ -211,7 +217,7 @@ def _run_app_flow_impl(*, offline: bool, state: TrialState | None = None) -> tup
         with TestClient(app, base_url="http://127.0.0.1") as client:
             if state: state.stage = "authenticated_setup"
             _assert_ok(client.post("/api/auth/login", json={"email": OWNER_EMAIL, "password": OWNER_PASSWORD}, headers=headers))
-            campaign = _assert_ok(client.post("/api/campaigns", json={"title": "Synthetic Ollama app trial", "world": {"name": "Quiet library", "public_canon": "A blue paper is waiting."}, "characters": [{"id": NPC_ID, "name": "Vy", "profile_version_id": NPC_VERSION, "present": True}], "persona": {"name": "Lan", "player_controlled": True}}, headers=headers), 201)
+            campaign = _assert_ok(client.post("/api/campaigns", json={"title": "Synthetic Ollama app trial", "world": {"name": "Quiet library", "public_canon": "A blue paper is waiting."}, "characters": [{"id": NPC_ID, "name": "Vy", "present": True}], "persona": {"name": "Lan", "player_controlled": True}}, headers=headers), 201)
             credential = _assert_ok(client.post("/api/provider/credentials", json={"secret": FIXTURE_KEY if offline else os.environ["OLLAMA_API_KEY"]}, headers=headers), 201)
             profile = _assert_ok(client.post("/api/provider/profiles/verify", json={"provider": "ollama", "credential_id": credential["id"], "model": MODEL, "endpoint": OLLAMA_CLOUD_ENDPOINT}, headers=headers), 201)
             if profile.get("model") != OLLAMA_FREE_CLOUD_API_MODEL or profile.get("free_starter_eligible") is not True:
