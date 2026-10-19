@@ -138,7 +138,7 @@ label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) { display:
 .theme-selector select { width: 100%; border: 1px solid #5b5145; border-radius: 12px; padding: 0 12px; color: #fff; background: #151311; }
 .composer-starters { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; }
 .composer-starters .quiet-button { min-height: 44px; }
-:root[data-theme="light"] { color: #2b241e; background: #f7f1e8; }
+:root[data-theme="light"] { --line: #b7a795; --muted: #6d5c4d; color: #2b241e; background: #f7f1e8; }
 :root[data-theme="light"] body { background: radial-gradient(circle at 75% 10%, #fff 0, #f1e7d8 42rem); }
 :root[data-theme="light"] .story-column, :root[data-theme="light"] .details-column { color: #332a23; }
 :root[data-theme="light"] .generation-composer form > textarea, :root[data-theme="light"] .generation-composer [aria-label="Bản nháp kể chuyện"], :root[data-theme="light"] .theme-selector select { color: #2b241e; background: #fffaf3; border-color: #b7a795; }
@@ -148,7 +148,7 @@ label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) { display:
 :root[data-theme="light"] .markdown-content { color: #3d3026; }
 :root[data-theme="light"] .details-meta, :root[data-theme="light"] .profile-block p { color: #6d5c4d; }
 @media (prefers-color-scheme: light) {
-  :root:not([data-theme]) { color: #2b241e; background: #f7f1e8; }
+  :root:not([data-theme]) { --line: #b7a795; --muted: #6d5c4d; color: #2b241e; background: #f7f1e8; }
   :root:not([data-theme]) body { background: radial-gradient(circle at 75% 10%, #fff 0, #f1e7d8 42rem); }
   :root:not([data-theme]) .generation-composer form > textarea, :root:not([data-theme]) .generation-composer [aria-label="Bản nháp kể chuyện"] { color: #2b241e; background: #fffaf3; border-color: #b7a795; }
   :root:not([data-theme]) .campaign-controls select { color: #2b241e; background: #fffaf3; border-color: #b7a795; }

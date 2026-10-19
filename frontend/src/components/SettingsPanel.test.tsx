@@ -4,6 +4,19 @@ import { describe, expect, it, vi } from "vitest";
 import { SettingsPanel } from "./SettingsPanel";
 
 describe("SettingsPanel", () => {
+  it("keeps the independent demo note across prop changes and settings saves", async () => {
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ mode: "economy", policy: "free_only", confirmed_usd_cap: null, roles: {}, budgets: { narrator: { input_limit: 12000, requested_output: 4000, wrapper_buffer: 512 } } }), { status: 200 }))
+      .mockResolvedValue(new Response(JSON.stringify({ mode: "economy", policy: "free_only", confirmed_usd_cap: null, roles: {}, budgets: { narrator: { input_limit: 12000, requested_output: 4000, wrapper_buffer: 512 } } }), { status: 200 })));
+    const view = render(<SettingsPanel demoMode={false} />);
+    await screen.findByRole("heading", { name: "Cài đặt provider" });
+    view.rerender(<SettingsPanel demoMode />);
+    expect(screen.getByRole("note", { name: "Chế độ demo tổng hợp" })).toHaveTextContent("không thay đổi demo");
+    view.rerender(<SettingsPanel demoMode={false} />);
+    expect(screen.queryByRole("note", { name: "Chế độ demo tổng hợp" })).not.toBeInTheDocument();
+  });
   it("stores a credential once, clears the secret input, and only renders masked credentials", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify([{ id: "cred-1", masked: "sk-••••1234" }]), { status: 200 }))
