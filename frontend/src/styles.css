@@ -1,4 +1,6 @@
 :root {
+  --line: #4d453a;
+  --muted: #aaa093;
   color: #f6f1e9;
   background: #171614;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -6,7 +8,7 @@
 }
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; background: radial-gradient(circle at 75% 10%, #3a3025 0, #171614 42rem); }
-button, input { font: inherit; }
+button, input, textarea, select { font: inherit; }
 button { cursor: pointer; }
 .loading-screen { min-height: 100vh; display: grid; place-items: center; color: #cec4b4; }
 .auth-layout { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
@@ -19,8 +21,10 @@ h1 { margin-bottom: 12px; font-family: Georgia, serif; font-size: clamp(32px, 8v
 .auth-intro, .welcome-copy p, .empty-state p { color: #c2b8aa; line-height: 1.65; }
 .auth-form { display: grid; gap: 10px; margin-top: 30px; }
 label { color: #e4dbce; font-size: 13px; font-weight: 650; }
-input { width: 100%; min-height: 48px; border: 1px solid #5b5145; border-radius: 12px; padding: 0 14px; color: #fff; background: #151311; outline: none; }
-input:focus { border-color: #d79771; box-shadow: 0 0 0 3px #d7977133; }
+input:not([type="checkbox"]):not([type="radio"]) { width: 100%; min-height: 48px; border: 1px solid #5b5145; border-radius: 12px; padding: 0 14px; color: #fff; background: #151311; outline: none; }
+input:not([type="checkbox"]):not([type="radio"]):focus, textarea:focus, select:focus { border-color: #d79771; box-shadow: 0 0 0 3px #d7977133; }
+input[type="checkbox"], input[type="radio"] { width: 18px; min-width: 18px; height: 18px; min-height: 18px; margin: 0; padding: 0; accent-color: #c98257; }
+label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) { display: flex; align-items: center; gap: .55rem; min-height: 44px; }
 .primary-button, .quiet-button { min-height: 46px; border-radius: 12px; border: 1px solid transparent; font-weight: 700; }
 .primary-button { margin-top: 12px; color: #211814; background: #db9368; }
 .primary-button:disabled { cursor: wait; opacity: .65; }
@@ -79,13 +83,17 @@ input:focus { border-color: #d79771; box-shadow: 0 0 0 3px #d7977133; }
 .generation-composer { max-width: 760px; margin-top: 2rem; position: sticky; bottom: 14px; z-index: 2; padding: 14px; border: 1px solid #4d453a; border-radius: 18px; background: #211d19; box-shadow: 0 12px 32px #08070666; }
 .generation-composer form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: end; }
 .generation-composer form > label { grid-column: 1 / -1; }
+.generation-composer form > .composer-hint { grid-column: 1 / -1; margin: -4px 0 2px; color: var(--muted, #aaa093); font-size: 13px; line-height: 1.45; }
 .generation-composer form > textarea,
 .generation-composer [aria-label="Bản nháp kể chuyện"] {
   width: 100%; min-width: 0; min-height: 88px; resize: vertical; border: 1px solid #5b5145; border-radius: 12px; padding: 12px 14px; color: #fff; background: #151311; font: inherit;
 }
+.generation-composer form > textarea { grid-column: 1; }
 .generation-composer form > .primary-button { grid-column: 2; margin-top: 0; white-space: nowrap; }
 .generation-composer [aria-label="Trạng thái lượt kể"] > div { display: flex; flex-wrap: wrap; gap: 10px; }
 .generation-composer [aria-label="Trạng thái lượt kể"] > div > button { flex: 1 1 140px; margin-top: 0; }
+.demo-runtime-notice { display: grid; gap: 4px; margin-bottom: 12px; padding: 10px 12px; border: 1px solid #8f6a4d; border-radius: 12px; color: #e8d8c6; background: #473323; font-size: 13px; line-height: 1.45; }
+.demo-runtime-notice strong { color: #ffd2ad; }
 @media (max-width: 800px) { .workspace-grid { display: block; margin-top: 24px; } .campaign-nav, .details-column { display: none; } .topbar { align-items: center; } .wordmark { flex: 1 1 auto; min-width: 0; } .account-email { display: none; } .campaign-controls { order: 3; width: 100%; } .campaign-controls select { flex: 1; width: auto; } .topbar .context-trigger { display: none; } .mobile-actions { display: flex; gap: 10px; margin-top: 24px; } .mobile-campaign-trigger { display: none; } .story-column { margin-top: 32px; } .context-overlay { align-items: flex-end; justify-content: initial; padding: 16px 16px calc(16px + env(safe-area-inset-bottom)); } .context-overlay .context-panel { width: min(100%, 420px); height: auto; max-height: 88vh; border-radius: 18px 18px 0 0; } }
 .topbar { max-width: 1240px; margin: auto; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px 16px; }
 .wordmark { display: flex; align-items: center; gap: 10px; font-family: Georgia, serif; font-size: 21px; }
@@ -125,11 +133,12 @@ input:focus { border-color: #d79771; box-shadow: 0 0 0 3px #d7977133; }
 .settings-panel textarea {
   min-height: 44px;
 }
+.settings-panel input[type="checkbox"], .settings-panel input[type="radio"] { width: 18px; min-width: 18px; height: 18px; min-height: 18px; padding: 0; }
 .theme-selector { display: grid; gap: 8px; margin: 0 0 18px; }
 .theme-selector select { width: 100%; border: 1px solid #5b5145; border-radius: 12px; padding: 0 12px; color: #fff; background: #151311; }
 .composer-starters { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; }
 .composer-starters .quiet-button { min-height: 44px; }
-:root[data-theme="light"] { color: #2b241e; background: #f7f1e8; }
+:root[data-theme="light"] { --line: #b7a795; --muted: #6d5c4d; color: #2b241e; background: #f7f1e8; }
 :root[data-theme="light"] body { background: radial-gradient(circle at 75% 10%, #fff 0, #f1e7d8 42rem); }
 :root[data-theme="light"] .story-column, :root[data-theme="light"] .details-column { color: #332a23; }
 :root[data-theme="light"] .generation-composer form > textarea, :root[data-theme="light"] .generation-composer [aria-label="Bản nháp kể chuyện"], :root[data-theme="light"] .theme-selector select { color: #2b241e; background: #fffaf3; border-color: #b7a795; }
@@ -139,7 +148,7 @@ input:focus { border-color: #d79771; box-shadow: 0 0 0 3px #d7977133; }
 :root[data-theme="light"] .markdown-content { color: #3d3026; }
 :root[data-theme="light"] .details-meta, :root[data-theme="light"] .profile-block p { color: #6d5c4d; }
 @media (prefers-color-scheme: light) {
-  :root:not([data-theme]) { color: #2b241e; background: #f7f1e8; }
+  :root:not([data-theme]) { --line: #b7a795; --muted: #6d5c4d; color: #2b241e; background: #f7f1e8; }
   :root:not([data-theme]) body { background: radial-gradient(circle at 75% 10%, #fff 0, #f1e7d8 42rem); }
   :root:not([data-theme]) .generation-composer form > textarea, :root:not([data-theme]) .generation-composer [aria-label="Bản nháp kể chuyện"] { color: #2b241e; background: #fffaf3; border-color: #b7a795; }
   :root:not([data-theme]) .campaign-controls select { color: #2b241e; background: #fffaf3; border-color: #b7a795; }
@@ -165,6 +174,8 @@ input:focus { border-color: #d79771; box-shadow: 0 0 0 3px #d7977133; }
 :root[data-theme="light"] .campaign-item:hover, :root[data-theme="light"] .campaign-item.selected { color: #2b241e; border-color: #c6aa90; background: #eadbc9; }
 :root[data-theme="light"] .mobile-drawer, :root[data-theme="light"] .mobile-sheet, :root[data-theme="light"] .create-card, :root[data-theme="light"] .story-empty, :root[data-theme="light"] .empty-campaign { color: #332a23; background: #fffaf3; border-color: #c6b6a5; }
 :root[data-theme="light"] .form-error { color: #8d2f27; background: #f9e0dc; border-color: #c8786d; }
+:root[data-theme="light"] .demo-runtime-notice { color: #543b2b; background: #fff0df; border-color: #c89668; }
+:root[data-theme="light"] .demo-runtime-notice strong { color: #543b2b; }
 :root[data-theme="light"] .auth-card { color: #332a23; background: #fffaf3; border-color: #c6b6a5; box-shadow: 0 24px 80px #8f7b6655; }
 :root[data-theme="light"] .auth-card h1, :root[data-theme="light"] .auth-card h2, :root[data-theme="light"] .auth-card label { color: #2b241e; }
 :root[data-theme="light"] .auth-card input { color: #2b241e; background: #fff; border-color: #b7a795; }

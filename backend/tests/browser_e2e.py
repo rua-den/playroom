@@ -343,7 +343,8 @@ def browser_synthetic_chat() -> None:
 
                 expect(page.get_by_role("heading", name="Thử nghiệm sân bóng")).to_be_visible(timeout=15000)
                 expect(page.get_by_role("button", name="Gửi", exact=True)).to_have_count(1)
-                expect(page.get_by_text("Chế độ demo tổng hợp")).to_be_visible()
+                expect(page.locator(".demo-badge")).to_be_visible()
+                expect(page.locator(".generation-composer .demo-runtime-notice")).to_be_visible()
                 expect(page.get_by_text("Dùng **...** cho hành động hoặc suy nghĩ;", exact=False)).to_be_visible()
                 campaign = app.state.generation_provider
                 assert campaign.stage_counts == {}
@@ -355,6 +356,13 @@ def browser_synthetic_chat() -> None:
 
                 # IME composition must never submit early. Shift+Enter is
                 # reserved for inserting an in-field newline, not Send.
+                for viewport_width in (757, 375):
+                    page.set_viewport_size({"width": viewport_width, "height": 780})
+                    composer_box = page.locator(".generation-composer").bounding_box()
+                    textarea_box = page.locator(".generation-composer form > textarea").bounding_box()
+                    assert composer_box and textarea_box
+                    assert textarea_box["width"] >= composer_box["width"] * 0.60, (viewport_width, composer_box, textarea_box)
+                    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
                 compose = page.get_by_role("textbox", name="Hành động tiếp theo")
                 compose.fill("Đang nhập tiếng Việt")
                 compose.evaluate(
@@ -771,6 +779,13 @@ def browser_synthetic_chat() -> None:
                 expect(page.get_by_text("3 mục nguồn đang chờ duyệt", exact=False)).to_be_visible(timeout=12000)
                 checks = page.locator(".import-review-panel input[type=checkbox]")
                 expect(checks).to_have_count(5)
+                for viewport_width in (757, 375):
+                    page.set_viewport_size({"width": viewport_width, "height": 780})
+                    for index in range(checks.count()):
+                        box = checks.nth(index).bounding_box()
+                        label_box = checks.nth(index).locator("xpath=..").bounding_box()
+                        assert box and box["width"] <= 24 and box["height"] <= 24
+                        assert label_box and label_box["height"] >= 44
                 for index in range(5):
                     checks.nth(index).check()
                 page.get_by_role("button", name=re.compile("Duy.*Send")).click()
