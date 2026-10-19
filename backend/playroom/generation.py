@@ -510,6 +510,17 @@ class GenerationService:
             "Player controls actions and thoughts. Do not force A/B choices, quests, stats, or other game mechanics. "
             "No invented canon"
         )
+        if not profile.get("is_test_profile") and profile.get("legacy_plain_output"):
+            # This provider mode has no structured-output contract. Keep the
+            # explicit agency rule without breaking tight preflight budgets.
+            system = (
+                "Continue Vietnamese using supplied context. Respect canon; committed raw turns override summaries. "
+                "Exclude pending, foreign, rejected and future facts. known_by means knowledge, not presence. "
+                "Respect scenes, character voice and player choices. Only selected NPCs may speak. "
+                "React to latest player input with grounded consequences. "
+                "Never narrate new actions, dialogue, thoughts, or decisions for the player persona. "
+                "Do not force A/B choices, quests, stats, or other game mechanics. No invented canon"
+            )
         if not profile.get("is_test_profile") and not profile.get("legacy_plain_output"):
             # This is a narrator *application* contract even if the provider
             # cannot enforce a native JSON schema (e.g. Ollama Cloud). Keep
