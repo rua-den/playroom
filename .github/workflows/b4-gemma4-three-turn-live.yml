@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: b4-2026-10-15-three-turns-synthetic
+  group: b4-2026-10-19-owner-authorized-three-turns-synthetic
   cancel-in-progress: false
 
 jobs:
@@ -36,7 +36,7 @@ jobs:
 
   three-turns:
     if: >-
-      ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && startsWith(github.event.head_commit.message, 'ci(ollama): run bounded Gemma4 three-turn trial after risk guard fix') }}
+      ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && startsWith(github.event.head_commit.message, 'ci(ollama): owner three round verification 2026-10-19') }}
     needs: offline-contract
     runs-on: ubuntu-latest
     timeout-minutes: 8
