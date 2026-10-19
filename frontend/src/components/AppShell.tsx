@@ -126,7 +126,7 @@ function AppShellContent({ owner, onLogout, notice }: AppShellProps) {
     </header>
     {notice && <div role="alert" className="form-error shell-notice" aria-hidden={drawerOpen || detailsOpen || settingsOpen || createOpen || importOpen}> {notice}</div>}
     {error && !campaigns.length && <a className="catalog-retry" href="/">Thử lại</a>}
-    <>{libraryOpen && library}{error && libraryOpen && <div role="alert" className="form-error shell-notice">{error}</div>}<div className={libraryOpen ? "library-story-hidden" : ""} aria-hidden={libraryOpen} hidden={libraryOpen}>
+    <>{libraryOpen && library}{error && libraryOpen && <div role="alert" className="form-error shell-notice">{error}</div>}<div className={libraryOpen ? "library-story-hidden" : "story-workspace"} aria-hidden={libraryOpen} hidden={libraryOpen}>
       <div className="mobile-actions" aria-hidden={libraryOpen || drawerOpen || detailsOpen || settingsOpen || createOpen || importOpen}>
         <button type="button" className="quiet-button touch-target mobile-campaign-trigger" onClick={() => setDrawerOpen(true)} ref={drawerTrigger}>Truyện và tác vụ</button>
         <button type="button" className="quiet-button touch-target" onClick={openDetails}>AI đang nhớ gì</button>

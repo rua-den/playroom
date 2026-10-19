@@ -60,7 +60,7 @@ h3 { font-size: 18px; line-height: 1.35; font-weight: 620; }
 .wordmark { display: flex; flex: 0 0 auto; align-items: center; gap: 11px; font-size: 18px; font-weight: 700; letter-spacing: -.02em; }
 .brand-mark { width: 46px; height: 46px; display: grid; place-items: center; margin-bottom: 22px; border: 1px solid color-mix(in srgb, var(--accent) 60%, transparent); border-radius: 14px; color: var(--accent); background: var(--inset); font-size: 24px; }
 .brand-mark.small { width: 34px; height: 34px; margin: 0; border-radius: 11px; font-size: 18px; }
-.demo-badge { padding: 5px 9px; border-radius: 999px; color: var(--text); background: var(--inset); font-size: 12px; font-weight: 600; }
+.demo-badge { max-width: 100%; padding: 5px 9px; border-radius: 999px; color: var(--text); background: var(--inset); font-size: 12px; font-weight: 600; overflow-wrap: anywhere; white-space: normal; }
 .campaign-controls { min-width: 0; display: flex; align-items: center; gap: 8px; flex: 1 1 auto; }
 .campaign-controls label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .campaign-controls select, .theme-selector select { min-width: 0; min-height: 44px; padding: 0 34px 0 12px; border: 1px solid var(--line); border-radius: 10px; color: var(--text); background: var(--inset); }
@@ -198,22 +198,24 @@ legend { padding: 0 6px; color: var(--accent); font-weight: 620; }
 @media (min-width: 1100px) {
   .story-app { display: grid; grid-template-columns: 224px minmax(0, 1fr); align-items: start; padding: 0 32px 64px 0; }
   .story-app > .topbar { grid-column: 1; grid-row: 1 / span 20; position: sticky; top: 0; height: 100dvh; min-height: 100vh; display: flex; flex-direction: column; align-items: stretch; gap: 24px; padding: 24px 18px; overflow-y: auto; border-right: 1px solid var(--line); border-bottom: 0; }
-  .story-app > .topbar .wordmark { margin-bottom: 4px; }
+  .story-app > .topbar .wordmark { max-width: 100%; flex-wrap: wrap; margin-bottom: 4px; }
   .story-app > .topbar .campaign-controls { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; align-content: start; }
   .story-app > .topbar .campaign-controls > * { width: 100%; min-width: 0; text-align: left; }
   .story-app > .topbar .campaign-controls > select { padding-right: 8px; }
   .story-app > .topbar .campaign-quick-list { display: grid; max-height: 32vh; overflow-y: auto; padding-top: 8px; border-top: 1px solid var(--line); }
   .story-app > .topbar .account-menu { display: grid; align-items: stretch; justify-content: stretch; gap: 8px; margin-top: auto; }
   .story-app > .topbar .account-email { max-width: 100%; overflow-wrap: anywhere; white-space: normal; }
-  .story-app > .story-library, .story-app > .workspace-grid, .story-app > .shell-notice, .story-app > .catalog-retry, .story-app > .library-story-hidden { grid-column: 2; grid-row: 1; }
-  .story-app > .story-library, .story-app > .library-story-hidden { width: 100%; padding-left: 28px; }
+  .story-app > .story-library, .story-app > .workspace-grid, .story-app > .shell-notice, .story-app > .catalog-retry, .story-app > .library-story-hidden, .story-app > .story-workspace { grid-column: 2; }
+  .story-app > .story-library, .story-app > .library-story-hidden, .story-app > .story-workspace { width: 100%; padding-left: 28px; }
   .story-app > .shell-notice, .story-app > .catalog-retry { margin-left: 28px; }
   .story-app > .mobile-actions { display: none; }
   .app-modal .story-menu-actions { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (max-width: 1099px) {
   .story-app { display: block; }
-  .topbar { position: relative; }
+  .topbar { position: relative; flex-wrap: wrap; gap: 10px 16px; }
+  .campaign-controls { order: 3; flex-basis: 100%; flex-wrap: wrap; overflow: visible; }
+  .account-menu { max-width: 100%; flex-wrap: wrap; margin-left: auto; }
 }
 @media (max-width: 980px) {
   .app-shell { padding-right: 24px; padding-left: 24px; }
