@@ -143,6 +143,12 @@ def approve_import_review(connection: sqlite3.Connection, owner_id: str, campaig
     required = {"persona", "npc_voice_presence", "canon_known_by_narrator_only", "missing_history"}
     if not isinstance(review, dict) or not required.issubset(review) or any(review[key] is not True for key in required):
         raise ValidationError("Import review must cover persona, NPC presence, canon visibility and missing history")
+    source_progress = connection.execute(
+        "SELECT import_status FROM chatgpt_import_sources WHERE owner_id=? AND campaign_id=?",
+        (owner_id, campaign_id),
+    ).fetchone()
+    if source_progress is not None and source_progress["import_status"] != "complete":
+        raise StateConflict("ChatGPT import is still in progress")
     head = get_branch_head(connection, campaign_id, branch_id, owner_id)
     if head.checkpoint_id != expected_checkpoint_id:
         raise StateConflict("Import review checkpoint is stale")
