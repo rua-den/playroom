@@ -242,9 +242,33 @@ def _assert_mobile(page, width: int) -> None:
     expect(page.get_by_role("button", name="Gửi", exact=True)).to_be_visible()
     overflow = page.evaluate("document.documentElement.scrollWidth - window.innerWidth")
     assert overflow <= 1, f"Horizontal overflow at {width}px: {overflow}px"
-    # The current responsive UI uses the topbar campaign select; the
-    # legacy mobile-campaign drawer button is intentionally hidden in CSS.
-    expect(page.get_by_role("combobox", name="Truyện hiện tại")).to_be_visible()
+    if width <= 560:
+        management_trigger = page.get_by_role("button", name="Truyện và tác vụ", exact=True)
+        expect(management_trigger).to_be_visible()
+        management_trigger.click()
+        story_menu = page.get_by_role("dialog", name="Danh sách truyện")
+        expect(story_menu).to_be_visible()
+
+        current_title = page.locator(".story-column h1").inner_text()
+        selected_story = story_menu.locator("button[aria-pressed='true']")
+        expect(selected_story).to_have_count(1)
+        expect(selected_story).to_have_text(current_title)
+        story_items = story_menu.locator(".campaign-item")
+        assert story_items.count() >= 1, "The story menu must expose a selectable current story"
+        if story_items.count() > 1:
+            assert story_menu.locator("button[aria-pressed='false']").count() >= 1, (
+                "The story menu must expose another selectable story when available"
+            )
+        for label in ("Tạo truyện mới", "Nhập ChatGPT", "Nhập Legacy"):
+            action = story_menu.get_by_role("button", name=label, exact=True)
+            expect(action).to_be_visible()
+            expect(action).to_be_enabled()
+
+        story_menu.get_by_role("button", name="Đóng danh sách truyện", exact=True).click()
+        expect(story_menu).not_to_be_visible()
+        expect(management_trigger).to_be_focused()
+    else:
+        expect(page.get_by_role("combobox", name="Truyện hiện tại")).to_be_visible()
     if width == 390:
         page.get_by_role("button", name="AI đang nhớ gì").click()
         details = page.get_by_role("dialog", name="Hồ sơ và ký ức")
