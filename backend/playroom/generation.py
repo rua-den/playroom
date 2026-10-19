@@ -501,15 +501,26 @@ class GenerationService:
         native_schema_capable = bool(profile.get("structured_output") and profile.get("native_structured_output") and profile.get("structured_schema_parameter") in supported_parameters)
         narrator_schema = None if profile.get("is_test_profile") or profile.get("legacy_plain_output") or not native_schema_capable else NARRATOR_SCHEMA
         system = (
-            "Continue Vietnamese using supplied context. Respect canon; committed raw turns override summaries. "
-            "Exclude pending, foreign, rejected and future facts. known_by is knowledge, not presence. "
-            "Respect focus/parallel scenes, style and player choices. "
-            "Only selected_characters may speak; use their stable IDs for dialogue. "
-            "React to the latest player input; avoid generic atmosphere. "
-            "Advance with grounded reactions, consequences and character knowledge. "
-            "Never narrate new actions, dialogue, thoughts, or decisions for the player persona. Do not force A/B choices, quests, stats, or other game mechanics. "
+            "Continue Vietnamese using supplied context. Canon/invariants; later committed raw turns override summaries. "
+            "Exclude pending/foreign/rejected/future facts. Associations/known_by describe knowledge, not presence; narrator knowledge may differ from NPC. "
+            "Respect focus/parallel scenes; StyleProfile voice; player controls choices. "
+            "Use selected_characters only; never invent speakers. Dialogue only for selected chars; stable IDs character_id/profile_version_id; narration prose. "
+            "Respond to the latest player action or dialogue with eligible context. Avoid generic atmosphere-setting. "
+            "Advance with concrete reaction, consequence, or change when context supports it. Preserve selected voice/knowledge; plausibly present. "
+            "Player controls actions and thoughts. Do not force A/B choices, quests, stats, or other game mechanics. "
             "No invented canon"
         )
+        if not profile.get("is_test_profile") and profile.get("legacy_plain_output"):
+            # This provider mode has no structured-output contract. Keep the
+            # explicit agency rule without breaking tight preflight budgets.
+            system = (
+                "Continue Vietnamese using supplied context. Respect canon; committed raw turns override summaries. "
+                "Exclude pending, foreign, rejected and future facts. known_by means knowledge, not presence. "
+                "Respect scenes, character voice and player choices. Only selected NPCs may speak. "
+                "React to latest player input with grounded consequences. "
+                "Never narrate new actions, dialogue, thoughts, or decisions for the player persona. "
+                "Do not force A/B choices, quests, stats, or other game mechanics. No invented canon"
+            )
         if not profile.get("is_test_profile") and not profile.get("legacy_plain_output"):
             # This is a narrator *application* contract even if the provider
             # cannot enforce a native JSON schema (e.g. Ollama Cloud). Keep
