@@ -51,7 +51,7 @@ Agent đọc [AGENTS.md](AGENTS.md) trước khi thay đổi repo.
 - Backend: Python + FastAPI + Uvicorn; bộ chọn context, phiên bản truyện và AI provider adapter tách riêng.
 - Dữ liệu: SQLite trên thư mục lưu trữ bền, có nguồn dữ kiện và checkpoint của từng trạng thái.
 - Deploy: VPS hiện có của người dùng, qua **Caddy đang hoạt động**; Playroom có service, thư mục, database và subdomain riêng.
-- AI: OpenRouter là integration đầu tiên do người dùng chọn; model/role được cấu hình riêng. API key nhập ở máy/server, không dùng session ChatGPT làm API access.
+- AI: OpenRouter và Ollama Cloud có luồng xác minh riêng; Custom / OpenAI-compatible cho phép nhập URL, model ID và key tùy chọn. Custom dùng giới hạn token mặc định, chi phí/quota do endpoint quản lý và giá được ghi nhận là chưa biết. Model/role được cấu hình riêng; API key nhập ở máy/server, không dùng session ChatGPT làm API access. Xem [hướng dẫn cấu hình](BAT-DAU.md).
 - Domain dự kiến: https://play.nhkhuy.run.place; DNS/SSH/Caddy thực tế chưa được audit hay thay đổi.
 - Quality có AI hỗ trợ chọn context; economy giảm số call. Cả hai giữ nguyên dữ liệu/style, có free-only policy và không tự chuyển paid khi hết quota.
 
