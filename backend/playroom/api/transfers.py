@@ -12,7 +12,7 @@ import sqlite3
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict, StrictBool
 
-from ..chatgpt_import import MAX_SOURCE_BYTES, approve_import_review, import_conversation, import_review, preview_conversation
+from ..chatgpt_import import IMPORT_CHUNK_TURNS, MAX_SOURCE_BYTES, approve_import_review, import_conversation, import_review, preview_conversation
 from ..legacy_import import import_legacy_bundle, preview_legacy_bundle
 from ..db import request_connection
 from ..domain import Owner, ValidationError
@@ -73,6 +73,7 @@ async def import_chatgpt(
     result = import_conversation(
         connection, owner.id, payload["conversation"],
         payload.get("config"), payload.get("import_key"),
+        chunk_turns=IMPORT_CHUNK_TURNS,
     )
     result["review_required"] = import_review(connection, owner.id, result["campaign_id"])["required"]
     result["checkpoint_id"] = connection.execute("SELECT head_checkpoint_id FROM branches WHERE id=?", (result["branch_id"],)).fetchone()[0]
