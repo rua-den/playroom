@@ -79,7 +79,7 @@ SYSTEM = (
     "thinking or agreeing unless the player explicitly wrote it. An intention is not an action. "
     "Until chapter 176, the locker code B-17 must not appear in either narration or dialogue; "
     "even the narrator must preserve the mystery. "
-    "speaker or magical knowledge. Respond naturally to the LAST player action with a meaningful "
+    "Respond naturally to the LAST player action with a meaningful "
     "change or question. Aim for 140-260 Vietnamese words per reply where appropriate. "
     "The allowed present NPCs are supplied PER TURN. Their exact IDs and profile versions must be "
     "copied from selected_characters. Only those NPCs may speak; others cannot walk into the "
