@@ -8,7 +8,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 from playroom.auth import create_owner
-from playroom.chatgpt_import import import_conversation, import_review
+from playroom.chatgpt_import import IMPORT_CHUNK_TURNS, import_conversation, import_review
 from playroom.db import connect, migrate
 from playroom.projections import get_campaign_projection
 
@@ -68,7 +68,7 @@ def test_long_import_is_bounded_and_resumes_after_sqlite_restart(tmp_path):
     source = _conversation()
     key = str(uuid4())
 
-    first = import_conversation(db, owner.id, source, _config(), key)
+    first = import_conversation(db, owner.id, source, _config(), key, chunk_turns=IMPORT_CHUNK_TURNS)
     assert first["turn_count"] == PAIR_COUNT
     assert first["complete"] is False
     assert 0 < first["imported_turns"] < PAIR_COUNT
@@ -96,7 +96,7 @@ def test_long_import_is_bounded_and_resumes_after_sqlite_restart(tmp_path):
     result = first
     calls = 1
     while not result["complete"]:
-        result = import_conversation(db, owner.id, source, _config(), key)
+        result = import_conversation(db, owner.id, source, _config(), key, chunk_turns=IMPORT_CHUNK_TURNS)
         calls += 1
         assert result["campaign_id"] == campaign_id
         assert result["branch_id"] == branch_id
@@ -132,7 +132,7 @@ def test_same_payload_with_new_import_key_resumes_instead_of_creating_duplicate(
     migrate(db)
     owner = create_owner(db, "resume-new-key@example.test", "synthetic strong password")
     source = _conversation()
-    first = import_conversation(db, owner.id, source, _config(), str(uuid4()))
+    first = import_conversation(db, owner.id, source, _config(), str(uuid4()), chunk_turns=IMPORT_CHUNK_TURNS)
     assert first["complete"] is False
     campaign_id = first["campaign_id"]
     imported = first["imported_turns"]
@@ -140,7 +140,7 @@ def test_same_payload_with_new_import_key_resumes_instead_of_creating_duplicate(
 
     reopened = connect(path)
     migrate(reopened)
-    resumed = import_conversation(reopened, owner.id, source, _config(), str(uuid4()))
+    resumed = import_conversation(reopened, owner.id, source, _config(), str(uuid4()), chunk_turns=IMPORT_CHUNK_TURNS)
     assert resumed["campaign_id"] == campaign_id
     assert resumed["imported_turns"] > imported
     assert reopened.execute("SELECT COUNT(*) FROM campaigns WHERE owner_id=?", (owner.id,)).fetchone()[0] == 1
