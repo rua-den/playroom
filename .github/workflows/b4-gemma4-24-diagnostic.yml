@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: gemma4-24-independent-diagnostic-20261020
+  group: gemma4-24-plain-format-audit-20261020
   cancel-in-progress: false
 
 jobs:
@@ -38,7 +38,7 @@ jobs:
 
   gemma4-live:
     if: >-
-      ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && startsWith(github.event.head_commit.message, 'ci(ollama): gemma4 independent long trial diagnostic 2026-10-20') }}
+      ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && startsWith(github.event.head_commit.message, 'ci(ollama): gemma4 plain24 format audit 2026-10-20') }}
     needs: offline
     runs-on: ubuntu-latest
     timeout-minutes: 15
