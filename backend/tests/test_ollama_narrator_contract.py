@@ -172,11 +172,26 @@ def test_mocked_ollama_sse_creates_one_attributed_candidate_commit_and_no_replay
     assert db.execute("SELECT COUNT(*) FROM provider_attempts WHERE generation_job_id=?", (job["id"],)).fetchone()[0] == 1
 
 
+def test_mocked_ollama_accepts_complete_gemma_fenced_segments_and_commits(tmp_path):
+    db, owner, campaign, head, yuna, service, job, calls = _run_mocked_narrator(
+        tmp_path,
+        lambda cid, vid: _stream_response("```json\\n" + _valid_segments(cid, vid) + "\\n```"),
+        key="ollama-gemma-fenced",
+    )
+    assert job["status"] == "candidate"
+    assert job["draft"] == "Yuna đứng bên lưới, đợi câu trả lời.\\nTớ sẵn sàng."
+    assert job["output_segments"][1]["character_id"] == yuna
+    assert len(calls) == 1
+    assert service.commit_candidate(owner.id, job["id"])["status"] == "committed"
+    assert get_branch_head(db, campaign.id, campaign.initial_branch_id, owner.id).state_version == head.state_version + 1
+
+
 @pytest.mark.parametrize(
     ("invalid", "expected"),
     [
         ('Yuna cười và nói.', "SCHEMA_INVALID"),
-        ('```json\n{"segments": [{"kind": "narration", "text": "ok"}]}\n```', "SCHEMA_INVALID"),
+        ('```json\n{"segments": [{"kind": "narration", "text": "ok"}]}\n``` trailing', "SCHEMA_INVALID"),
+        ('```json\n{"segments": [{"kind": "narration", "text": "ok"}]}', "SCHEMA_INVALID"),
         ('{"segments":', "SCHEMA_INVALID"),
         ('{"segments": []}', "SCHEMA_INVALID"),
         ('{"segments": [{"kind": "dialogue", "text": "Sai", "character_id": "unknown", "profile_version_id": "v1"}]}', "SCHEMA_INVALID"),
