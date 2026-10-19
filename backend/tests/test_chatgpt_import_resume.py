@@ -142,9 +142,22 @@ def test_same_payload_with_new_import_key_resumes_instead_of_creating_duplicate(
 
     reopened = connect(path)
     migrate(reopened)
-    resumed = import_conversation(reopened, owner.id, source, _config(), str(uuid4()), chunk_turns=IMPORT_CHUNK_TURNS)
+    reset_config = _config()
+    reset_config["title"] = "Reloaded form title should not duplicate"
+    resumed = import_conversation(
+        reopened,
+        owner.id,
+        source,
+        reset_config,
+        str(uuid4()),
+        chunk_turns=IMPORT_CHUNK_TURNS,
+    )
     assert resumed["campaign_id"] == campaign_id
     assert resumed["imported_turns"] > imported
+    assert reopened.execute(
+        "SELECT title FROM campaigns WHERE id=?",
+        (campaign_id,),
+    ).fetchone()[0] == "Synthetic resumable import"
     assert reopened.execute("SELECT COUNT(*) FROM campaigns WHERE owner_id=?", (owner.id,)).fetchone()[0] == 1
     assert reopened.execute("SELECT COUNT(*) FROM chatgpt_import_sources WHERE owner_id=?", (owner.id,)).fetchone()[0] == 1
     reopened.close()
