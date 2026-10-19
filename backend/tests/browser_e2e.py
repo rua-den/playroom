@@ -446,40 +446,6 @@ def browser_synthetic_chat() -> None:
 
                 # Reload loads the API-created catalog and restores A from
                 # localStorage before opening the library.
-                """
-                page.reload(wait_until="domcontentloaded")
-                expect(page.get_by_role("heading", name="Thá»­ nghiá»‡m sÃ¢n bÃ³ng")).to_be_visible(timeout=15000)
-                page.get_by_role("button", name="ThÆ° viá»‡n truyá»‡n").click()
-                expect(page.get_by_role("heading", name="ThÆ° viá»‡n truyá»‡n")).to_be_visible(timeout=12000)
-                page.set_viewport_size({"width": 757, "height": 900})
-                page.screenshot(path=str(screenshot_dir / "library-757.png"), full_page=True)
-                page.set_viewport_size({"width": 375, "height": 812})
-                page.screenshot(path=str(screenshot_dir / "library-375.png"), full_page=True)
-
-                second_card = page.locator("article").filter(has_text="Synthetic history B")
-                expect(second_card).to_have_count(1)
-                second_card.get_by_role("button", name="Má»Ÿ truyá»‡n").click()
-                expect(page.get_by_role("heading", name="Synthetic history B")).to_be_visible(timeout=12000)
-                expect(page.locator(".story-turn")).to_have_count(0)
-                assert len(campaign.calls) == provider_before_library
-
-                page.get_by_role("button", name="ThÆ° viá»‡n truyá»‡n").click()
-                expect(page.get_by_role("heading", name="ThÆ° viá»‡n truyá»‡n")).to_be_visible(timeout=12000)
-                first_card = page.locator("article").filter(has_text="Thá»­ nghiá»‡m sÃ¢n bÃ³ng")
-                expect(first_card).to_have_count(1)
-                first_card.get_by_role("button", name="Äá»c tiáº¿p").click()
-                expect(page.get_by_role("heading", name="Thá»­ nghiá»‡m sÃ¢n bÃ³ng")).to_be_visible(timeout=12000)
-                expect(page.locator(".story-turn")).to_have_count(first_turn_count)
-                expect(page.get_by_text(NARRATION, exact=True)).to_be_visible()
-                assert len(campaign.calls) == provider_before_library
-
-                page.reload(wait_until="domcontentloaded")
-                expect(page.get_by_role("heading", name="Thá»­ nghiá»‡m sÃ¢n bÃ³ng")).to_be_visible(timeout=15000)
-                expect(page.locator(".story-turn")).to_have_count(first_turn_count)
-                expect(page.get_by_text(NARRATION, exact=True)).to_be_visible()
-                assert len(campaign.calls) == provider_before_library
-
-                """
                 page.reload(wait_until="domcontentloaded")
                 expect(page.get_by_role("heading", name=first_title)).to_be_visible(timeout=15000)
                 page.locator(".library-trigger").click()
