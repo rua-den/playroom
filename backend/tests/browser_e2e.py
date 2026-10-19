@@ -883,8 +883,53 @@ def browser_synthetic_chat() -> None:
                 assert len(campaign.calls) == 10
                 page.reload(wait_until="domcontentloaded")
                 expect(page.locator(".story-turn")).to_have_count(1)
+
+                # Saving unchanged provider budget settings must surface a
+                # body-level toast above the scrolled settings sheet at both
+                # supported narrow widths. The save itself never calls the
+                # generation provider.
+                toast_screenshot_dir = Path(tempfile.gettempdir()) / "playroom-save-toast-screenshots"
+                toast_screenshot_dir.mkdir(parents=True, exist_ok=True)
+                for viewport_width in (757, 375):
+                    page.set_viewport_size({"width": viewport_width, "height": 780})
+                    page.get_by_role("button", name="Cài đặt").click()
+                    settings_dialog = page.get_by_role("dialog", name="Cài đặt")
+                    expect(settings_dialog).to_be_visible(timeout=12000)
+                    expect(settings_dialog.get_by_role("region", name="Cài đặt provider")).to_be_visible(timeout=12000)
+                    save_budget = settings_dialog.get_by_role("button", name="Lưu ngân sách")
+                    save_budget.scroll_into_view_if_needed()
+                    provider_calls_before_settings_save = len(campaign.calls)
+                    save_budget.click()
+                    expect(save_budget).to_be_focused()
+                    toast_region = page.get_by_role("region", name="Thông báo")
+                    success_toast = toast_region.get_by_role("status")
+                    expect(success_toast).to_be_visible(timeout=12000)
+                    assert len(campaign.calls) == provider_calls_before_settings_save
+
+                    toast_box = success_toast.bounding_box()
+                    viewport = page.evaluate("() => ({width: window.innerWidth, height: window.innerHeight})")
+                    assert toast_box
+                    assert 0 <= toast_box["x"] and 0 <= toast_box["y"]
+                    assert toast_box["x"] + toast_box["width"] <= viewport["width"]
+                    assert toast_box["y"] + toast_box["height"] <= viewport["height"]
+                    toast_z_index = int(success_toast.evaluate("(el) => getComputedStyle(el).zIndex") or 0)
+                    overlay_z_index = int(page.locator(".mobile-overlay").evaluate("(el) => getComputedStyle(el).zIndex") or 0)
+                    toast_center_is_topmost = success_toast.evaluate(
+                        """(el) => {
+                          const box = el.getBoundingClientRect();
+                          const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+                          return hit === el || el.contains(hit);
+                        }"""
+                    )
+                    assert toast_z_index > overlay_z_index or toast_center_is_topmost
+                    page.screenshot(path=str(toast_screenshot_dir / f"save-toast-{viewport_width}.png"), full_page=True)
+                    success_toast.get_by_role("button", name="Đóng thông báo").click()
+                    expect(success_toast).not_to_be_visible()
+                    page.get_by_role("button", name="Đóng cài đặt").click()
+                    expect(settings_dialog).not_to_be_visible()
+
                 browser.close()
-                print("B3 Chromium synthetic + ChatGPT JSON review and Legacy bundle import/review/fake Send PASS")
+                print("B3 Chromium synthetic + ChatGPT JSON review and Legacy bundle import/review/fake Send + save toast PASS")
         finally:
             server.should_exit = True
             thread.join(timeout=10)
