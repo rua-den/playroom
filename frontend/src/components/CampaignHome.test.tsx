@@ -147,7 +147,9 @@ describe("CampaignHome", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValueOnce(new TypeError("offline")));
     render(<AppShell owner={owner} onLogout={vi.fn()} />);
     expect(await screen.findByRole("alert")).toHaveTextContent("Không thể tải thư viện truyện");
-    expect(screen.queryByRole("button", { name: "Tạo truyện đầu tiên" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "+ Tạo truyện mới" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Thử lại" })).toHaveAttribute("href", "/");
+    expect(screen.getByRole("alert")).toHaveTextContent("Không thể tải thư viện truyện");
   });
 });
 
