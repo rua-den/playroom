@@ -100,7 +100,8 @@ function isQuotaFailure(failure: GenerationJob["failure"]) {
       "UNSUPPORTED_SCHEMA",
       "SCHEMA_INVALID",
       "UNSUPPORTED_CAPABILITY",
-    ].includes(failure.code ?? "")),
+    ].includes(failure.code ?? "") ||
+      /quota|schema|unsupported capability/i.test(failure.message ?? "")),
   );
 }
 
@@ -110,6 +111,7 @@ export function GenerationComposer({
   profileId,
   onCommitted,
   onOpenModelSettings,
+  onOpenCostSettings,
   demoMode = false,
 }: {
   ownerId: string;
@@ -117,6 +119,7 @@ export function GenerationComposer({
   profileId: string;
   onCommitted: () => Promise<CampaignProjection | void> | void;
   onOpenModelSettings?: () => void;
+  onOpenCostSettings?: () => void;
   demoMode?: boolean;
 }) {
   const [action, setAction] = useState("");
@@ -707,19 +710,10 @@ export function GenerationComposer({
       if (!isCurrentEpoch(submitEpoch)) return;
       const failure = generationFailure(cause);
       setEconomyRetry(failure.economyRetry);
-      setError(
-        cause instanceof ApiError && cause.status === 409
-          ? "Tác vụ đã thay đổi. Hãy tải lại chiến dịch."
-          : cause instanceof Error && /Chưa cấu hình/.test(cause.message)
-            ? cause.message
-            : failure.message !== "Không thể bắt đầu lượt kể chuyện; bản nháp vẫn được giữ."
-              ? failure.message
-              : failure.economyRetry
-              ? "Không thể gửi vì quota hoặc khả năng model không đáp ứng. Chỉ model được xác minh Free mới được gửi với Free only; bản nháp được giữ."
-              : "Không thể bắt đầu lượt kể chuyện; bản nháp vẫn được giữ.",
-      );
-      if (!failure.economyRetry && !(cause instanceof ApiError && cause.status === 409) && !(cause instanceof Error && /cấu hình|cáº¥u hÃ¬nh/.test(cause.message)))
-        setError(failure.message);
+      const missingConfiguration = cause instanceof Error && cause.message === "Chưa cấu hình hồ sơ nhà cung cấp cho vai trò kể chuyện.";
+      setError(cause instanceof ApiError && cause.status === 409
+        ? "Tác vụ đã thay đổi. Hãy tải lại chiến dịch."
+        : missingConfiguration ? cause.message : failure.message);
     } finally {
       if (isCurrentEpoch(submitEpoch)) setPending(false);
     }
@@ -790,6 +784,7 @@ export function GenerationComposer({
               mức lượt miễn phí của Ollama.
             </span>
           )}
+          {onOpenCostSettings && <button type="button" className="quiet-button touch-target composer-error-settings" onClick={onOpenCostSettings}>Mở Cài đặt chi phí</button>}
         </div>
       )}
       {job && (

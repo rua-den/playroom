@@ -45,4 +45,54 @@ describe("ModelSwitcher", () => {
     await userEvent.setup().click(screen.getByRole("button", { name: /Cài đặt chi phí/ }));
     expect(onOpenCostSettings).toHaveBeenCalledOnce();
   });
+
+  it("filters synthetic and unverified profiles while warning about Ollama spending lockout", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...settings, roles: { narrator: { id: "paid-model", version: 2 } } })))
+      .mockResolvedValueOnce(new Response(JSON.stringify([
+        { id: "fake", version: 1, model: "fake-demo", provider: "openrouter", pricing_verified: true },
+        { id: "unverified", version: 1, model: "hidden", provider: "openrouter", pricing_verified: false },
+        { id: "paid-model", version: 2, model: "gpt-oss:120b", model_label: "GPT OSS 120B", provider: "ollama", credential_tier: "free", pricing_verified: true },
+      ])));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ModelSwitcher open onClose={vi.fn()} onOpenCostSettings={vi.fn()} onSaved={vi.fn()} busy={false} />);
+    await waitFor(() => expect(screen.getByRole("option", { name: /GPT OSS/ })).toBeInTheDocument());
+    expect(screen.queryByRole("option", { name: /fake-demo/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /hidden/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/included credits chưa chứng minh/)).toBeInTheDocument();
+  });
+
+  it("ignores a deferred save rejection after the modal unmounts", async () => {
+    let rejectSave: (error: Error) => void = () => undefined;
+    const savePromise = new Promise<Response>((_, reject) => { rejectSave = reject; });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(settings)))
+      .mockResolvedValueOnce(new Response(JSON.stringify([{ id: "old-model", version: 1, model: "old", provider: "openrouter", pricing_verified: true }])))
+      .mockReturnValueOnce(savePromise);
+    vi.stubGlobal("fetch", fetchMock);
+    const view = render(<ModelSwitcher open onClose={vi.fn()} onOpenCostSettings={vi.fn()} onSaved={vi.fn()} busy={false} />);
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByRole("option", { name: /old/ })).toBeInTheDocument());
+    await user.selectOptions(screen.getByLabelText("Model narrator"), "old-model");
+    await user.click(screen.getByRole("button", { name: "Lưu model" }));
+    view.unmount();
+    rejectSave(new Error("late failure"));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+  });
+
+  it("keeps the selected model visible after an acknowledged save failure", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(settings)))
+      .mockResolvedValueOnce(new Response(JSON.stringify([{ id: "old-model", version: 1, model: "old", provider: "openrouter", pricing_verified: true }])))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "rejected" }), { status: 422 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ModelSwitcher open onClose={vi.fn()} onOpenCostSettings={vi.fn()} onSaved={vi.fn()} busy={false} />);
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByRole("option", { name: /old/ })).toBeInTheDocument());
+    const select = screen.getByLabelText("Model narrator");
+    await user.selectOptions(select, "old-model");
+    await user.click(screen.getByRole("button", { name: "Lưu model" }));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("bản nháp vẫn được giữ"));
+    expect(select).toHaveValue("old-model");
+  });
 });

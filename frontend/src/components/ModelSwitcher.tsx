@@ -53,6 +53,8 @@ export function ModelSwitcher({
     () => profiles.find((profile) => profile.id === settings?.roles?.narrator?.id && profile.version === settings?.roles?.narrator?.version),
     [profiles, settings],
   );
+  const verifiedProfiles = useMemo(() => profiles.filter(isVerifiedRealProfile), [profiles]);
+  const selectedProfile = verifiedProfiles.find((profile) => profile.id === selected);
   const changed = Boolean(selected && selected !== settings?.roles?.narrator?.id);
 
   async function save() {
@@ -67,12 +69,13 @@ export function ModelSwitcher({
       onSaved();
       toast.success("Đã lưu model kể chuyện cho các lượt mới.");
     } catch (cause) {
+      if (!mounted.current) return;
       setError(cause instanceof ApiError && cause.status === 409
         ? "Model đã thay đổi ở nơi khác. Hãy tải lại danh sách rồi thử lại."
         : "Không thể lưu model kể chuyện; bản nháp vẫn được giữ.");
       toast.error("Không thể lưu model kể chuyện.");
     } finally {
-      setSaving(false);
+      if (mounted.current) setSaving(false);
     }
   }
 
@@ -95,14 +98,18 @@ export function ModelSwitcher({
         onChange={(event) => setSelected(event.target.value)}
       >
         <option value="">Chọn model</option>
-        {profiles.map((profile) => (
+        {verifiedProfiles.map((profile) => (
           <option key={`${profile.id}-${profile.version}`} value={profile.id}>
             {profile.model_label ?? profile.model} · v{profile.version} · {profile.provider}
           </option>
         ))}
       </select>
-      {settings?.policy === "free_only" && (current?.credential_tier !== "free" || current?.provider === "ollama") && (
-        <p role="note" className="form-error">Free only đang bật nhưng model hiện tại không được xác minh là Free. Ollama included credits không chứng minh giới hạn chi phí; hãy mở cài đặt chi phí để tự bật Capped paid và chấp thuận ngân sách nếu cần.</p>
+      {verifiedProfiles.length === 0 && !loading && <p role="status">Chưa có profile narrator thật đã xác minh. Hãy mở Cài đặt để xác minh model.</p>}
+      {settings?.policy === "free_only" && (current?.provider === "ollama" || selectedProfile?.provider === "ollama") && (
+        <p role="note" className="form-error">Ollama included credits chưa chứng minh được cơ chế khóa chi phí của provider. Free only vẫn giữ nguyên; hãy mở Cài đặt chi phí và tự chấp thuận Capped paid nếu muốn dùng profile này.</p>
+      )}
+      {settings?.policy === "free_only" && current?.provider !== "ollama" && current?.credential_tier !== "free" && (
+        <p role="note" className="form-error">Model hiện tại chưa được xác minh là Free. Free only sẽ chặn lượt trả phí; hãy mở Cài đặt chi phí nếu bạn muốn tự chấp thuận Capped paid.</p>
       )}
       <div className="model-switcher-actions">
         <button type="button" className="primary-button touch-target" disabled={!changed || saving || busy} onClick={save}>
@@ -113,4 +120,11 @@ export function ModelSwitcher({
       </div>
     </section>
   );
+}
+
+function isVerifiedRealProfile(profile: ModelProfileSummary) {
+  const identity = `${profile.id} ${profile.model} ${profile.model_label ?? ""}`.toLowerCase();
+  return (profile.provider === "openrouter" || profile.provider === "ollama") &&
+    profile.pricing_verified === true &&
+    !/(fake|fixture|synthetic|demo|test[-_ ]?profile)/.test(identity);
 }
