@@ -371,11 +371,34 @@ def import_conversation(
             if row["payload_hash"] != digest:
                 raise ValidationError("Import key was already used for a different payload")
         else:
-            row = connection.execute(
-                "SELECT campaign_id, branch_id, payload_hash, paired_turns, imported_turns, import_status "
-                "FROM chatgpt_import_sources WHERE owner_id=? AND payload_hash=?",
-                (owner_id, digest),
-            ).fetchone()
+            # A browser reload creates a fresh client import key and may also
+            # reset editable form fields. Resume an unfinished byte-identical
+            # selected source before considering config-sensitive payload
+            # deduplication. The original campaign/config remains authoritative.
+            importing_rows = connection.execute(
+                "SELECT campaign_id, branch_id, payload_hash, paired_turns, imported_turns, import_status, "
+                "selected_source_json FROM chatgpt_import_sources "
+                "WHERE owner_id=? AND source_conversation_id=? AND import_status='importing' "
+                "ORDER BY imported_at DESC",
+                (owner_id, parsed["conversation_id"]),
+            ).fetchall()
+            row = next(
+                (candidate for candidate in importing_rows if candidate["selected_source_json"] == original),
+                None,
+            )
+            if row is not None:
+                connection.execute(
+                    "UPDATE chatgpt_import_sources SET import_key=?, "
+                    "import_updated_at=strftime('%Y-%m-%dT%H:%M:%fZ', 'now') "
+                    "WHERE owner_id=? AND campaign_id=?",
+                    (key, owner_id, row["campaign_id"]),
+                )
+            else:
+                row = connection.execute(
+                    "SELECT campaign_id, branch_id, payload_hash, paired_turns, imported_turns, import_status "
+                    "FROM chatgpt_import_sources WHERE owner_id=? AND payload_hash=?",
+                    (owner_id, digest),
+                ).fetchone()
 
         if row is None:
             created = create_campaign(
