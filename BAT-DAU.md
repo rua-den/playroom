@@ -6,7 +6,9 @@
 2. Lần đầu, nhập email đăng nhập và mật khẩu ít nhất 12 ký tự trong cửa sổ vừa mở. Nhập lại mật khẩu để xác nhận; ký tự mật khẩu được ẩn khi gõ.
 3. Trình duyệt tự mở khi ứng dụng sẵn sàng tại **http://127.0.0.1:8000**. Đăng nhập bằng tài khoản vừa tạo.
 4. Vào **Cài đặt** để thêm credential của bạn, kiểm tra model rồi chọn narrator. Giữ chính sách free-only nếu bạn chỉ muốn dùng model miễn phí.
-5. Tạo chiến dịch hoặc chọn **Nhập Legacy Bundle / Nhập Legacy** để nhập file truyện của bạn. Xem hồ sơ, canon, ký ức và cảnh; chiến dịch nhập vẫn chờ bạn duyệt. Bạn quyết định việc cho phép gửi context tới provider trước khi chủ động Gửi.
+5. Mở **Thư viện truyện**, chọn **Tạo truyện mới** hoặc **Nhập Legacy Bundle / Nhập Legacy**. Mỗi truyện có bối cảnh, nhân vật và lịch sử trò chuyện riêng. Truyện nhập vẫn chờ bạn duyệt hồ sơ, canon, ký ức và cảnh; bạn quyết định việc cho phép gửi context tới provider trước khi chủ động Gửi.
+
+Trong **Thư viện truyện**, chọn **Mở truyện / Đọc tiếp** để trở lại truyện đã lưu. Màn trò chuyện ghi rõ **Đang đọc** và tên truyện. Tải lại sẽ mở truyện gần nhất đã chọn trên trình duyệt này; nếu chưa có lựa chọn hợp lệ, app mở thư viện. Nút **Thư viện truyện** luôn có để quay về danh sách. Chỉ nhấn **Tạo truyện mới** khi muốn bắt đầu một truyện riêng.
 
 Key đã lưu trong GitHub Actions được giữ riêng trong môi trường kiểm thử đó. Bản local không tự lấy key từ GitHub; bạn nhập credential của mình ở **Cài đặt**, không gửi key qua chat.
 
