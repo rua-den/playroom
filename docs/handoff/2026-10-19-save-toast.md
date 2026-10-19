@@ -1,0 +1,11 @@
+# Save feedback checkpoint — 19 October 2026
+
+Owner requested visible toast feedback after saving. Worktree: `D:/stu/worktrees/playroom-import-followup`, branch `feat/save-toast-feedback-20261019`, based on main `85d4f4d`.
+
+Implemented through `418c09f`: body-portal toast stack above settings/editor overlays, success dismissal after five seconds with hover/focus pause, manual close, generic persistent error feedback, owner-keyed provider remount. Settings, profile, memory, scene and import-review acknowledgement handlers emit feedback. Memory write acknowledgement is separated from subsequent refresh failure. Inline field errors remain available; demo runtime warning is retained.
+
+Root reviewed the diff, ran full frontend tests (**152 passed / 3 existing skips**), typecheck/build PASS and locked Chromium gate exit 0 with both **B3 synthetic + save toast PASS** and **Live local Chromium PASS**. The gate checks save acknowledgement, focus retention, visibility/stacking at 375px and 757px, dismissal and unchanged fake-provider call count. Synthetic screenshots are in `%TEMP%/playroom-save-toast-screenshots/`. No real inference or private-data transmission was performed.
+
+Not released. Required Luna medium agents repeatedly returned model-at-capacity errors during final corrections. The editor agent left three uncommitted source edits clearing stale inline errors after successful retries; preserve and review these edits. Remaining work: failure-then-success regression for clearing the old error; replace the mojibake synthetic draft literal in ProfileEditor.test.tsx; keyed-owner late-old-toast API regression; safe acknowledged CampaignForm create feedback; plain Vietnamese import failure popup. Root must not implement these code changes under the owner's model-routing instructions.
+
+Resume with Luna medium, finish the narrow corrections and commit explicit owned paths. Root must review the final diff, rerun frontend/build and both locked Chromium flows against the final tree, then complete normal exact-head PR/main CI and delivery. No toast PR has been created or merged; primary localhost 8001 is still the previous main build. Preserve private local databases/source, pending import consent, and primary untracked `playroom/`. No new provider call, automatic consent or migration is needed.
