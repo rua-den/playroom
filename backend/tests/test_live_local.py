@@ -461,8 +461,10 @@ def test_concurrent_live_setup_tolerates_duplicate_column_migration(tmp_path, mo
 
         def execute(self, sql, parameters=()):
             if sql == "PRAGMA table_info(provider_attempts)" and not self._synchronized:
+                rows = self._connection.execute(sql, parameters).fetchall()
                 self._synchronized = True
                 migration_barrier.wait(timeout=5)
+                return rows
             return self._connection.execute(sql, parameters)
 
         def __getattr__(self, name):

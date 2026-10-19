@@ -18,6 +18,17 @@ def test_add_column_if_missing_propagates_unrelated_sqlite_errors():
         _add_column_if_missing(FailingConnection(), "owners", "extra", "TEXT")
 
 
+def test_add_column_if_missing_propagates_duplicate_when_column_is_absent():
+    class DuplicateConnection:
+        def execute(self, sql, parameters=()):
+            if sql.startswith("ALTER TABLE"):
+                raise sqlite3.OperationalError("duplicate column name: extra")
+            return []
+
+    with pytest.raises(sqlite3.OperationalError, match="duplicate column name"):
+        _add_column_if_missing(DuplicateConnection(), "owners", "extra", "TEXT")
+
+
 def test_migrate_adds_nullable_roleplay_columns_without_backfilling_legacy_rows(tmp_path):
     db = connect(tmp_path / "legacy.sqlite3")
     initial = Path(__file__).parents[1] / "playroom" / "migrations" / "001_initial.sql"
