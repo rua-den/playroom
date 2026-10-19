@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { StrictMode } from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { recoverableJobCount, recoverableJobSummary } from "./AppShell";
+import { lastStoryStorageKey, recoverableJobCount, recoverableJobSummary } from "./AppShell";
 import { AppShell, ImportReviewPanel } from "./AppShell";
 import { api } from "../api/client";
 
@@ -30,6 +30,7 @@ describe("recoverable job summary", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ id: "campaign-structured", title: "Structured", created_at: "2026-01-01", updated_at: "2026-01-01", archived_at: null, branch_id: "branch-structured", state_version: 1, checkpoint_id: "checkpoint-structured", profiles: {} }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ campaign: { id: "campaign-structured", title: "Structured", created_at: "2026-01-01", updated_at: "2026-01-01", archived_at: null }, branch: { id: "branch-structured", name: "main", state_version: 1, checkpoint_id: "checkpoint-structured" }, checkpoint: { id: "checkpoint-structured", state_version: 1, parent_checkpoint_id: null, selected_revision_ids: [], retrieval_policy: "auto" }, profiles: { "character:npc-structured": { kind: "character", version: 1, data: { name: "Mira" } } }, scene: null, transcript: [{ revision_id: "revision-structured", turn_id: "turn-structured", sequence: 1, action_text: "legacy raw", revision: 1, narrative_text: "legacy fallback", input_segments: [{ kind: "dialogue", text: "Hello" }, { kind: "action", text: "waves" }], output_segments: [{ kind: "narration", text: "# Chương I\n\n*Đêm xuống.*", profile_version_id: "profile-structured" }, { kind: "dialogue", text: "Welcome.", character_id: "npc-structured", profile_version_id: "profile-structured" }], complete: true, selected: true }], jobs: [] }), { status: 200 })));
     render(<AppShell owner={{ id: "owner-structured", email: "owner@example.test" }} onLogout={() => undefined} />);
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Mở truyện" }));
     expect(await screen.findByText("Hello")).toBeInTheDocument();
     expect(await screen.findByText("waves")).toBeInTheDocument();
     expect(await screen.findByText("Welcome.")).toBeInTheDocument();
@@ -56,7 +57,8 @@ describe("recoverable job summary", () => {
 
     render(<AppShell owner={{ id: "owner-1", email: "owner@example.test" }} onLogout={() => undefined} />);
 
-    const campaignSelect = await screen.findByRole("combobox", { name: "Chiến dịch hiện tại" });
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Mở truyện" }));
+    const campaignSelect = await screen.findByRole("combobox", { name: "Truyện hiện tại" });
     expect(campaignSelect).toHaveValue("campaign-1");
     expect(campaignSelect.closest("header")).toBeInTheDocument();
     expect(await screen.findByText("Một buổi chiều yên ả.")).toBeInTheDocument();
@@ -86,6 +88,7 @@ describe("recoverable job summary", () => {
       .mockResolvedValue(new Response(JSON.stringify(projection), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     render(<AppShell owner={{ id: "owner", email: "owner@example.test" }} onLogout={() => undefined} />);
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Mở truyện" }));
     expect(await screen.findByRole("heading", { name: "Kiểm tra checkpoint nhập" })).toBeInTheDocument();
     expect(screen.queryByTestId("generation-composer")).not.toBeInTheDocument();
     const checks = screen.getByRole("heading", { name: "Kiểm tra checkpoint nhập" }).closest("section")?.querySelectorAll("input[type=checkbox]");
@@ -206,5 +209,58 @@ describe("recoverable job summary", () => {
     rejectApproval(new Error("stale approval"));
     await waitFor(() => expect(screen.getByRole("button", { name: /Duyệt checkpoint/ })).toBeDisabled());
     expect(screen.queryByText("stale approval")).not.toBeInTheDocument();
+  });
+});
+
+describe("story library navigation and last-story persistence", () => {
+  afterEach(() => { try { window.localStorage.clear(); } catch { /* blocked storage is part of coverage */ } });
+  const summaries = [
+    { id: "story-a", title: "Mùa hạ", created_at: "2026-01-01", updated_at: "2026-01-02", archived_at: null },
+    { id: "story-b", title: "Đêm mưa", created_at: "2026-01-01", updated_at: "2026-01-03", archived_at: null },
+  ];
+  const projection = (id: string) => ({ campaign: { ...summaries.find((item) => item.id === id)!, id }, branch: { id: `branch-${id}`, name: "main", state_version: 1, checkpoint_id: `checkpoint-${id}` }, checkpoint: { id: `checkpoint-${id}`, state_version: 1, parent_checkpoint_id: null, selected_revision_ids: [], retrieval_policy: "auto" as const }, profiles: {}, scene: null, transcript: [], jobs: [] });
+
+  function mockStories() {
+    vi.spyOn(api, "listCampaigns").mockResolvedValue(summaries);
+    vi.spyOn(api, "getCampaign").mockImplementation(async (id) => ({ ...summaries.find((item) => item.id === id)!, branch_id: `branch-${id}`, state_version: 1, checkpoint_id: `checkpoint-${id}`, profiles: {} }));
+    vi.spyOn(api, "getCampaignProjection").mockImplementation(async (id) => projection(id));
+  }
+
+  it("opens the library without loading a story until the user chooses one", async () => {
+    mockStories();
+    render(<AppShell owner={{ id: "library-owner", email: "owner@example.test" }} onLogout={() => undefined} />);
+    expect(await screen.findByRole("heading", { name: "Thư viện truyện" })).toBeInTheDocument();
+    expect(api.getCampaign).not.toHaveBeenCalled();
+    const library = screen.getByRole("heading", { name: "Thư viện truyện" }).closest("section")!;
+    await userEvent.setup().click(within(library).getAllByRole("button", { name: "Mở truyện" })[0]);
+    expect(await screen.findByRole("heading", { name: "Mùa hạ" })).toBeInTheDocument();
+    expect(api.getCampaign).toHaveBeenCalledWith("story-a");
+  });
+
+  it("restores only an accessible last story and isolates owners", async () => {
+    mockStories();
+    window.localStorage.setItem(lastStoryStorageKey("owner-a"), "story-b");
+    const first = render(<AppShell owner={{ id: "owner-a", email: "a@example.test" }} onLogout={() => undefined} />);
+    expect(await screen.findByRole("heading", { name: "Đêm mưa" })).toBeInTheDocument();
+    vi.mocked(api.getCampaign).mockClear();
+    vi.mocked(api.listCampaigns).mockRejectedValueOnce(new Error("owner load failed"));
+    first.rerender(<AppShell owner={{ id: "owner-b", email: "b@example.test" }} onLogout={() => undefined} />);
+    expect(await screen.findByRole("heading", { name: "Thư viện truyện" })).toBeInTheDocument();
+    expect(screen.queryByText("Đêm mưa")).not.toBeInTheDocument();
+    expect(api.getCampaign).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the library when storage is stale or blocked", async () => {
+    mockStories();
+    window.localStorage.setItem(lastStoryStorageKey("stale-owner"), "missing-story");
+    const stale = render(<AppShell owner={{ id: "stale-owner", email: "stale@example.test" }} onLogout={() => undefined} />);
+    expect(await screen.findByRole("heading", { name: "Thư viện truyện" })).toBeInTheDocument();
+    stale.unmount();
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("blocked"); });
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("blocked"); });
+    render(<AppShell owner={{ id: "blocked-owner", email: "blocked@example.test" }} onLogout={() => undefined} />);
+    expect(await screen.findByRole("heading", { name: "Thư viện truyện" })).toBeInTheDocument();
+    await userEvent.setup().click(within(screen.getByRole("heading", { name: "Thư viện truyện" }).closest("section")!).getAllByRole("button", { name: "Mở truyện" })[0]);
+    expect(await screen.findByRole("heading", { name: "Mùa hạ" })).toBeInTheDocument();
   });
 });

@@ -36,7 +36,7 @@ describe("authentication shell", () => {
     localStorage.setItem(generationIdentityKey("owner-1", "campaign-1", "branch-1"), JSON.stringify({ idempotencyKey: "generation-key" }));
     const user = userEvent.setup();
     render(<App />);
-    expect(await screen.findByText("Chào mừng trở lại"))
+    expect(await screen.findByRole("heading", { name: "Thư viện truyện" }))
       .toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Đăng xuất" }));
     expect(await screen.findByRole("heading", { name: "Đăng nhập Playroom" })).toBeInTheDocument();
@@ -55,7 +55,7 @@ describe("authentication shell", () => {
     localStorage.setItem(generationIdentityKey("owner-1", "campaign-1", "branch-1"), JSON.stringify({ idempotencyKey: "generation-key" }));
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByText("Chào mừng trở lại");
+    await screen.findByRole("heading", { name: "Thư viện truyện" });
     await user.click(screen.getByRole("button", { name: "Đăng xuất" }));
     expect(await screen.findByRole("heading", { name: "Đăng nhập Playroom" })).toBeInTheDocument();
     expect(privateCache.size).toBe(0);
@@ -74,7 +74,7 @@ describe("authentication shell", () => {
     localStorage.setItem(generationIdentityKey("owner-1", "campaign-1", "branch-1"), JSON.stringify({ idempotencyKey: "generation-key" }));
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByText("Chào mừng trở lại");
+    await screen.findByRole("heading", { name: "Thư viện truyện" });
     await expect(api.me()).rejects.toMatchObject({ status: 401 });
     expect(await screen.findByRole("heading", { name: "Đăng nhập Playroom" })).toBeInTheDocument();
     expect(privateCache.size).toBe(0);
@@ -83,7 +83,7 @@ describe("authentication shell", () => {
     await user.type(screen.getByLabelText("Email"), "owner@example.test");
     await user.type(screen.getByLabelText("Mật khẩu"), "correct-password");
     await user.click(screen.getByRole("button", { name: "Đăng nhập" }));
-    expect(await screen.findByText("Chào mừng trở lại")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Thư viện truyện" })).toBeInTheDocument();
     expect(screen.queryByText("Phiên đăng nhập đã hết hạn")).not.toBeInTheDocument();
   });
 
@@ -97,7 +97,7 @@ describe("authentication shell", () => {
     privateCache.set("stories", [{ id: "story-1" }]);
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByText("Chào mừng trở lại");
+    await screen.findByRole("heading", { name: "Thư viện truyện" });
     await user.click(screen.getByRole("button", { name: "Đăng xuất" }));
     expect(screen.getByRole("heading", { name: "Đăng nhập Playroom" })).toBeInTheDocument();
     expect(privateCache.size).toBe(0);
@@ -117,13 +117,13 @@ describe("authentication shell", () => {
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByText("Chào mừng trở lại");
+    await screen.findByRole("heading", { name: "Thư viện truyện" });
     const oldProtected = api.me();
     await user.click(screen.getByRole("button", { name: "Đăng xuất" }));
     await user.type(screen.getByLabelText("Email"), "new@example.test");
     await user.type(screen.getByLabelText("Mật khẩu"), "new-password");
     await user.click(screen.getByRole("button", { name: "Đăng nhập" }));
-    await screen.findByText("Chào mừng trở lại");
+    await screen.findByRole("heading", { name: "Thư viện truyện" });
     privateCache.set("new-session", { owner: "owner-2" });
     resolveProtected(new Response(JSON.stringify({ detail: "expired" }), { status: 401 }));
     resolveLogout(new Response(null, { status: 204 }));
@@ -153,12 +153,12 @@ describe("authentication shell", () => {
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByText("Chào mừng trở lại");
+    await screen.findByRole("heading", { name: "Thư viện truyện" });
     await user.click(screen.getByRole("button", { name: "Đăng xuất" }));
     await user.type(screen.getByLabelText("Email"), "new@example.test");
     await user.type(screen.getByLabelText("Mật khẩu"), "new-password");
     await user.click(screen.getByRole("button", { name: "Đăng nhập" }));
-    await screen.findByText("Chào mừng trở lại");
+    await screen.findByRole("heading", { name: "Thư viện truyện" });
     expect(loginSawAbortedLogout).toBe(true);
     privateCache.set("new-session", { owner: "owner-2" });
     resolveLogout(new Response(null, { status: 204 }));
@@ -178,11 +178,11 @@ describe("authentication shell", () => {
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByText("Chào mừng trở lại");
+    await screen.findByRole("heading", { name: "Thư viện truyện" });
     const trigger = screen.getByRole("button", { name: "Cài đặt" });
     await user.click(trigger);
     const dialog = await screen.findByRole("dialog", { name: "Cài đặt" });
-    expect(screen.getByRole("main").querySelector(".empty-campaign")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByRole("main").querySelector(".story-library")).toHaveAttribute("aria-hidden", "true");
     expect(dialog.querySelector("button")).toHaveFocus();
     const focusable = Array.from(dialog.querySelectorAll<HTMLElement>("button, input, select, textarea, [href], [tabindex]:not([tabindex='-1'])"));
     focusable.at(-1)?.focus();
@@ -203,12 +203,12 @@ describe("authentication shell", () => {
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
     render(<App />);
-    await user.click(await screen.findByRole("button", { name: "Tạo chiến dịch đầu tiên" }));
-    await user.type(screen.getByLabelText("Tên chiến dịch"), "Bản nháp không mất");
+    await user.click(await screen.findByRole("button", { name: "+ Tạo truyện mới" }));
+    await user.type(screen.getByLabelText("Tên truyện"), "Bản nháp không mất");
     await user.click(screen.getByRole("button", { name: "Cài đặt" }));
     expect(screen.getByRole("dialog", { name: "Cài đặt" })).toBeInTheDocument();
-    expect(screen.getByText("Tạo chiến dịch").closest("section")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByText("Tạo truyện mới").closest("section")).toHaveAttribute("aria-hidden", "true");
     await user.click(screen.getByRole("button", { name: "Đóng cài đặt" }));
-    expect(screen.getByLabelText("Tên chiến dịch")).toHaveValue("Bản nháp không mất");
+    expect(screen.getByLabelText("Tên truyện")).toHaveValue("Bản nháp không mất");
   });
 });

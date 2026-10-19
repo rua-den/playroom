@@ -237,7 +237,7 @@ def _assert_mobile(page, width: int) -> None:
     assert overflow <= 1, f"Horizontal overflow at {width}px: {overflow}px"
     # The current responsive UI uses the topbar campaign select; the
     # legacy mobile-campaign drawer button is intentionally hidden in CSS.
-    expect(page.get_by_role("combobox", name="Chiến dịch hiện tại")).to_be_visible()
+    expect(page.get_by_role("combobox", name="Truyện hiện tại")).to_be_visible()
     if width == 390:
         page.get_by_role("button", name="AI đang nhớ gì").click()
         details = page.get_by_role("dialog", name="Hồ sơ và ký ức")
@@ -333,13 +333,24 @@ def browser_synthetic_chat() -> None:
                 page.get_by_label("Email").fill(EMAIL)
                 page.get_by_label("Mật khẩu").fill(PASSWORD)
                 page.get_by_role("button", name="Đăng nhập").click()
-                page.get_by_role("button", name="Tạo chiến dịch đầu tiên").click()
-                page.get_by_label("Tên chiến dịch").fill("Thử nghiệm sân bóng")
+                expect(page.get_by_role("heading", name="Thư viện truyện")).to_be_visible(timeout=15000)
+                screenshot_dir = Path(tempfile.gettempdir()) / "playroom-story-library-screenshots"
+                screenshot_dir.mkdir(parents=True, exist_ok=True)
+                page.set_viewport_size({"width": 757, "height": 900})
+                page.screenshot(path=str(screenshot_dir / "library-757.png"), full_page=True)
+                page.get_by_role("button", name="+ Tạo truyện mới").click()
+                page.screenshot(path=str(screenshot_dir / "create-vietnamese-757.png"), full_page=True)
+                page.set_viewport_size({"width": 375, "height": 812})
+                page.screenshot(path=str(screenshot_dir / "create-vietnamese-375.png"), full_page=True)
+                page.get_by_role("button", name="Đóng").click()
+                page.screenshot(path=str(screenshot_dir / "library-375.png"), full_page=True)
+                page.get_by_role("button", name="+ Tạo truyện mới").click()
+                page.get_by_label("Tên truyện").fill("Thử nghiệm sân bóng")
                 page.get_by_label("Tên thế giới").fill("Trường Bangtan")
                 page.get_by_label("Tên persona").fill("Henn")
                 page.get_by_role("button", name="Thêm nhân vật").click()
                 page.get_by_label("Tên nhân vật 1").fill("Yuna")
-                page.get_by_role("button", name="Lưu chiến dịch").click()
+                page.get_by_role("button", name="Lưu truyện").click()
 
                 expect(page.get_by_role("heading", name="Thử nghiệm sân bóng")).to_be_visible(timeout=15000)
                 expect(page.get_by_role("button", name="Gửi", exact=True)).to_have_count(1)
@@ -348,9 +359,21 @@ def browser_synthetic_chat() -> None:
                 expect(page.get_by_text("Dùng **...** cho hành động hoặc suy nghĩ;", exact=False)).to_be_visible()
                 campaign = app.state.generation_provider
                 assert campaign.stage_counts == {}
+                provider_before_navigation = len(campaign.calls)
+                draft = page.locator("#generation-action")
+                draft.fill("Ghi chú chưa gửi")
+                page.get_by_role("button", name="Thư viện truyện").click()
+                expect(page.get_by_role("heading", name="Thư viện truyện")).to_be_visible()
+                page.get_by_role("button", name="Đọc tiếp").click()
+                expect(draft).to_have_value("Ghi chú chưa gửi")
+                assert len(campaign.calls) == provider_before_navigation
+                page.reload(wait_until="domcontentloaded")
+                expect(page.get_by_role("heading", name="Thử nghiệm sân bóng")).to_be_visible(timeout=15000)
+                assert len(campaign.calls) == provider_before_navigation
                 camp_list = page.context.request.get(f"{origin}/api/campaigns").json()
                 assert len(camp_list) == 1
                 campaign_id = camp_list[0]["id"]
+                first_title = camp_list[0]["title"]
                 detail = page.context.request.get(f"{origin}/api/campaigns/{campaign_id}").json()
                 branch_id = detail["branch_id"]
 
@@ -392,6 +415,72 @@ def browser_synthetic_chat() -> None:
 
                 _send_and_wait(page, "Tớ đợi cậu ở vạch sân.", 2)
                 assert len(campaign.calls) == 2
+
+                # The library must retain multiple stories and restore each
+                # story's own history. Create B through the authenticated API
+                # so this check stays independent of the create form.
+                first_story_id = campaign_id
+                first_branch_id = branch_id
+                transcript = _project(page, origin, first_story_id, first_branch_id)["transcript"]
+                assert len(transcript) == 2
+                first_turn_count = len(transcript)
+                second_create = page.context.request.post(
+                    f"{origin}/api/campaigns",
+                    data=json.dumps({
+                        "title": "Synthetic history B",
+                        "world": {"name": "Synthetic world B", "description": ""},
+                        "persona": {"name": "Synthetic player B", "description": ""},
+                        "characters": [],
+                    }),
+                    headers={
+                        "content-type": "application/json",
+                        "origin": origin,
+                        "x-requested-with": "XMLHttpRequest",
+                    },
+                )
+                assert second_create.status == 201, second_create.text()
+                second_story = second_create.json()
+                second_story_id = second_story["id"]
+                assert second_story_id != first_story_id
+                provider_before_library = len(campaign.calls)
+
+                # Reload loads the API-created catalog and restores A from
+                # localStorage before opening the library.
+                page.reload(wait_until="domcontentloaded")
+                expect(page.get_by_role("heading", name=first_title)).to_be_visible(timeout=15000)
+                page.locator(".library-trigger").click()
+                expect(page.locator("#library-title")).to_be_visible(timeout=12000)
+                first_card = page.locator("article").filter(has_text=first_title)
+                second_card = page.locator("article").filter(has_text="Synthetic history B")
+                expect(first_card).to_have_count(1)
+                expect(second_card).to_have_count(1)
+                for width, filename in ((757, "library-757.png"), (375, "library-375.png")):
+                    page.set_viewport_size({"width": width, "height": 900 if width == 757 else 812})
+                    expect(page.locator("#library-title")).to_be_visible()
+                    expect(first_card.locator("h2")).to_have_text(first_title)
+                    expect(second_card.locator("h2")).to_have_text("Synthetic history B")
+                    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+                    page.screenshot(path=str(screenshot_dir / filename), full_page=True)
+                second_card.locator("button").click()
+                expect(page.get_by_role("heading", name="Synthetic history B")).to_be_visible(timeout=12000)
+                expect(page.locator(".story-turn")).to_have_count(0)
+                assert len(campaign.calls) == provider_before_library
+                page.locator(".library-trigger").click()
+                expect(page.locator("#library-title")).to_be_visible(timeout=12000)
+                first_card = page.locator("article").filter(has_text=first_title)
+                first_card.locator("button").click()
+                expect(page.get_by_role("heading", name=first_title)).to_be_visible(timeout=12000)
+                expect(page.locator(".story-turn")).to_have_count(first_turn_count)
+                expect(page.locator(".story-turn").filter(has_text=NARRATION)).to_have_count(first_turn_count)
+                assert len(campaign.calls) == provider_before_library
+                page.reload(wait_until="domcontentloaded")
+                expect(page.get_by_role("heading", name=first_title)).to_be_visible(timeout=15000)
+                expect(page.locator(".story-turn")).to_have_count(first_turn_count)
+                expect(page.locator(".story-turn").filter(has_text=NARRATION)).to_have_count(first_turn_count)
+                assert len(campaign.calls) == provider_before_library
+
+                campaign_id = first_story_id
+                branch_id = first_branch_id
 
                 # A POST can reach the server before the browser loses its
                 # response. The client must recover the *same* durable job.
@@ -821,13 +910,13 @@ def browser_live_local_chat() -> None:
                 page.get_by_label("Email").fill(EMAIL)
                 page.get_by_label("Mật khẩu").fill(PASSWORD)
                 page.get_by_role("button", name="Đăng nhập").click()
-                page.get_by_role("button", name="Tạo chiến dịch đầu tiên").click()
-                page.get_by_label("Tên chiến dịch").fill("Lan Vy Binh local")
+                page.get_by_role("button", name="+ Tạo truyện mới").click()
+                page.get_by_label("Tên truyện").fill("Lan Vy Binh local")
                 page.get_by_label("Tên thế giới").fill("Thế giới tổng hợp")
                 page.get_by_label("Tên persona").fill("Bình")
                 page.get_by_role("button", name="Thêm nhân vật").click()
                 page.get_by_label("Tên nhân vật 1").fill("Lan")
-                page.get_by_role("button", name="Lưu chiến dịch").click()
+                page.get_by_role("button", name="Lưu truyện").click()
 
                 expect(page.get_by_role("heading", name="Lan Vy Binh local")).to_be_visible(timeout=15000)
                 send = page.locator(".generation-composer button[type=submit]")
