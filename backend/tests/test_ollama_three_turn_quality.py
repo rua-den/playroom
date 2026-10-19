@@ -36,3 +36,18 @@ def test_absent_character_and_unknown_secret_still_flagged():
     leaked = _segments("Vy quay về phía Lan.", "Người giao hàng đã tráo tờ giấy.")
     assert _quality_flags(absent) == (False, True, False)
     assert _quality_flags(leaked) == (False, False, True)
+
+
+def test_gptoss120b_live_turn_two_delayed_walk_crosses_sentence_boundary():
+    """Model narrated walking to a drawer the player only *intended* to check."""
+    excerpt = (
+        "Lan quay sang phía cửa sổ, ánh trăng mờ ảo chiếu vào khiến bề mặt kính phản chiếu nhẹ. "
+        "Cô nói sẽ kiểm tra ngăn kéo phía dưới quầy, rồi bước về phía đó, để lại Vy đứng gần hộp gỗ."
+    )
+    assert _quality_flags(_segments(excerpt)) == (True, False, False)
+
+
+def test_npc_walking_after_player_is_named_is_not_always_player_motion():
+    """The scanner is heuristic: no false positive on a clearly attributed NPC walk."""
+    excerpt = "Lan nhìn về phía cửa sổ. Vy bước về phía quầy và hỏi liệu Lan có cần giúp không."
+    assert _quality_flags(_segments(excerpt)) == (False, False, False)
