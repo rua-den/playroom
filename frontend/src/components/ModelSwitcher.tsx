@@ -53,9 +53,11 @@ export function ModelSwitcher({
     () => profiles.find((profile) => profile.id === settings?.roles?.narrator?.id && profile.version === settings?.roles?.narrator?.version),
     [profiles, settings],
   );
+  const currentDisplay = current ?? profiles.find((profile) => profile.id === settings?.roles?.narrator?.id);
+  const warningProfile = current ?? currentDisplay;
   const verifiedProfiles = useMemo(() => profiles.filter(isVerifiedRealProfile), [profiles]);
   const selectedProfile = verifiedProfiles.find((profile) => profile.id === selected);
-  const changed = Boolean(selected && selected !== settings?.roles?.narrator?.id);
+  const changed = Boolean(selectedProfile && (selectedProfile.id !== settings?.roles?.narrator?.id || selectedProfile.version !== settings?.roles?.narrator?.version));
 
   async function save() {
     if (!selected || !changed || busy || saving) return;
@@ -84,8 +86,8 @@ export function ModelSwitcher({
       {error && <div role="alert" className="form-error">{error}</div>}
       <p className="details-meta">Model hiện tại</p>
       <p className="model-switcher-current">
-        {current?.model_label ?? current?.model ?? settings?.roles?.narrator?.id ?? (loading ? "Đang tải…" : "Chưa ghim model")}
-        {settings?.roles?.narrator && <span> · v{settings.roles.narrator.version}</span>}
+        {currentDisplay?.model_label ?? currentDisplay?.model ?? settings?.roles?.narrator?.id ?? (loading ? "Đang tải…" : "Chưa ghim model")}
+        {settings?.roles?.narrator && <span> · ghim v{settings.roles.narrator.version}{currentDisplay && currentDisplay.version !== settings.roles.narrator.version ? ` · bản mới v${currentDisplay.version} có sẵn` : ""}</span>}
       </p>
       <p className="details-meta">Chọn một profile đã xác minh cho các lượt kể chuyện mới. Lựa chọn này không đổi chính sách chi phí hay lượt đang chạy.</p>
       <label htmlFor="chat-narrator-profile">Model narrator</label>
@@ -105,10 +107,10 @@ export function ModelSwitcher({
         ))}
       </select>
       {verifiedProfiles.length === 0 && !loading && <p role="status">Chưa có profile narrator thật đã xác minh. Hãy mở Cài đặt để xác minh model.</p>}
-      {settings?.policy === "free_only" && (current?.provider === "ollama" || selectedProfile?.provider === "ollama") && (
+      {settings?.policy === "free_only" && (warningProfile?.provider === "ollama" || selectedProfile?.provider === "ollama") && (
         <p role="note" className="form-error">Ollama included credits chưa chứng minh được cơ chế khóa chi phí của provider. Free only vẫn giữ nguyên; hãy mở Cài đặt chi phí và tự chấp thuận Capped paid nếu muốn dùng profile này.</p>
       )}
-      {settings?.policy === "free_only" && current?.provider !== "ollama" && current?.credential_tier !== "free" && (
+      {settings?.policy === "free_only" && warningProfile?.provider !== "ollama" && warningProfile?.credential_tier !== "free" && (
         <p role="note" className="form-error">Model hiện tại chưa được xác minh là Free. Free only sẽ chặn lượt trả phí; hãy mở Cài đặt chi phí nếu bạn muốn tự chấp thuận Capped paid.</p>
       )}
       <div className="model-switcher-actions">
@@ -123,8 +125,6 @@ export function ModelSwitcher({
 }
 
 function isVerifiedRealProfile(profile: ModelProfileSummary) {
-  const identity = `${profile.id} ${profile.model} ${profile.model_label ?? ""}`.toLowerCase();
   return (profile.provider === "openrouter" || profile.provider === "ollama") &&
-    profile.pricing_verified === true &&
-    !/(fake|fixture|synthetic|demo|test[-_ ]?profile)/.test(identity);
+    profile.pricing_verified === true && profile.is_test_profile !== true;
 }

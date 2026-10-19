@@ -77,17 +77,28 @@ function isQuota(error: unknown) {
   );
 }
 function generationFailure(error: unknown): { message: string; economyRetry: boolean } {
-  const raw = error instanceof ApiError ? `${error.code ?? ""} ${error.message}`.toLowerCase() : "";
+  const raw = error instanceof ApiError ? error.message.trim().toLowerCase() : "";
   const validation = error instanceof ApiError && [400, 422].includes(error.status);
-  if (validation && /free_only cannot exclude purchased-credit billing|cannot exclude purchased-credit billing/.test(raw))
+  if (validation && raw === "free_only cannot exclude purchased-credit billing by the provider")
     return { message: "Ollama chưa chứng minh được giới hạn chi phí cho profile này. Hãy mở Cài đặt chi phí và tự chấp thuận Capped paid trước khi gửi.", economyRetry: false };
-  if (validation && /free_only|free only|verified free|credential tier/.test(raw))
+  if (validation && raw === "free_only requires a verified free credential tier")
     return { message: "Free only đang chặn model trả phí này. Hãy chọn profile Free đã xác minh hoặc mở Cài đặt chi phí để tự chấp thuận Capped paid.", economyRetry: false };
-  if (validation && /ollama|purchased credit|included credit|spending authorization|requires.*grant/.test(raw))
-    return { message: "Ollama chưa chứng minh được giới hạn chi phí cho profile này. Hãy mở Cài đặt chi phí và tự chấp thuận Capped paid trước khi gửi.", economyRetry: false };
-  if (validation && /trial model|profile does not match|trial.*(missing|revoked|expired|mismatched)|active trial authorization|cumulative budget|job count exhausted|per-send cap/.test(raw))
+  if (validation && [
+    "an active trial authorization is required for paid generation",
+    "trial model/profile does not match the grant",
+    "trial cumulative budget or job count exhausted",
+    "generation exceeds authorized trial per-send cap",
+    "paid trial authorization is missing, revoked, expired, or mismatched",
+  ].includes(raw))
     return { message: "Hạn mức trả phí chưa được chấp thuận cho đúng profile, đã hết hoặc vượt giới hạn lượt này. Hãy kiểm tra Cài đặt chi phí.", economyRetry: false };
-  if (validation && /context budget|blocked context|input limit|requested output|token budget/.test(raw))
+  if (validation && [
+    "required context exceeds the verified input budget",
+    "required director context exceeds the configured input budget",
+    "required narrator context exceeds the configured input budget",
+    "final serialized provider wire exceeds the verified input budget",
+    "director wire exceeds the configured input budget",
+    "narrator wire exceeds the configured input budget",
+  ].includes(raw))
     return { message: "Context hoặc ngân sách lượt kể không đáp ứng model này. Hãy mở Cài đặt chi phí để xem giới hạn đã chấp thuận.", economyRetry: false };
   if (isQuota(error)) return { message: "Không thể gửi vì quota hoặc khả năng model không đáp ứng. Chỉ model được xác minh Free mới được gửi với Free only; bản nháp được giữ.", economyRetry: true };
   return { message: "Không thể bắt đầu lượt kể chuyện; bản nháp vẫn được giữ.", economyRetry: false };

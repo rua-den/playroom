@@ -50,7 +50,7 @@ describe("ModelSwitcher", () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ ...settings, roles: { narrator: { id: "paid-model", version: 2 } } })))
       .mockResolvedValueOnce(new Response(JSON.stringify([
-        { id: "fake", version: 1, model: "fake-demo", provider: "openrouter", pricing_verified: true },
+        { id: "fake", version: 1, model: "fake-demo", provider: "openrouter", pricing_verified: true, is_test_profile: true },
         { id: "unverified", version: 1, model: "hidden", provider: "openrouter", pricing_verified: false },
         { id: "paid-model", version: 2, model: "gpt-oss:120b", model_label: "GPT OSS 120B", provider: "ollama", credential_tier: "free", pricing_verified: true },
       ])));
@@ -94,5 +94,23 @@ describe("ModelSwitcher", () => {
     await user.click(screen.getByRole("button", { name: "Lưu model" }));
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("bản nháp vẫn được giữ"));
     expect(select).toHaveValue("old-model");
+  });
+
+  it("allows saving a newer version when the immutable profile id is unchanged", async () => {
+    const versionedSettings = { ...settings, roles: { narrator: { id: "same-model", version: 1 } } };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(versionedSettings)))
+      .mockResolvedValueOnce(new Response(JSON.stringify([{ id: "same-model", version: 2, model: "same", model_label: "Same model v2", provider: "openrouter", pricing_verified: true }])))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...versionedSettings, roles: { narrator: { id: "same-model", version: 2 } } })));
+    vi.stubGlobal("fetch", fetchMock);
+    const onSaved = vi.fn();
+    render(<ModelSwitcher open onClose={vi.fn()} onOpenCostSettings={vi.fn()} onSaved={onSaved} busy={false} />);
+    await waitFor(() => expect(screen.getByRole("option", { name: /Same model v2/ })).toBeInTheDocument());
+    const user = userEvent.setup();
+    await user.selectOptions(screen.getByLabelText("Model narrator"), "same-model");
+    expect(screen.getByRole("button", { name: "Lưu model" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Lưu model" }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalledOnce());
+    expect(JSON.parse(String(fetchMock.mock.calls[2][1]?.body))).toEqual({ narrator_profile_id: "same-model" });
   });
 });

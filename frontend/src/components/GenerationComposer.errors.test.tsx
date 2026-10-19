@@ -37,7 +37,7 @@ describe("GenerationComposer provider validation messages", () => {
   it("sanitizes an unknown provider payload and keeps the draft", async () => {
     vi.stubGlobal("fetch", vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ id: "preview", campaign_id: "c", branch_id: "b", checkpoint_id: "cp", action: "keep me", status: "ready", profile_id: "p" }), { status: 201 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Chưa cấu hình hồ sơ nhà cung cấp secret sk-secret" }), { status: 422 })));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Chưa cấu hình hồ sơ nhà cung cấp Ollama included credit secret sk-secret" }), { status: 422 })));
     const user = userEvent.setup();
     render(<GenerationComposer ownerId="o" projection={projection} profileId="p" onCommitted={vi.fn()} />);
     const input = screen.getByLabelText("Hành động tiếp theo");
