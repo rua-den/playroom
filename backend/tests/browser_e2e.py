@@ -848,7 +848,7 @@ def browser_synthetic_chat() -> None:
                 assert len(campaign.calls) == before_zip_calls, "Import must not call the provider"
                 page.reload(wait_until="domcontentloaded")
                 expect(page.locator(".generation-composer")).to_have_count(0)
-                expect(page.get_by_text("125 cặp lượt đã nhập", exact=False)).to_be_visible(timeout=12000)
+                expect(page.get_by_text("125 cặp lượt đã lưu", exact=False)).to_be_visible(timeout=12000)
                 zip_checks = page.locator(".create-card input[type=checkbox]")
                 expect(zip_checks).to_have_count(4)
                 for index in range(4):
