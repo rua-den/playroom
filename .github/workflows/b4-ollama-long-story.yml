@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: b4-2026-10-19-owner-long-story-24
+  group: b4-2026-10-19-owner-long-story-24-paced
   cancel-in-progress: false
 
 jobs:
@@ -38,7 +38,7 @@ jobs:
 
   one-shot-live:
     if: >-
-      ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && startsWith(github.event.head_commit.message, 'ci(ollama): owner long story 24 turns 2026-10-19') }}
+      ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && startsWith(github.event.head_commit.message, 'ci(ollama): paced long story 24 turns 2026-10-19') }}
     needs: offline-contract
     runs-on: ubuntu-latest
     timeout-minutes: 15
