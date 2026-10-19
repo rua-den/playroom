@@ -10,6 +10,7 @@ import { GenerationComposer } from "./GenerationComposer";
 import { ThemeSelector } from "./ThemeSelector";
 import { ChatGptImport } from "./ChatGptImport";
 import { LegacyImport } from "./LegacyImport";
+import { ToastProvider, useToast } from "./Toast";
 
 const RECOVERABLE_JOB_STATUSES = new Set(["queued", "running", "cancelling", "interrupted", "candidate"]);
 export function recoverableJobCount(jobs: Array<{ status?: string }>) { return jobs.filter((job) => RECOVERABLE_JOB_STATUSES.has(job.status ?? "")).length; }
@@ -77,7 +78,7 @@ function CampaignForm({ onCreated, onCancel, ariaHidden = false }: { onCreated: 
   return <section className="create-card" aria-labelledby="create-title" aria-hidden={ariaHidden}><div className="section-heading"><div><p className="eyebrow">TRUYỆN MỚI</p><h2 id="create-title">Tạo truyện mới</h2><p className="form-hint">Mỗi truyện có bối cảnh, nhân vật và lịch sử trò chuyện riêng.</p></div><button type="button" className="quiet-button touch-target" onClick={onCancel}>Đóng</button></div>{error && <div role="alert" className="form-error">{error}</div>}<form className="campaign-form" onKeyDown={(event) => { if (event.key === "Enter" && (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229)) event.preventDefault(); }} onSubmit={submit}><label htmlFor="campaign-title">Tên truyện</label><input id="campaign-title" required value={draft.title} onChange={(event) => update("title", event.target.value)} /><fieldset><legend>Thế giới</legend><label htmlFor="world-name">Tên thế giới</label><input id="world-name" required value={draft.worldName} onChange={(event) => update("worldName", event.target.value)} /><label htmlFor="world-description">Mô tả thế giới</label><textarea id="world-description" value={draft.worldDescription} onChange={(event) => update("worldDescription", event.target.value)} /></fieldset><fieldset><legend>Persona người chơi</legend><label htmlFor="persona-name">Tên persona</label><input id="persona-name" required value={draft.personaName} onChange={(event) => update("personaName", event.target.value)} /><label htmlFor="persona-description">Mô tả persona</label><textarea id="persona-description" value={draft.personaDescription} onChange={(event) => update("personaDescription", event.target.value)} /></fieldset><fieldset><legend>Nhân vật</legend>{draft.characters.map((character, index) => <div className="character-row" key={character.id}><div className="character-fields"><label htmlFor={`character-name-${index}`}>Tên nhân vật {index + 1}</label><input id={`character-name-${index}`} required value={character.name} onChange={(event) => setDraft((current) => ({ ...current, characters: current.characters.map((item) => item.id === character.id ? { ...item, name: event.target.value } : item) }))} /><label htmlFor={`character-aliases-${index}`}>Bí danh nhân vật {index + 1}</label><input id={`character-aliases-${index}`} placeholder="Cách nhau bằng dấu phẩy" value={character.aliases} onChange={(event) => setDraft((current) => ({ ...current, characters: current.characters.map((item) => item.id === character.id ? { ...item, aliases: event.target.value } : item) }))} /></div><button type="button" className="quiet-button touch-target" onClick={() => setDraft((current) => ({ ...current, characters: current.characters.filter((item) => item.id !== character.id) }))}>Xóa</button></div>)}<button type="button" className="quiet-button touch-target" onClick={() => setDraft((current) => ({ ...current, characters: [...current.characters, { id: newId(), name: "", aliases: "" }] }))}>Thêm nhân vật</button></fieldset><button type="submit" className="primary-button touch-target" disabled={pending}>{pending ? "Đang lưu…" : "Lưu truyện"}</button></form></section>;
 }
 
-export function AppShell({ owner, onLogout, notice }: AppShellProps) {
+function AppShellContent({ owner, onLogout, notice }: AppShellProps) {
   const [campaigns, setCampaigns] = useState<CampaignSummary[]>([]); const [selectedId, setSelectedId] = useState<string | null>(null); const [projection, setProjection] = useState<CampaignProjection | null>(null); const [loading, setLoading] = useState(true); const [error, setError] = useState<string | null>(null); const [demoInfo, setDemoInfo] = useState<import("../api/types").DemoInfo | null>(null); const [createOpen, setCreateOpen] = useState(false); const [importOpen, setImportOpen] = useState(false); const [libraryOpen, setLibraryOpen] = useState(true); const [importMode, setImportMode] = useState<"chatgpt" | "legacy">("chatgpt"); const [drawerOpen, setDrawerOpen] = useState(false); const [detailsOpen, setDetailsOpen] = useState(false); const [settingsOpen, setSettingsOpen] = useState(false); const [editorTab, setEditorTab] = useState<"profiles" | "memory" | "scene">("profiles");
   const selectedIdRef = useRef<string | null>(selectedId); selectedIdRef.current = selectedId;
   const ownerRef = useRef(owner.id);
@@ -178,7 +179,12 @@ export function AppShell({ owner, onLogout, notice }: AppShellProps) {
   </main>;
 }
 
+export function AppShell(props: AppShellProps) {
+  return <ToastProvider ownerKey={props.owner.id}><AppShellContent {...props} /></ToastProvider>;
+}
+
 export function ImportReviewPanel({ projection, onApproved }: { projection: CampaignProjection; onApproved: () => void }) {
+  const toast = useToast();
   const [review, setReview] = useState({ persona: false, npc_voice_presence: false, canon_known_by_narrator_only: false, missing_history: false });
   const [dataConsent, setDataConsent] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -217,9 +223,9 @@ export function ImportReviewPanel({ projection, onApproved }: { projection: Camp
     setBusy(true); setError(null);
     try {
       await api.approveChatGptImport(projection.campaign.id, { branch_id: projection.branch.id, checkpoint_id: projection.branch.checkpoint_id, review: projection.import_review?.source_kind === "legacy_bundle" ? { ...review, provider_data: dataConsent } : review });
-      if (mountedRef.current && checkpointRef.current === targetCheckpointId && identityRef.current === targetIdentity) onApproved();
+      if (mountedRef.current && checkpointRef.current === targetCheckpointId && identityRef.current === targetIdentity) { toast.success("Đã duyệt checkpoint nhập."); onApproved(); }
     } catch (cause) {
-      if (mountedRef.current && identityRef.current === targetIdentity) setError(cause instanceof Error ? cause.message : "Không thể lưu duyệt checkpoint.");
+      if (mountedRef.current && identityRef.current === targetIdentity) { setError(cause instanceof Error ? cause.message : "Không thể lưu duyệt checkpoint."); toast.error("Không thể duyệt checkpoint nhập."); }
     }
     finally {
       if (mountedRef.current && identityRef.current === targetIdentity) setBusy(false);
