@@ -175,11 +175,11 @@ def test_mocked_ollama_sse_creates_one_attributed_candidate_commit_and_no_replay
 def test_mocked_ollama_accepts_complete_gemma_fenced_segments_and_commits(tmp_path):
     db, owner, campaign, head, yuna, service, job, calls = _run_mocked_narrator(
         tmp_path,
-        lambda cid, vid: _stream_response("```json\\n" + _valid_segments(cid, vid) + "\\n```"),
+        lambda cid, vid: _stream_response("```json\n" + _valid_segments(cid, vid) + "\n```"),
         key="ollama-gemma-fenced",
     )
     assert job["status"] == "candidate", job.get("failure")
-    assert job["draft"] == "Yuna đứng bên lưới, đợi câu trả lời.\\nTớ sẵn sàng."
+    assert job["draft"] == "Yuna đứng bên lưới, đợi câu trả lời.\nTớ sẵn sàng."
     assert job["output_segments"][1]["character_id"] == yuna
     assert len(calls) == 1
     assert service.commit_candidate(owner.id, job["id"])["status"] == "committed"
