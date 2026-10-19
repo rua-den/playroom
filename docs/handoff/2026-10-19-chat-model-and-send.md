@@ -1,0 +1,26 @@
+# Chat model selection and actionable Send errors — 19 October 2026
+
+Owner reported that the reading screen had no immediate model switch and Send only showed “Không thể bắt đầu lượt kể chuyện; bản nháp vẫn được giữ.” Work started from main `b9e9a327c84fea884e3f166b1090a0dc9d9ca3fe`, reusing the existing worktree on `fix/chat-model-and-send-errors-20261019`. Human routing requires Luna implementation and Sol/root review. Keep the graphite/jade design and shared modal/toast contracts.
+
+## Root cause and runtime boundary
+
+Redacted local request status showed context preview 201 followed by generation 422. Recent previews were ready and within the configured input budget. Read-only provider metadata showed an Ollama paid-tier narrator selected under `free_only`; direct dispatch validation reproduced the tier rejection. Independently, every Ollama profile requires explicit capped-paid authorization because included credits do not establish a verified provider lockout against purchased credits. Free starter eligibility alone does not bypass that rule. The prior runtime transition left Free only enabled and was therefore insufficient for dispatch. The frontend discarded these known rejection reasons behind a generic message.
+
+Do not alter billing eligibility, automatically enable paid mode, create grants, transfer old grants, grant private-data consent, or retry an uncertain request with a new key. The owner must explicitly configure and approve a spending allowance through the existing application controls. Unknown error bodies must remain sanitized; no key, private action, raw provider payload or source text belongs in notifications or logs.
+
+The real local application runs on `http://127.0.0.1:8000` with `.playroom-live/`. It was prepared as an independent local snapshot of the prior demo account/history/credentials, with import-provider approval reset and no active paid grant. The owner subsequently changed the narrator and reviewed the import through the UI. Preserve all current live settings and data; do not rerun preparation scripts or reset them to the earlier Gemma selection. Demo remains separate on port 8001. Use `Start Playroom.cmd` for real AI, and require explicit owner Send for private provider context.
+
+## Bounded implementation
+
+- Add a model action beside the composer, opening the shared modal and loading authoritative saved profiles/settings on open. Save only the explicit narrator selection after acknowledgement, preserving policy, budget and other roles. Keep the current story and unsent action mounted.
+- Use real verification metadata instead of model-name heuristics. Handle immutable profile version upgrades, stale/unmounted responses, busy/candidate/unresolved receipt guards and idle historical interrupted jobs.
+- Map known server validation reasons to fixed Vietnamese explanations and provide a cost-settings action where the Send rejection appears. Preserve existing quota/recovery semantics and sanitized unknown failures.
+- Extend the synthetic Chromium gate for mobile/desktop model selection, persisted ACK binding, modal focus/geometry, cost-settings handoff and unchanged draft, cost policy and fake-provider call count. No real provider or private-story call is part of these automated tests.
+
+During full verification, the existing concurrent first-owner setup test exposed a separate schema TOCTOU race (`PRAGMA table_info` followed by `ALTER TABLE`). The fix accepts only an actual duplicate-column error whose exact requested column is confirmed by a fresh schema read; all other errors propagate. Tests force both connections to retain the missing-column snapshot before proceeding. Migration 005 semantics and all canon/import/grant data are preserved.
+
+## Release verification
+
+Root independently reviews the final diff, runs frontend tests/typecheck/build, backend checks and both locked Chromium flows, and inspects synthetic screenshots. Exact PR-head and merged-main CI are required before delivery. The final PR records immutable run URLs and final counts. Preserve primary untracked `playroom/` and ignored `.playroom-*` data/credentials. Before restarting local servers, confirm there is no nonterminal generation; do not refresh the owner's browser or submit a private Send automatically.
+
+Final source head `dbdc5ae`: root independently verified 178 frontend tests passed with three existing skips; 395 backend tests passed with one platform skip; typecheck/build, backend compilation and whitespace checks passed. Both final locked Playwright 1.56.0 Chromium flows passed with exit zero, including the new 375/1280px model picker coverage. Root inspected the synthetic modal/composer screenshots. Independent Sol review cleared the final frontend, browser and schema changes. Deterministic migration regression was verified RED against the pre-fix migration and GREEN after restoration; the schema re-check's negative case also passed. No real inference or private-story quality result is claimed by these synthetic gates.
