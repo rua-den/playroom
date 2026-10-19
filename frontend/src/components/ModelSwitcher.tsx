@@ -151,8 +151,7 @@ export function ModelSwitcher({
       </select>
       {verifiedProfiles.length === 0 && !loading && (
         <p role="status">
-          Chưa có profile narrator thật đã xác minh. Hãy mở Cài đặt để xác minh
-          model.
+          Chưa có profile narrator khả dụng. Hãy mở Cài đặt để lưu model.
         </p>
       )}
       {settings?.roles?.narrator && !current && currentDisplay && (

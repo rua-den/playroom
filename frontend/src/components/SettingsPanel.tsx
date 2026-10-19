@@ -355,26 +355,22 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
             </p>
           </div>
         )}
+        <label htmlFor="provider-kind">Provider</label>
+        <select
+          className="touch-target"
+          id="provider-kind"
+          aria-label="Provider"
+          value={provider}
+          onChange={(event) => setProvider(event.target.value as "openrouter" | "ollama" | "custom")}
+        >
+          <option value="openrouter">OpenRouter</option>
+          <option value="ollama">Ollama Cloud</option>
+          <option value="custom">Custom OpenAI-compatible</option>
+        </select>
         {provider !== "custom" && (
           <>
             <fieldset>
               <legend>Credential</legend>
-              <label htmlFor="provider-kind">Provider</label>
-              <select
-                className="touch-target"
-                id="provider-kind"
-                aria-label="Provider"
-                value={provider}
-                onChange={(event) =>
-                  setProvider(
-                    event.target.value as "openrouter" | "ollama" | "custom",
-                  )
-                }
-              >
-                <option value="openrouter">OpenRouter</option>
-                <option value="ollama">Ollama Cloud</option>
-                <option value="custom">Custom OpenAI-compatible</option>
-              </select>
               <label htmlFor="provider-secret">
                 {provider === "ollama"
                   ? "Ollama Cloud API key"
