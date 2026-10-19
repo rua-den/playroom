@@ -834,14 +834,17 @@ def browser_synthetic_chat() -> None:
                 assert zip_projection["transcript"][-1]["narrative_text"] == "ZIP AI 124 — 💙"
                 assert all("ALT NOT PLAYABLE" not in json.dumps(turn, ensure_ascii=False) for turn in zip_projection["transcript"])
                 assert all("EXTERNAL UNSELECTED SOURCE" not in json.dumps(turn, ensure_ascii=False) for turn in zip_projection["transcript"])
-                assert len(zip_transfer_posts) == 2
-                import_post = zip_transfer_posts[1]
-                assert import_post["url"].endswith("/api/transfers/chatgpt/import")
-                import_conversation = import_post["body"]["conversation"]
-                assert import_conversation == preview_conversation
-                assert "ALT NOT PLAYABLE" in json.dumps(import_conversation, ensure_ascii=False)
-                assert "EXTERNAL UNSELECTED SOURCE" not in json.dumps(import_conversation, ensure_ascii=False)
-                assert "ATTACHMENT MUST BE IGNORED" not in json.dumps(import_conversation, ensure_ascii=False)
+                import_posts = [
+                    post for post in zip_transfer_posts
+                    if post["url"].endswith("/api/transfers/chatgpt/import")
+                ]
+                assert len(import_posts) == 2, "125 turns should require two bounded import requests"
+                for import_post in import_posts:
+                    import_conversation = import_post["body"]["conversation"]
+                    assert import_conversation == preview_conversation
+                    assert "ALT NOT PLAYABLE" in json.dumps(import_conversation, ensure_ascii=False)
+                    assert "EXTERNAL UNSELECTED SOURCE" not in json.dumps(import_conversation, ensure_ascii=False)
+                    assert "ATTACHMENT MUST BE IGNORED" not in json.dumps(import_conversation, ensure_ascii=False)
                 assert len(campaign.calls) == before_zip_calls, "Import must not call the provider"
                 page.reload(wait_until="domcontentloaded")
                 expect(page.locator(".generation-composer")).to_have_count(0)
