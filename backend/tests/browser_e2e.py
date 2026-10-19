@@ -310,6 +310,11 @@ def _assert_modal_heading_readable(dialog) -> None:
     assert font_size >= 16, f"Modal heading is too small to read: {font_size}px"
 
 
+def _assert_no_horizontal_overflow(page, width: int, surface: str) -> None:
+    overflow = page.evaluate("document.documentElement.scrollWidth - window.innerWidth")
+    assert overflow <= 1, f"Horizontal overflow on {surface} at {width}px: {overflow}px"
+
+
 def _assert_modal_focus(page, dialog, trigger) -> None:
     app_shell_is_inert = page.locator("main.app-shell").evaluate(
         "el => { for (let node = el; node; node = node.parentElement) "
@@ -341,6 +346,50 @@ def _assert_story_preserved(page, title: str, draft: str, turns: int) -> None:
     )
     expect(page.locator(".story-turn")).to_have_count(turns)
     expect(page.locator("#generation-action")).to_have_value(draft)
+
+
+def _exercise_story_management_action(page, width: int, title: str, draft: str, turns: int, action: str, screenshot_name: str | None = None) -> None:
+    """Open a story-management action through the control visible at this width."""
+    page.set_viewport_size({"width": width, "height": 780})
+    _assert_no_horizontal_overflow(page, width, "chat management navigation")
+    if width <= 560:
+        management_trigger = page.get_by_role("button", name="Truyện và tác vụ", exact=True)
+        expect(management_trigger).to_be_visible()
+        management_trigger.click()
+        story_menu = page.get_by_role("dialog", name="Danh sách truyện")
+        expect(story_menu).to_be_visible(timeout=12000)
+        expect(story_menu.get_by_role("button", name=title, exact=True)).to_be_visible()
+        for label in ("Tạo truyện mới", "Nhập ChatGPT", "Nhập Legacy"):
+            expect(story_menu.get_by_role("button", name=label, exact=True)).to_be_visible()
+        expect(story_menu.get_by_role("button", name=action, exact=True)).to_be_enabled()
+        if screenshot_name:
+            _visual_screenshot(page, "story-menu-375-dark.png", full_page=False)
+        story_menu.get_by_role("button", name=action, exact=True).click()
+        focus_return = management_trigger
+    else:
+        current_story = page.get_by_role("combobox", name="Truyện hiện tại")
+        expect(current_story).to_be_visible()
+        assert title in current_story.locator("option").all_text_contents()
+        direct_action = page.get_by_role("button", name=action, exact=True)
+        expect(direct_action).to_be_visible()
+        expect(direct_action).to_be_enabled()
+        direct_action.click()
+        focus_return = direct_action
+
+    dialog_name = {
+        "Tạo truyện mới": "Tạo truyện mới",
+        "Nhập ChatGPT": "Nhập hội thoại ChatGPT",
+        "Nhập Legacy": "Nhập Legacy Story Bundle",
+    }[action]
+    dialog = page.get_by_role("dialog", name=dialog_name)
+    expect(dialog).to_be_visible(timeout=12000)
+    _assert_modal_geometry(page, dialog, width)
+    _assert_modal_heading_readable(dialog)
+    _assert_modal_scroll_header(page, dialog)
+    if screenshot_name:
+        _visual_screenshot(page, screenshot_name, full_page=False)
+    _assert_modal_focus(page, dialog, focus_return)
+    _assert_story_preserved(page, title, draft, turns)
 
 
 def _browser_zip_conversations() -> bytes:
@@ -427,9 +476,11 @@ def browser_synthetic_chat() -> None:
                 page.on("request", lambda r: outbound.append(r.url) if not r.url.startswith(origin) else None)
                 page.goto(origin, wait_until="domcontentloaded")
                 expect(page.get_by_role("heading", name="Đăng nhập Playroom")).to_be_visible()
-                for width, suffix in ((375, "375"), (1280, "1280")):
+                for width, suffix in ((375, "375"), (757, None), (1280, "1280")):
                     page.set_viewport_size({"width": width, "height": 900})
-                    _visual_screenshot(page, f"login-{suffix}.png")
+                    _assert_no_horizontal_overflow(page, width, "login")
+                    if suffix:
+                        _visual_screenshot(page, f"login-{suffix}.png")
                 page.get_by_label("Email").fill(EMAIL)
                 page.get_by_label("Mật khẩu").fill(PASSWORD)
                 page.get_by_role("button", name="Đăng nhập").click()
@@ -499,9 +550,11 @@ def browser_synthetic_chat() -> None:
                 # Real DOM->POST->queue->fake worker->commit->projection cycle.
                 first = "Yuna, sẵn sàng chưa?\n**Henn chỉnh băng đô 💙**"
                 _send_and_wait(page, first, 1)
-                for width, suffix in ((375, "375"), (1280, "1280")):
+                for width in (375, 757, 1280):
                     page.set_viewport_size({"width": width, "height": 900})
-                    _visual_screenshot(page, f"chat-one-turn-{suffix}.png")
+                    _assert_no_horizontal_overflow(page, width, "chat after one fake turn")
+                    if width in (375, 1280):
+                        _visual_screenshot(page, f"chat-one-turn-{width}.png")
                 transcript = _project(page, origin, campaign_id, branch_id)["transcript"]
                 assert len(transcript) == 1
                 assert transcript[0]["input_segments"] == [
@@ -516,9 +569,11 @@ def browser_synthetic_chat() -> None:
 
                 _send_and_wait(page, "Tớ đợi cậu ở vạch sân.", 2)
                 assert len(campaign.calls) == 2
-                for width, suffix in ((375, "375"), (1280, "1280")):
+                for width in (375, 757, 1280):
                     page.set_viewport_size({"width": width, "height": 900})
-                    _visual_screenshot(page, f"chat-two-turns-{suffix}.png")
+                    _assert_no_horizontal_overflow(page, width, "chat after two fake turns")
+                    if width in (375, 1280):
+                        _visual_screenshot(page, f"chat-two-turns-{width}.png")
 
                 # The library must retain multiple stories and restore each
                 # story's own history. Create B through the authenticated API
@@ -563,6 +618,9 @@ def browser_synthetic_chat() -> None:
                     expect(page.locator("#library-title")).to_be_visible()
                     expect(first_card.locator("h2")).to_have_text(first_title)
                     expect(second_card.locator("h2")).to_have_text("Synthetic history B")
+                    expect(page.get_by_role("button", name=re.compile("Tạo truyện mới"), exact=False)).to_be_visible()
+                    expect(page.get_by_role("button", name=re.compile("Nhập.*ChatGPT"), exact=False)).to_be_visible()
+                    expect(page.get_by_role("button", name=re.compile("Nhập.*Legacy"), exact=False)).to_be_visible()
                     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
                     _visual_screenshot(page, filename)
                 second_card.locator("button").click()
@@ -1050,24 +1108,18 @@ def browser_synthetic_chat() -> None:
                 _assert_modal_focus(page, context_dialog, context_trigger)
                 _assert_story_preserved(page, modal_title, modal_draft, 1)
 
-                for action_name in ("Tạo truyện mới", "Nhập ChatGPT", "Nhập Legacy"):
-                    prefix = {
-                        "Tạo truyện mới": "create",
-                        "Nhập ChatGPT": "chatgpt-import",
-                        "Nhập Legacy": "legacy-import",
-                    }[action_name]
-                    for viewport_width, theme in ((375, "dark"), (1280, "dark")):
-                        page.set_viewport_size({"width": viewport_width, "height": 780})
-                        create_or_import_trigger = page.get_by_role("button", name=re.compile(action_name), exact=False)
-                        create_or_import_trigger.click()
-                        modal_dialog = page.get_by_role("dialog").last
-                        expect(modal_dialog).to_be_visible(timeout=12000)
-                        _assert_modal_geometry(page, modal_dialog, viewport_width)
-                        _assert_modal_heading_readable(modal_dialog)
-                        _assert_modal_scroll_header(page, modal_dialog)
-                        _visual_screenshot(page, f"{prefix}-{viewport_width}-{theme}.png", full_page=False)
-                        _assert_modal_focus(page, modal_dialog, create_or_import_trigger)
-                        _assert_story_preserved(page, modal_title, modal_draft, 1)
+                action_prefixes = {
+                    "Tạo truyện mới": "create",
+                    "Nhập ChatGPT": "chatgpt-import",
+                    "Nhập Legacy": "legacy-import",
+                }
+                for action_name, prefix in action_prefixes.items():
+                    for viewport_width, theme in ((375, "dark"), (757, "default"), (1280, "dark")):
+                        screenshot_name = f"{prefix}-{viewport_width}-{theme}.png" if viewport_width != 757 else None
+                        _exercise_story_management_action(
+                            page, viewport_width, modal_title, modal_draft, 1,
+                            action_name, screenshot_name=screenshot_name,
+                        )
 
                 assert len(campaign.calls) == provider_calls_before_modals, (
                     "Opening or closing a modal must not dispatch a provider call"
