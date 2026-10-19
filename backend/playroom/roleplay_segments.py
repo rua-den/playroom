@@ -111,9 +111,9 @@ def parse_narrator_payload(raw: str, selected_characters: Mapping[str, str]) -> 
         # Strip ONLY the exact, entire Markdown wrapper: never trust mixed prose,
         # malformed/unclosed fences or unknown code languages.
         match = re.fullmatch(
-            r"[ \\t]*```(?:json)?[ \\t]*\\r?\\n"
-            r"(?P<body>[\\s\\S]*?)"
-            r"\\r?\\n```[ \\t]*(?:\\r?\\n)?",
+            r"[ \t]*```(?:json)?[ \t]*\r?\n"
+            r"(?P<body>[\s\S]*?)"
+            r"\r?\n```[ \t]*(?:\r?\n)?",
             leading,
             flags=re.IGNORECASE,
         )
