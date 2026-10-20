@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from .. import campaigns as service
@@ -48,8 +48,8 @@ class ProfileRemove(BaseModel):
 
 
 @router.get("")
-def campaigns(connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
-    return service.list_campaigns(connection, owner.id)
+def campaigns(trashed: bool = Query(default=False), connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
+    return service.list_campaigns(connection, owner.id, trashed=trashed)
 
 
 @router.post("", status_code=201)
@@ -61,6 +61,16 @@ def create(payload: CampaignCreate, connection: sqlite3.Connection = Depends(req
 @router.get("/{campaign_id}")
 def get(campaign_id: str, connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
     return service.get_campaign(connection, campaign_id, owner.id)
+
+
+@router.delete("/{campaign_id}")
+def trash(campaign_id: str, connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
+    return service.trash_campaign(connection, campaign_id, owner.id)
+
+
+@router.post("/{campaign_id}/restore")
+def restore(campaign_id: str, connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
+    return service.restore_campaign(connection, campaign_id, owner.id)
 
 
 @router.get("/{campaign_id}/projection")

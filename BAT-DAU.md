@@ -10,6 +10,8 @@
 
 Trong **Thư viện truyện**, chọn **Mở truyện / Đọc tiếp** để trở lại truyện đã lưu. Màn trò chuyện ghi rõ **Đang đọc** và tên truyện. Tải lại sẽ mở truyện gần nhất đã chọn trên trình duyệt này; nếu chưa có lựa chọn hợp lệ, app mở thư viện. Nút **Thư viện truyện** luôn có để quay về danh sách. Chỉ nhấn **Tạo truyện mới** khi muốn bắt đầu một truyện riêng.
 
+Để bỏ một truyện khỏi thư viện, chọn **Xoá** trên truyện đó rồi xác nhận. Truyện được chuyển vào **Thùng rác**; thông báo nổi có nút **Hoàn tác**. Bạn cũng có thể mở **Thùng rác** trong thư viện và chọn **Khôi phục** sau khi tải lại trang. Lịch sử, hồ sơ và ký ức vẫn được giữ để khôi phục. Nếu truyện còn một lượt AI chưa xử lý xong, hãy xử lý lượt đó trước khi xoá.
+
 **Cài đặt**, **Hồ sơ và ký ức**, **Tạo truyện mới** và **Nhập dữ liệu** mở trong modal. Nút **Đóng** luôn ở đầu bảng; có thể nhấn **Esc** để quay lại truyện. Đóng rồi mở lại form tạo/nhập sẽ giữ bản nháp chưa lưu; sau khi tạo hoặc nhập thành công, form được làm mới. Lời đang gõ trong truyện vẫn được giữ khi mở các bảng này.
 
 Khi lưu cấu hình, hồ sơ, ký ức hoặc cảnh, thông báo nổi xuất hiện ở góc trên màn hình. Thành công hiện khoảng 5 giây và tạm dừng khi rê chuột hoặc dùng bàn phím trên thông báo; lỗi có nút **Đóng** và vẫn có chi tiết cạnh form.

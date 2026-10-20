@@ -13,6 +13,7 @@ import { ChatGptImport } from "./ChatGptImport";
 import { LegacyImport } from "./LegacyImport";
 import { Modal } from "./Modal";
 import { ToastProvider, useToast } from "./Toast";
+import { CampaignLibrary } from "./CampaignLibrary";
 
 const RECOVERABLE_JOB_STATUSES = new Set(["queued", "running", "cancelling", "interrupted", "candidate"]);
 export function recoverableJobCount(jobs: Array<{ status?: string }>) { return jobs.filter((job) => RECOVERABLE_JOB_STATUSES.has(job.status ?? "")).length; }
@@ -82,15 +83,57 @@ function CampaignForm({ onCreated, onCancel, ariaHidden = false }: { onCreated: 
 }
 
 function AppShellContent({ owner, onLogout, notice }: AppShellProps) {
-  const [campaigns, setCampaigns] = useState<CampaignSummary[]>([]); const [selectedId, setSelectedId] = useState<string | null>(null); const [projection, setProjection] = useState<CampaignProjection | null>(null); const [loading, setLoading] = useState(true); const [error, setError] = useState<string | null>(null); const [demoInfo, setDemoInfo] = useState<import("../api/types").DemoInfo | null>(null); const [createOpen, setCreateOpen] = useState(false); const [createInstance, setCreateInstance] = useState(0); const [importOpen, setImportOpen] = useState(false); const [importInstance, setImportInstance] = useState(0); const [libraryOpen, setLibraryOpen] = useState(true); const [importMode, setImportMode] = useState<"chatgpt" | "legacy">("chatgpt"); const [drawerOpen, setDrawerOpen] = useState(false); const [detailsOpen, setDetailsOpen] = useState(false); const [settingsOpen, setSettingsOpen] = useState(false); const [modelOpen, setModelOpen] = useState(false); const [editorTab, setEditorTab] = useState<"profiles" | "memory" | "scene">("profiles");
+  const [campaigns, setCampaigns] = useState<CampaignSummary[]>([]); const [trashedCampaigns, setTrashedCampaigns] = useState<CampaignSummary[]>([]); const [libraryMode, setLibraryMode] = useState<"active" | "trash">("active"); const [selectedId, setSelectedId] = useState<string | null>(null); const [projection, setProjection] = useState<CampaignProjection | null>(null); const [loading, setLoading] = useState(true); const [error, setError] = useState<string | null>(null); const [demoInfo, setDemoInfo] = useState<import("../api/types").DemoInfo | null>(null); const [createOpen, setCreateOpen] = useState(false); const [createInstance, setCreateInstance] = useState(0); const [importOpen, setImportOpen] = useState(false); const [importInstance, setImportInstance] = useState(0); const [libraryOpen, setLibraryOpen] = useState(true); const [importMode, setImportMode] = useState<"chatgpt" | "legacy">("chatgpt"); const [drawerOpen, setDrawerOpen] = useState(false); const [detailsOpen, setDetailsOpen] = useState(false); const [settingsOpen, setSettingsOpen] = useState(false); const [modelOpen, setModelOpen] = useState(false); const [deleteTarget, setDeleteTarget] = useState<CampaignSummary | null>(null); const [deletePending, setDeletePending] = useState(false); const [deleteError, setDeleteError] = useState<string | null>(null); const [editorTab, setEditorTab] = useState<"profiles" | "memory" | "scene">("profiles");
   const selectedIdRef = useRef<string | null>(selectedId); selectedIdRef.current = selectedId;
+  const toast = useToast();
   const ownerRef = useRef(owner.id);
-  useEffect(() => { if (ownerRef.current === owner.id) return; ownerRef.current = owner.id; setCampaigns([]); setSelectedId(null); setProjection(null); setError(null); setModelOpen(false); setLibraryOpen(true); }, [owner.id]);
+  const mountedRef = useRef(true);
+  const libraryModeRef = useRef<"active" | "trash">("active");
+  useEffect(() => { if (ownerRef.current === owner.id) return; ownerRef.current = owner.id; setCampaigns([]); setTrashedCampaigns([]); setLibraryMode("active"); setSelectedId(null); setProjection(null); setError(null); setModelOpen(false); setDeleteTarget(null); setLibraryOpen(true); }, [owner.id]);
   const projectionRequest = useRef(0);
+  const catalogRequest = useRef(0);
   const drawerTrigger = useRef<HTMLButtonElement>(null);
-  useEffect(() => { let active = true; setLoading(true); if (import.meta.env.PROD) api.getDemoInfo().then((info) => { if (active) setDemoInfo(info); }).catch(() => undefined); api.listCampaigns().then((items) => { if (active) { const safeItems = Array.isArray(items) ? items : []; const remembered = readLastStoryId(owner.id); const restored = remembered && safeItems.some((item) => item.id === remembered) ? remembered : null; setCampaigns(safeItems); setSelectedId(restored); setLibraryOpen(!restored); } }).catch(() => { if (active) setError("Không thể tải thư viện truyện."); }).finally(() => { if (active) setLoading(false); }); return () => { active = false; }; }, [owner.id]);
-  useEffect(() => { if (!selectedId) { setProjection(null); return; } let active = true; setProjection(null); setError(null); api.getCampaign(selectedId).then((detail) => api.getCampaignProjection(selectedId, detail.branch_id)).then((next) => { if (active) setProjection(next); }).catch(() => { if (active) setError("Không thể tải truyện này."); }); return () => { active = false; }; }, [selectedId]);
-  useEffect(() => { projectionRequest.current += 1; }, [selectedId]);
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
+  useEffect(() => { const token = ++catalogRequest.current; const targetOwner = owner.id; setLoading(true); if (import.meta.env.PROD) api.getDemoInfo().then((info) => { if (mountedRef.current && ownerRef.current === targetOwner) setDemoInfo(info); }).catch(() => undefined); api.listCampaigns().then((items) => { if (mountedRef.current && ownerRef.current === targetOwner && catalogRequest.current === token) { const safeItems = Array.isArray(items) ? items : []; const remembered = readLastStoryId(targetOwner); const restored = remembered && safeItems.some((item) => item.id === remembered) ? remembered : null; selectedIdRef.current = restored; setCampaigns(safeItems); setSelectedId(restored); setLibraryOpen(!restored); } }).catch(() => { if (mountedRef.current && ownerRef.current === targetOwner && catalogRequest.current === token) setError("Không thể tải thư viện truyện."); }).finally(() => { if (mountedRef.current && ownerRef.current === targetOwner && catalogRequest.current === token) setLoading(false); }); return () => { catalogRequest.current += 1; }; }, [owner.id]);
+  useEffect(() => { const targetId = selectedId; const requestId = ++projectionRequest.current; if (!targetId) { setProjection(null); return; } setProjection(null); setError(null); api.getCampaign(targetId).then((detail) => { if (!mountedRef.current || selectedIdRef.current !== targetId || projectionRequest.current !== requestId) return null; return api.getCampaignProjection(targetId, detail.branch_id); }).then((next) => { if (next && mountedRef.current && selectedIdRef.current === targetId && projectionRequest.current === requestId) setProjection(next); }).catch(() => { if (mountedRef.current && selectedIdRef.current === targetId && projectionRequest.current === requestId) setError("Không thể tải truyện này."); }); return () => { projectionRequest.current += 1; }; }, [selectedId]);
+  const trashRequest = useRef(0);
+  const [trashLoading, setTrashLoading] = useState(false);
+  const restorePending = useRef(new Map<string, Promise<void>>());
+  const [restorePendingIds, setRestorePendingIds] = useState<Set<string>>(new Set());
+  const deletePendingIds = useRef(new Set<string>());
+  async function openTrash() {
+    const requestId = ++trashRequest.current;
+    libraryModeRef.current = "trash"; setLibraryMode("trash"); setError(null); setTrashLoading(true);
+    try { const items = await api.listCampaigns(true); if (trashRequest.current === requestId && ownerRef.current === owner.id && mountedRef.current && libraryModeRef.current === "trash") setTrashedCampaigns(Array.isArray(items) ? items : []); }
+    catch { if (trashRequest.current === requestId && ownerRef.current === owner.id && mountedRef.current && libraryModeRef.current === "trash") setError("Không thể tải Thùng rác."); }
+    finally { if (trashRequest.current === requestId && ownerRef.current === owner.id && mountedRef.current) setTrashLoading(false); }
+  }
+  function openActiveLibrary() { ++trashRequest.current; libraryModeRef.current = "active"; setLibraryMode("active"); setError(null); setTrashLoading(false); }
+  async function restoreStory(item: CampaignSummary, fromUndo = false) {
+    if (ownerRef.current !== owner.id) return Promise.resolve();
+    const existing = restorePending.current.get(item.id); if (existing) return existing;
+    ++trashRequest.current; setTrashLoading(false);
+    const request = (async () => { try { const restored = await api.restoreCampaign(item.id); if (ownerRef.current !== owner.id || !mountedRef.current) return; setError(null); setTrashedCampaigns((current) => current.filter((candidate) => candidate.id !== item.id)); setCampaigns((current) => [restored, ...current.filter((candidate) => candidate.id !== restored.id)]); toast.success("Đã khôi phục truyện."); }
+      catch (cause) { if (ownerRef.current === owner.id) { const message = cause instanceof ApiError ? cause.message : "Không thể khôi phục truyện."; setError(message); toast.error(message); } throw cause; }
+      finally { restorePending.current.delete(item.id); setRestorePendingIds((current) => { const next = new Set(current); next.delete(item.id); return next; }); } })();
+    restorePending.current.set(item.id, request); setRestorePendingIds((current) => new Set(current).add(item.id)); return request;
+  }
+  async function deleteStory() {
+    if (!deleteTarget || deletePending) return;
+    const target = deleteTarget; const targetOwner = owner.id;
+    if (deletePendingIds.current.has(target.id)) return;
+    deletePendingIds.current.add(target.id); setDeletePending(true); setDeleteError(null);
+    try {
+      const trashed = await api.deleteCampaign(target.id);
+      if (ownerRef.current !== targetOwner || !mountedRef.current) return;
+      setCampaigns((current) => current.filter((item) => item.id !== target.id));
+      setDeleteTarget(null);
+      try { if (readLastStoryId(targetOwner) === target.id) window.localStorage.removeItem(lastStoryStorageKey(targetOwner)); } catch { /* storage may be blocked */ }
+      if (selectedIdRef.current === target.id) { projectionRequest.current += 1; selectedIdRef.current = null; setSelectedId(null); setProjection(null); setError(null); setDetailsOpen(false); setDrawerOpen(false); setModelOpen(false); setLibraryOpen(true); }
+      toast.success("\u0110\u00e3 chuy\u1ec3n truy\u1ec7n v\u00e0o Th\u00f9ng r\u00e1c.", { label: "Ho\u00e0n t\u00e1c", onClick: () => restoreStory(trashed, true) });
+    } catch (cause) { if (ownerRef.current === targetOwner) { const message = cause instanceof ApiError && cause.status === 409 ? "Truyện đang có lượt AI chưa hoàn tất. Hãy xử lý lượt đó trước khi xoá." : cause instanceof ApiError ? cause.message : "Không thể chuyển truyện vào Thùng rác."; setDeleteError(message); toast.error(message); } }
+    finally { deletePendingIds.current.delete(target.id); if (ownerRef.current === targetOwner) setDeletePending(false); }
+  }
   function closeDrawer() { setDrawerOpen(false); }
   function openDetails() { setDetailsOpen(true); }
   function closeDetails() { setDetailsOpen(false); }
@@ -100,17 +143,16 @@ function AppShellContent({ owner, onLogout, notice }: AppShellProps) {
   const selected = useMemo(() => campaigns.find((item) => item.id === selectedId) ?? null, [campaigns, selectedId]);
   async function refreshProjection() { if (!selectedId) return undefined; const targetId = selectedId; const requestId = ++projectionRequest.current; try { const detail = await api.getCampaign(targetId); const next = await api.getCampaignProjection(targetId, detail.branch_id); if (projectionRequest.current !== requestId || selectedIdRef.current !== targetId) return undefined; setProjection(next); return next; } catch { if (projectionRequest.current === requestId && selectedIdRef.current === targetId) setError("Không thể làm mới truyện."); return undefined; } }
   const editorChanged = () => refreshProjection();
-  function chooseStory(id: string) { if (id !== selectedIdRef.current) setProjection(null); setSelectedId(id); writeLastStoryId(owner.id, id); setLibraryOpen(false); setCreateOpen(false); setImportOpen(false); }
+  function chooseStory(id: string) { if (id !== selectedIdRef.current) { projectionRequest.current += 1; selectedIdRef.current = id; setProjection(null); } setSelectedId(id); writeLastStoryId(owner.id, id); setLibraryOpen(false); setCreateOpen(false); setImportOpen(false); }
   function created(campaign: CampaignSummary) { setCampaigns((current) => [campaign, ...current]); setCreateInstance((current) => current + 1); setImportInstance((current) => current + 1); setCreateOpen(false); setImportOpen(false); chooseStory(campaign.id); }
   function openCreate() { setImportOpen(false); setCreateOpen(true); }
   function openImport(mode: "chatgpt" | "legacy") { setCreateOpen(false); setImportMode(mode); setImportOpen(true); }
   const formatStoryDate = (value: string) => { const date = new Date(value); return Number.isNaN(date.valueOf()) ? "" : new Intl.DateTimeFormat("vi-VN", { dateStyle: "medium" }).format(date); };
-  const libraryCampaigns = selected ? [selected, ...campaigns.filter((item) => item.id !== selected.id)] : campaigns;
-  const library = <section className="story-library" aria-labelledby="library-title" aria-hidden={settingsOpen || drawerOpen || detailsOpen || createOpen || importOpen}><div className="section-heading"><div><h1 id="library-title">Thư viện truyện</h1><p className="library-intro">{campaigns.length ? "Mở lại một câu chuyện đã lưu hoặc bắt đầu một thế giới mới." : "Tạo truyện mới hoặc nhập một câu chuyện đã lưu."}</p></div>{(!error || campaigns.length > 0) && <button type="button" className="primary-button touch-target" onClick={openCreate}>+ Tạo truyện mới</button>}</div>{!campaigns.length && !error && <div className="library-empty"><svg viewBox="0 0 48 48" width="42" height="42" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M7 9c6-1.5 11-.2 17 3v27c-6-2.8-11-4-17-2.5z"/><path d="M41 9c-6-1.5-11-.2-17 3v27c6-2.8 11-4 17-2.5z"/><path d="M13 17h5M13 23h5M30 17h5M30 23h5"/></svg><div><h2>Chưa có truyện nào</h2><p>Bắt đầu truyện mới hoặc nhập hội thoại ChatGPT hay Legacy Bundle để tiếp tục.</p></div></div>}<div className="story-library-grid">{libraryCampaigns.map((item) => <article className={`story-card ${item.id === selectedId ? "is-current" : ""}`} key={item.id}><div><p className="story-card-status">{item.id === selectedId ? "Đang đọc" : item.archived_at ? "Đã lưu trữ" : "Đã lưu"}</p><h2>{item.title}</h2><p className="details-meta">Cập nhật {formatStoryDate(item.updated_at)}</p></div><button type="button" className="quiet-button touch-target" onClick={() => chooseStory(item.id)}>{item.id === selectedId ? "Đọc tiếp" : "Mở truyện"}</button></article>)}</div>{(!error || campaigns.length > 0) && <div className="library-import-actions"><button type="button" className="quiet-button touch-target" onClick={() => openImport("chatgpt")}>Nhập hội thoại ChatGPT</button><button type="button" className="quiet-button touch-target" onClick={() => openImport("legacy")}>Nhập Legacy Bundle</button></div>}</section>;
+  const library = <CampaignLibrary campaigns={campaigns} trash={trashedCampaigns} mode={libraryMode} selectedId={selectedId} error={error} trashLoading={trashLoading} restorePending={restorePendingIds} ariaHidden={settingsOpen || drawerOpen || detailsOpen || createOpen || importOpen || modelOpen || deleteTarget !== null} onMode={(mode) => { if (mode === "trash") void openTrash(); else openActiveLibrary(); }} onCreate={openCreate} onChoose={chooseStory} onDelete={(item) => { setDeleteError(null); setDeleteTarget(item); }} onRestore={(item) => { void restoreStory(item).catch(() => undefined); }} onImport={openImport} formatDate={formatStoryDate} />;
   if (loading) return <main className="app-shell loading-screen" role="status">Đang tải phòng truyện…</main>;
   const contextPanel = projection && <ContextPanel projection={projection} editorTab={editorTab} setEditorTab={setEditorTab} editorChanged={editorChanged} />;
   return <main className={`app-shell story-app ${error && !campaigns.length ? "catalog-failed" : ""}`}>
-    <header className="topbar" aria-hidden={drawerOpen || detailsOpen || settingsOpen || modelOpen || createOpen || importOpen}>
+    <header className="topbar" aria-hidden={drawerOpen || detailsOpen || settingsOpen || modelOpen || createOpen || importOpen || deleteTarget !== null}>
       <div className="wordmark"><span className="brand-mark small" aria-hidden="true"><svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M4 5.5c3.2-.8 5.9-.1 8 1.9v12c-2.1-2-4.8-2.7-8-1.9z"/><path d="M20 5.5c-3.2-.8-5.9-.1-8 1.9v12c2.1-2 4.8-2.7 8-1.9z"/><path d="M7 9h2M15 9h2M7 12h2M15 12h2"/></svg></span><span>Playroom</span>{demoInfo?.mode === "synthetic" && <span className="demo-badge" aria-label={demoInfo.label} title={demoInfo.label}>{demoInfo.label}</span>}</div>
       <div className="campaign-controls">
         <button type="button" className="quiet-button touch-target library-trigger" onClick={() => { setCreateOpen(false); setImportOpen(false); setLibraryOpen(true); }}>Thư viện truyện</button>
@@ -130,12 +172,12 @@ function AppShellContent({ owner, onLogout, notice }: AppShellProps) {
     </header>
     {notice && <div role="alert" className="form-error shell-notice" aria-hidden={drawerOpen || detailsOpen || settingsOpen || createOpen || importOpen}> {notice}</div>}
     {error && !campaigns.length && <a className="catalog-retry" href="/">Thử lại</a>}
-    <>{libraryOpen && library}{error && libraryOpen && <div role="alert" className="form-error shell-notice">{error}</div>}<div className={libraryOpen ? "library-story-hidden" : "story-workspace"} aria-hidden={libraryOpen} hidden={libraryOpen}>
+    <>{libraryOpen && library}{error && libraryOpen && <div role="alert" className="form-error shell-notice">{error}</div>}<div className={libraryOpen ? "library-story-hidden" : "story-workspace"} aria-hidden={libraryOpen || deleteTarget !== null} hidden={libraryOpen}>
       <div className="mobile-actions" aria-hidden={libraryOpen || drawerOpen || detailsOpen || settingsOpen || modelOpen || createOpen || importOpen}>
         <button type="button" className="quiet-button touch-target mobile-campaign-trigger" onClick={() => setDrawerOpen(true)} ref={drawerTrigger}>Truyện và tác vụ</button>
         {projection && <button type="button" className="quiet-button touch-target" onClick={openDetails}>AI đang nhớ gì</button>}
       </div>
-      <div className="workspace-grid" aria-hidden={libraryOpen || drawerOpen || detailsOpen || settingsOpen || modelOpen || createOpen || importOpen}>
+      <div className="workspace-grid" aria-hidden={libraryOpen || drawerOpen || detailsOpen || settingsOpen || modelOpen || createOpen || importOpen || deleteTarget !== null}>
         <section className="story-column conversation-column">
           {error && <div role="alert" className="form-error">{error}</div>}
           {projection && <p className="story-reading-label">Đang đọc</p>}
@@ -158,6 +200,7 @@ function AppShellContent({ owner, onLogout, notice }: AppShellProps) {
     <Modal open={modelOpen} title="Model kể chuyện" closeLabel="Đóng chọn model" onClose={() => setModelOpen(false)}>
       {modelOpen && <ModelSwitcher key={owner.id} open onClose={() => setModelOpen(false)} onOpenCostSettings={openCostSettingsFromModel} onSaved={() => undefined} busy={false} />}
     </Modal>
+    <Modal open={deleteTarget !== null} title="Xoá truyện?" onClose={() => { if (!deletePending) setDeleteTarget(null); }}><div className="delete-confirmation">{deleteTarget && <><p>Truyện “{deleteTarget.title}” sẽ được chuyển vào Thùng rác. Bạn có thể khôi phục lại.</p>{deleteError && <div role="alert" className="form-error">{deleteError}</div>}<div className="modal-actions"><button type="button" className="quiet-button touch-target" disabled={deletePending} onClick={() => setDeleteTarget(null)}>Huỷ</button><button type="button" className="danger-button touch-target" disabled={deletePending} onClick={() => { void deleteStory(); }}>{deletePending ? "Đang xoá…" : "Xoá truyện"}</button></div></>}</div></Modal>
     <Modal open={createOpen} title="Tạo truyện mới" onClose={() => setCreateOpen(false)}><CampaignForm key={createInstance} onCreated={created} onCancel={() => setCreateOpen(false)} /></Modal>
     <Modal open={importOpen} title={importMode === "legacy" ? "Nhập Legacy Story Bundle" : "Nhập hội thoại ChatGPT"} onClose={() => setImportOpen(false)} size="wide">
       {importMode === "legacy" ? <LegacyImport key={`legacy-${importInstance}`} onImported={created} onCancel={() => setImportOpen(false)} /> : <ChatGptImport key={`chatgpt-${importInstance}`} onImported={created} onCancel={() => setImportOpen(false)} />}

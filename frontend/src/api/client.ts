@@ -97,7 +97,11 @@ export const api = {
     request<import("./types").DemoInfo>("/api/demo/info", {}, false),
   me: (options: { notifyAuthExpired?: boolean } = {}) =>
     request<Owner>("/api/auth/me", {}, options.notifyAuthExpired ?? true),
-  listCampaigns: () => request<CampaignSummary[]>("/api/campaigns"),
+  listCampaigns: (trashed = false) => request<CampaignSummary[]>(`/api/campaigns${trashed ? "?trashed=true" : ""}`),
+  deleteCampaign: (campaignId: string) =>
+    request<CampaignSummary>(`/api/campaigns/${encodeURIComponent(campaignId)}`, { method: "DELETE" }),
+  restoreCampaign: (campaignId: string) =>
+    request<CampaignSummary>(`/api/campaigns/${encodeURIComponent(campaignId)}/restore`, { method: "POST" }),
   getCampaign: (campaignId: string) =>
     request<CampaignDetail>(`/api/campaigns/${encodeURIComponent(campaignId)}`),
   createCampaign: (payload: CampaignCreatePayload) =>

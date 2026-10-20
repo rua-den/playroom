@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { StrictMode } from "react";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { lastStoryStorageKey, recoverableJobCount, recoverableJobSummary } from "./AppShell";
 import { AppShell, ImportReviewPanel } from "./AppShell";
 import { api } from "../api/client";
-import type { CampaignProjection } from "../api/types";
+import type { CampaignProjection, CampaignSummary } from "../api/types";
 
 vi.mock("./GenerationComposer", () => ({ GenerationComposer: () => <div data-testid="generation-composer" /> }));
 vi.mock("./ProfileEditor", () => ({ ProfileEditor: () => <div data-testid="profile-editor" /> }));
@@ -445,6 +445,185 @@ describe("story library navigation and last-story persistence", () => {
     render(<AppShell owner={{ id: "blocked-owner", email: "blocked@example.test" }} onLogout={() => undefined} />);
     expect(await screen.findByRole("heading", { name: "Thư viện truyện" })).toBeInTheDocument();
     await userEvent.setup().click(within(screen.getByRole("heading", { name: "Thư viện truyện" }).closest("section")!).getAllByRole("button", { name: "Mở truyện" })[0]);
+    expect(await screen.findByRole("heading", { name: "Mùa hạ" })).toBeInTheDocument();
+  });
+
+  it("offers a delete action and confirmation for each story", async () => {
+    mockStories();
+    render(<AppShell owner={{ id: "trash-owner", email: "trash@example.test" }} onLogout={() => undefined} />);
+    const library = await screen.findByRole("heading", { name: "Thư viện truyện" });
+    const card = library.closest("section")!.querySelector(".story-card")! as HTMLElement;
+    expect(within(card).getByRole("button", { name: "Xoá truyện: Mùa hạ" })).toBeInTheDocument();
+  });
+
+  it("cancels without a request and deletes only the confirmed story", async () => {
+    mockStories();
+    const deleteSpy = vi.spyOn(api, "deleteCampaign").mockResolvedValue({ ...summaries[0], deleted_at: "2026-10-20T10:00:00Z" });
+    const user = userEvent.setup();
+    render(<AppShell owner={{ id: "delete-owner", email: "delete@example.test" }} onLogout={() => undefined} />);
+    const card = (await screen.findByRole("heading", { name: "Mùa hạ" })).closest("article")!;
+    await user.click(within(card).getByRole("button", { name: "Xoá truyện: Mùa hạ" }));
+    expect(await screen.findByRole("dialog", { name: "Xoá truyện?" })).toHaveTextContent("Truyện “Mùa hạ” sẽ được chuyển vào Thùng rác");
+    await user.click(screen.getByRole("button", { name: "Huỷ" }));
+    expect(deleteSpy).not.toHaveBeenCalled();
+    await user.click(within(card).getByRole("button", { name: "Xoá truyện: Mùa hạ" }));
+    await user.click(screen.getByRole("button", { name: "Xoá truyện" }));
+    await waitFor(() => expect(deleteSpy).toHaveBeenCalledWith("story-a"));
+    expect(screen.queryByRole("heading", { name: "Mùa hạ" })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Đêm mưa" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Hoàn tác" })).toBeInTheDocument();
+  });
+
+  it("loads trash and restores only after backend acknowledgement", async () => {
+    mockStories();
+    vi.spyOn(api, "listCampaigns").mockImplementation(async (trashed = false) => trashed ? [{ ...summaries[0], deleted_at: "2026-10-20T10:00:00Z" }] : summaries);
+    const restoreSpy = vi.spyOn(api, "restoreCampaign").mockResolvedValue(summaries[0]);
+    const user = userEvent.setup();
+    render(<AppShell owner={{ id: "restore-owner", email: "restore@example.test" }} onLogout={() => undefined} />);
+    await user.click(await screen.findByRole("button", { name: "Thùng rác" }));
+    expect(await screen.findByRole("heading", { name: "Mùa hạ" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Khôi phục: Mùa hạ" }));
+    await waitFor(() => expect(restoreSpy).toHaveBeenCalledWith("story-a"));
+    expect(screen.queryByRole("heading", { name: "Mùa hạ" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the story and confirmation open when deletion fails", async () => {
+    mockStories();
+    vi.spyOn(api, "deleteCampaign").mockRejectedValue(new Error("synthetic delete failure"));
+    const user = userEvent.setup();
+    render(<AppShell owner={{ id: "failure-owner", email: "failure@example.test" }} onLogout={() => undefined} />);
+    const card = (await screen.findByRole("heading", { name: "Mùa hạ" })).closest("article")!;
+    await user.click(within(card).getByRole("button", { name: "Xoá truyện: Mùa hạ" }));
+    await user.click(screen.getByRole("button", { name: "Xoá truyện" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Không thể chuyển truyện vào Thùng rác");
+    expect(screen.getByRole("heading", { name: "Mùa hạ", hidden: true })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Xoá truyện?" })).toBeInTheDocument();
+  });
+
+  it("sends one delete request while confirmation is pending", async () => {
+    mockStories();
+    let resolveDelete!: (summary: CampaignSummary) => void;
+    const deleteSpy = vi.spyOn(api, "deleteCampaign").mockReturnValue(new Promise((resolve) => { resolveDelete = resolve; }));
+    const user = userEvent.setup();
+    render(<AppShell owner={{ id: "pending-owner", email: "pending@example.test" }} onLogout={() => undefined} />);
+    const card = (await screen.findByRole("heading", { name: "Mùa hạ" })).closest("article")!;
+    await user.click(within(card).getByRole("button", { name: "Xoá truyện: Mùa hạ" }));
+    const confirm = screen.getByRole("button", { name: "Xoá truyện" });
+    await user.click(confirm);
+    await user.click(confirm);
+    expect(deleteSpy).toHaveBeenCalledTimes(1);
+    resolveDelete({ ...summaries[0], deleted_at: "2026-10-20T10:00:00Z" });
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Mùa hạ" })).not.toBeInTheDocument());
+  });
+
+  it("ignores a deferred trash failure after leaving Trash", async () => {
+    mockStories();
+    let rejectTrash!: (cause: Error) => void;
+    vi.spyOn(api, "listCampaigns").mockImplementation(async (trashed = false) => {
+      if (!trashed) return summaries;
+      return new Promise((_, reject) => { rejectTrash = reject; });
+    });
+    const user = userEvent.setup();
+    render(<AppShell owner={{ id: "trash-leave-owner", email: "trash-leave@example.test" }} onLogout={() => undefined} />);
+    await user.click(await screen.findByRole("button", { name: "Thùng rác" }));
+    await user.click(screen.getByRole("button", { name: "Thư viện" }));
+    rejectTrash(new Error("late trash failure"));
+    await waitFor(() => expect(screen.queryByText("Không thể tải Thùng rác.")).not.toBeInTheDocument());
+    expect(screen.getByRole("heading", { name: "Thư viện truyện" })).toBeInTheDocument();
+  });
+
+  it("does not resurrect a restored story from a deferred Trash response", async () => {
+    mockStories();
+    let listCalls = 0;
+    let resolveLateTrash!: (items: CampaignSummary[]) => void;
+    vi.spyOn(api, "listCampaigns").mockImplementation(async (trashed = false) => {
+      if (!trashed) return summaries;
+      listCalls += 1;
+      if (listCalls === 2) return new Promise((resolve) => { resolveLateTrash = resolve; });
+      return [{ ...summaries[0], deleted_at: "2026-10-20T10:00:00Z" }];
+    });
+    vi.spyOn(api, "restoreCampaign").mockResolvedValue(summaries[0]);
+    const user = userEvent.setup();
+    render(<AppShell owner={{ id: "late-trash-owner", email: "late-trash@example.test" }} onLogout={() => undefined} />);
+    await user.click(await screen.findByRole("button", { name: "Thùng rác" }));
+    await user.click(await screen.findByRole("button", { name: "Khôi phục: Mùa hạ" }));
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Mùa hạ" })).not.toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Thùng rác" }));
+    resolveLateTrash([{ ...summaries[0], deleted_at: "2026-10-20T10:00:00Z" }]);
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Mùa hạ" })).not.toBeInTheDocument());
+  });
+
+  it("retains Undo after a failed restore", async () => {
+    mockStories();
+    vi.spyOn(api, "deleteCampaign").mockResolvedValue({ ...summaries[0], deleted_at: "2026-10-20T10:00:00Z" });
+    vi.spyOn(api, "restoreCampaign").mockRejectedValue(new Error("restore failed"));
+    const user = userEvent.setup();
+    render(<AppShell owner={{ id: "undo-failure-owner", email: "undo-failure@example.test" }} onLogout={() => undefined} />);
+    const card = (await screen.findByRole("heading", { name: "Mùa hạ" })).closest("article")!;
+    await user.click(within(card).getByRole("button", { name: "Xoá truyện: Mùa hạ" }));
+    await user.click(screen.getByRole("button", { name: "Xoá truyện" }));
+    const undo = await screen.findByRole("button", { name: "Hoàn tác" });
+    await user.click(undo);
+    expect(await screen.findByRole("button", { name: "Hoàn tác" })).toBeInTheDocument();
+  });
+
+  it("keeps a pending Undo action and sends one restore request", async () => {
+    mockStories();
+    vi.spyOn(api, "deleteCampaign").mockResolvedValue({ ...summaries[0], deleted_at: "2026-10-20T10:00:00Z" });
+    let resolveRestore!: (summary: CampaignSummary) => void;
+    const restoreSpy = vi.spyOn(api, "restoreCampaign").mockReturnValue(new Promise((resolve) => { resolveRestore = resolve; }));
+    const user = userEvent.setup();
+    render(<AppShell owner={{ id: "undo-pending-owner", email: "undo-pending@example.test" }} onLogout={() => undefined} />);
+    const card = (await screen.findByRole("heading", { name: "Mùa hạ" })).closest("article")!;
+    await user.click(within(card).getByRole("button", { name: "Xoá truyện: Mùa hạ" }));
+    await user.click(screen.getByRole("button", { name: "Xoá truyện" }));
+    const undo = await screen.findByRole("button", { name: "Hoàn tác" });
+    await user.click(undo);
+    await user.click(screen.getByRole("button", { name: "Đang xử lý…" }));
+    expect(restoreSpy).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Đang xử lý…" })).toBeDisabled();
+    await act(async () => { resolveRestore(summaries[0]); });
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Đang xử lý…" })).not.toBeInTheDocument());
+  });
+
+  it("preserves the selected story when deleting a different story", async () => {
+    mockStories();
+    vi.spyOn(api, "deleteCampaign").mockResolvedValue({ ...summaries[1], deleted_at: "2026-10-20T10:00:00Z" });
+    const user = userEvent.setup();
+    render(<AppShell owner={{ id: "nonselected-delete-owner", email: "nonselected-delete@example.test" }} onLogout={() => undefined} />);
+    await user.click((await screen.findAllByRole("button", { name: "Mở truyện" }))[0]);
+    await screen.findByRole("heading", { name: "Mùa hạ" });
+    await user.click(screen.getByRole("button", { name: "Thư viện truyện" }));
+    const card = screen.getByRole("heading", { name: "Đêm mưa" }).closest("article")!;
+    await user.click(within(card).getByRole("button", { name: "Xoá truyện: Đêm mưa" }));
+    await user.click(screen.getByRole("button", { name: "Xoá truyện" }));
+    expect(await screen.findByRole("heading", { name: "Mùa hạ" })).toBeInTheDocument();
+  });
+
+  it("ignores a late projection for a story that is no longer selected", async () => {
+    mockStories();
+    let resolveFirst!: (value: CampaignProjection) => void;
+    vi.mocked(api.getCampaignProjection).mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; })).mockImplementation(async (id) => projection(id) as CampaignProjection);
+    const user = userEvent.setup();
+    render(<AppShell owner={{ id: "late-projection-owner", email: "late-projection@example.test" }} onLogout={() => undefined} />);
+    const openButtons = await screen.findAllByRole("button", { name: "Mở truyện" });
+    await user.click(openButtons[0]);
+    await user.click(screen.getByRole("button", { name: "Thư viện truyện" }));
+    await user.click(screen.getByRole("button", { name: "Mở truyện" }));
+    resolveFirst(projection("story-a") as CampaignProjection);
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Mùa hạ" })).not.toBeInTheDocument());
+  });
+
+  it("keeps the selected story projection alive when reopening the same story", async () => {
+    mockStories();
+    window.localStorage.setItem(lastStoryStorageKey("same-story-owner"), "story-a");
+    let resolveProjection!: (value: CampaignProjection) => void;
+    vi.mocked(api.getCampaignProjection).mockReturnValueOnce(new Promise((resolve) => { resolveProjection = resolve; }));
+    const user = userEvent.setup();
+    render(<AppShell owner={{ id: "same-story-owner", email: "same-story@example.test" }} onLogout={() => undefined} />);
+    await user.click(await screen.findByRole("button", { name: "Thư viện truyện" }));
+    await user.click(within(screen.getByRole("heading", { name: "Thư viện truyện" }).closest("section")!).getByRole("button", { name: "Đọc tiếp" }));
+    resolveProjection(projection("story-a") as CampaignProjection);
     expect(await screen.findByRole("heading", { name: "Mùa hạ" })).toBeInTheDocument();
   });
 });

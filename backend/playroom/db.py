@@ -98,6 +98,9 @@ def migrate(connection: sqlite3.Connection) -> None:
     columns = {row[1] for row in connection.execute("PRAGMA table_info(campaigns)")}
     if "archived_at" not in columns:
         _add_column_if_missing(connection, "campaigns", "archived_at", "TEXT")
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(campaigns)")}
+    if "deleted_at" not in columns:
+        _add_column_if_missing(connection, "campaigns", "deleted_at", "TEXT")
     generation_columns = {row[1] for row in connection.execute("PRAGMA table_info(generation_jobs)")}
     if generation_columns:
         for name, definition in (("action", "TEXT NOT NULL DEFAULT ''"), ("mode", "TEXT NOT NULL DEFAULT 'economy'"), ("policy", "TEXT NOT NULL DEFAULT 'free_only'"), ("draft", "TEXT NOT NULL DEFAULT ''"), ("output_segments_json", "TEXT"), ("failure_json", "TEXT"), ("usage_json", "TEXT"), ("settings_revision", "INTEGER NOT NULL DEFAULT 0"), ("settings_snapshot_json", "TEXT NOT NULL DEFAULT '{}'"), ("profile_snapshot_json", "TEXT NOT NULL DEFAULT '{}'"), ("credential_version", "TEXT"), ("reserved_cost_json", "TEXT"), ("execution_epoch", "TEXT"), ("cancel_requested", "INTEGER NOT NULL DEFAULT 0"), ("final_context_json", "TEXT"), ("preview_id", "TEXT"), ("preview_snapshot_json", "TEXT")):
