@@ -1,0 +1,56 @@
+name: Owner-approved minimal Henn-Yuna six Ollama roleplay turns
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/henn-yuna-minimal-ollama-six.yml"
+      - "backend/tests/live_henn_yuna_minimal_ollama_comparison.py"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/henn-yuna-minimal-ollama-six.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: henn-yuna-public-minimal-ab-20261020
+  cancel-in-progress: false
+
+jobs:
+  offline-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHONPATH: backend:backend/tests
+      HENN_YUNA_DRY_RUN: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: |
+          uv sync --locked --extra test
+          python -m py_compile backend/tests/live_henn_yuna_minimal_ollama_comparison.py
+          uv run --locked --extra test python backend/tests/live_henn_yuna_minimal_ollama_comparison.py
+
+  live-six:
+    if: >-
+      ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && startsWith(github.event.head_commit.message, 'ci(ollama): approved minimal henn yuna six-round comparison 2026-10-20') }}
+    needs: offline-contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      PYTHONPATH: backend:backend/tests
+      OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+      HENN_YUNA_LIVE_APPROVAL: OWNER_HENN_YUNA_PUBLIC_MINIMAL_6_COMPLETIONS_20261020
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --locked --extra test
+      - name: Run max six included-credit-gated public-minimal Henn-Yuna completions
+        run: uv run --locked --extra test python backend/tests/live_henn_yuna_minimal_ollama_comparison.py

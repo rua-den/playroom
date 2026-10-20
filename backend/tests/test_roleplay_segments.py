@@ -89,3 +89,55 @@ def test_parse_narrator_payload_rejects_conflicting_kind_and_type_aliases():
 def test_parse_narrator_payload_rejects_json_shaped_invalid_output():
     with pytest.raises(ValidationError):
         parse_narrator_payload('{"segments":[{"kind":"dialogue","text":"Invented","character_id":"nope","profile_version_id":"profile-linh-v3"}]}', {"char-linh": "profile-linh-v3"})
+
+
+# Real Gemma4 often emitted exactly one fenced JSON block while gpt-oss
+# emitted an unfenced JSON object. Both must receive *identical* cast checks.
+def test_gemma_exact_fenced_json_is_parsed_as_attributed_segments():
+    source = (
+        '```json\n'
+        '{"segments":[{"kind":"narration","text":"Vy nhìn chiếc hộp."},'
+        '{"kind":"dialogue","text":"Phong bì đâu rồi?",'
+        '"character_id":"npc-vy-synthetic","profile_version_id":"vy-v1"}]}'
+        '\n```'
+    )
+    display, segments = parse_narrator_payload(source, {"npc-vy-synthetic": "vy-v1"})
+    assert display == "Vy nhìn chiếc hộp.\nPhong bì đâu rồi?"
+    assert [segment["kind"] for segment in segments] == ["narration", "dialogue"]
+    assert segments[1]["character_id"] == "npc-vy-synthetic"
+
+
+@pytest.mark.parametrize("fence", [
+    '```json\n',
+    '```JSON\n',
+    '```\n',
+])
+def test_exact_fenced_json_language_variants(fence):
+    source = fence + '{"segments":[{"kind":"narration","text":"Mưa rơi."}]}\n```\n'
+    rendered, segments = parse_narrator_payload(source, {})
+    assert rendered == "Mưa rơi."
+    assert len(segments) == 1
+
+
+@pytest.mark.parametrize("source", [
+    '```json\n{"segments":[{"kind":"narration","text":"Mưa."}]}',
+    '```python\n{"segments":[{"kind":"narration","text":"Mưa."}]}\n```',
+    '```json\n{"segments":[{"kind":"narration","text":"Mưa."}]}\n```\nEND',
+    '```json\n{"segments":[{"kind":"narration","text":"Mưa."}]}\n```\n```',
+    '```json\nnot JSON\n```',
+    '```json\n{"segments":[] }\n```',
+    '```json\n{"segments":[{"kind":"dialogue","text":"Sao?",'
+    '"character_id":"other","profile_version_id":"vy-v1"}]}\n```',
+    '```json\n{"segments":[{"kind":"dialogue","text":"Sao?",'
+    '"character_id":"npc-vy-synthetic","profile_version_id":"vy-v0"}]}\n```',
+])
+def test_bad_or_unsafe_fenced_json_never_bypasses_validation(source):
+    with pytest.raises(ValidationError):
+        parse_narrator_payload(source, {"npc-vy-synthetic": "vy-v1"})
+
+
+def test_unfenced_plain_narration_retains_legacy_compatibility():
+    raw = "Một buổi chiều yên tĩnh. Vy hỏi Lan có cần giúp không."
+    display, segments = parse_narrator_payload(raw, {"npc-vy-synthetic": "vy-v1"})
+    assert display == raw
+    assert segments is None

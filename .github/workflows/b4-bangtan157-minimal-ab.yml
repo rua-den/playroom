@@ -1,0 +1,55 @@
+name: One-shot public-safe Henn/Yuna Ollama A-B test
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/b4-bangtan157-minimal-ab.yml"
+      - "backend/tests/live_bangtan157_minimal_ab.py"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/b4-bangtan157-minimal-ab.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: owner-bangtan-minimal-facts-v2-20261020
+  cancel-in-progress: false
+
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHONPATH: backend:backend/tests
+      BANGTAN_MINIMAL_DRY: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: |
+          uv sync --locked --extra test
+          uv run --locked --extra test python backend/tests/live_bangtan157_minimal_ab.py
+
+  live-once:
+    if: >-
+      ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && startsWith(github.event.head_commit.message, 'ci(ollama): owner Henn Yuna guarded 3x2 real test 2026-10-20') }}
+    needs: offline
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      PYTHONPATH: backend:backend/tests
+      OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+      BANGTAN_MINIMAL_APPROVAL: OWNER_BANGTAN_MINIMAL_CANON_GUARDS_V2_2026_10_20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --locked --extra test
+      - name: Included-credit-only six real completions with public-safe story
+        run: uv run --locked --extra test python backend/tests/live_bangtan157_minimal_ab.py

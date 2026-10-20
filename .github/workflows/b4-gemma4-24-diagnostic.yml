@@ -1,0 +1,59 @@
+name: Gemma4 bounded 24-turn live diagnosis
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/b4-gemma4-24-diagnostic.yml"
+      - "backend/tests/live_ollama_long_story_trial.py"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/b4-gemma4-24-diagnostic.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gemma4-24-plain-format-audit-20261020
+  cancel-in-progress: false
+
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      LONG_STORY_COMPARISON: "1"
+      LONG_STORY_MODEL_LABEL: gemma4:31b-cloud
+      LONG_STORY_DRY_RUN: "1"
+      PYTHONPATH: backend:backend/tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: |
+          uv sync --locked --extra test
+          uv run --locked --extra test python backend/tests/live_ollama_long_story_trial.py
+
+  gemma4-live:
+    if: >-
+      ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && startsWith(github.event.head_commit.message, 'ci(ollama): gemma4 plain24 format audit 2026-10-20') }}
+    needs: offline
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      LONG_STORY_COMPARISON: "1"
+      LONG_STORY_MODEL_LABEL: gemma4:31b-cloud
+      LONG_STORY_APPROVAL: OWNER_GEMMA_GPTOSS_SAME_24_2026_10_20
+      PYTHONPATH: backend:backend/tests
+      OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --locked --extra test
+      - name: Read-only credit-gated Gemma4 same 24-turn story diagnostic
+        run: uv run --locked --extra test python backend/tests/live_ollama_long_story_trial.py
