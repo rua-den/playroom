@@ -283,39 +283,65 @@ def _assert_mobile(page, width: int) -> None:
     expect(page.get_by_role("button", name="Gửi", exact=True)).to_be_visible()
     overflow = page.evaluate("document.documentElement.scrollWidth - window.innerWidth")
     assert overflow <= 1, f"Horizontal overflow at {width}px: {overflow}px"
-    if width <= 560:
-        management_trigger = page.get_by_role("button", name="Truyện và tác vụ", exact=True)
-        expect(management_trigger).to_be_visible()
-        management_trigger.click()
-        story_menu = page.get_by_role("dialog", name="Danh sách truyện")
-        expect(story_menu).to_be_visible()
+    management_trigger = page.get_by_role("button", name="Truyện và tác vụ", exact=True)
+    expect(management_trigger).to_be_visible()
+    management_trigger.click()
+    story_menu = page.get_by_role("dialog", name="Danh sách truyện")
+    expect(story_menu).to_be_visible()
 
-        current_title = page.locator(".story-column h1").inner_text()
-        selected_story = story_menu.locator("button[aria-pressed='true']")
-        expect(selected_story).to_have_count(1)
-        expect(selected_story).to_have_text(current_title)
-        story_items = story_menu.locator(".campaign-item")
-        assert story_items.count() >= 1, "The story menu must expose a selectable current story"
-        if story_items.count() > 1:
-            assert story_menu.locator("button[aria-pressed='false']").count() >= 1, (
-                "The story menu must expose another selectable story when available"
-            )
-        for label in ("Tạo truyện mới", "Nhập ChatGPT", "Nhập Legacy"):
-            action = story_menu.get_by_role("button", name=label, exact=True)
-            expect(action).to_be_visible()
-            expect(action).to_be_enabled()
+    current_title = page.locator(".story-column h1").inner_text()
+    selected_story = story_menu.locator("button[aria-pressed='true']")
+    expect(selected_story).to_have_count(1)
+    expect(selected_story).to_have_text(current_title)
+    story_items = story_menu.locator(".campaign-item")
+    assert story_items.count() >= 1, "The story menu must expose a selectable current story"
+    if story_items.count() > 1:
+        assert story_menu.locator("button[aria-pressed='false']").count() >= 1, (
+            "The story menu must expose another selectable story when available"
+        )
+    for label in ("Tạo truyện mới", "Nhập ChatGPT", "Nhập Legacy"):
+        action = story_menu.get_by_role("button", name=label, exact=True)
+        expect(action).to_be_visible()
+        expect(action).to_be_enabled()
 
-        story_menu.get_by_role("button", name="Đóng danh sách truyện", exact=True).click()
-        expect(story_menu).not_to_be_visible()
-        expect(management_trigger).to_be_focused()
-    else:
-        expect(page.get_by_role("combobox", name="Truyện hiện tại")).to_be_visible()
+    story_menu.get_by_role("button", name="Đóng danh sách truyện", exact=True).click()
+    expect(story_menu).not_to_be_visible()
+    expect(management_trigger).to_be_focused()
     if width == 390:
         page.get_by_role("button", name="AI đang nhớ gì").click()
         details = page.get_by_role("dialog", name="Hồ sơ và ký ức")
         expect(details).to_be_visible()
         page.get_by_role("button", name="Đóng hồ sơ và ký ức").click()
         expect(details).not_to_be_visible()
+
+
+def _assert_short_viewport_reading(page) -> None:
+    viewport = page.viewport_size
+    compose = page.locator("#generation-action")
+    draft = compose.input_value()
+    try:
+        page.set_viewport_size({"width": 812, "height": 375})
+        compose.fill("Synthetic landscape draft")
+        page.evaluate("window.scrollTo(0, 0)")
+        geometry = page.evaluate("""() => ({
+            transcriptBottom: document.querySelector('.transcript').getBoundingClientRect().bottom,
+            composerTop: document.querySelector('.generation-composer').getBoundingClientRect().top
+        })""")
+        assert geometry["composerTop"] >= geometry["transcriptBottom"], (
+            f"Short viewport composer must not cover the story: {geometry}"
+        )
+        compose.scroll_into_view_if_needed()
+        compose.focus()
+        expect(compose).to_be_focused()
+        expect(compose).to_have_value("Synthetic landscape draft")
+        box = compose.bounding_box()
+        assert box and box["y"] >= 0 and box["y"] + box["height"] <= 375
+    finally:
+        compose.fill(draft)
+        page.set_viewport_size(viewport)
+    assert page.locator(".generation-composer").evaluate(
+        "element => getComputedStyle(element).position"
+    ) == "sticky", "Portrait reading must retain the sticky composer"
 
 
 def _assert_modal_geometry(page, dialog, width: int, height: int = 780) -> None:
@@ -414,32 +440,22 @@ def _assert_story_preserved(page, title: str, draft: str, turns: int) -> None:
 
 
 def _exercise_story_management_action(page, width: int, title: str, draft: str, turns: int, action: str, screenshot_name: str | None = None) -> None:
-    """Open a story-management action through the control visible at this width."""
+    """Open grouped story actions at every supported width."""
     page.set_viewport_size({"width": width, "height": 780})
     _assert_no_horizontal_overflow(page, width, "chat management navigation")
-    if width <= 560:
-        management_trigger = page.get_by_role("button", name="Truyện và tác vụ", exact=True)
-        expect(management_trigger).to_be_visible()
-        management_trigger.click()
-        story_menu = page.get_by_role("dialog", name="Danh sách truyện")
-        expect(story_menu).to_be_visible(timeout=12000)
-        expect(story_menu.get_by_role("button", name=title, exact=True)).to_be_visible()
-        for label in ("Tạo truyện mới", "Nhập ChatGPT", "Nhập Legacy"):
-            expect(story_menu.get_by_role("button", name=label, exact=True)).to_be_visible()
-        expect(story_menu.get_by_role("button", name=action, exact=True)).to_be_enabled()
-        if screenshot_name:
-            _visual_screenshot(page, "story-menu-375-dark.png", full_page=False)
-        story_menu.get_by_role("button", name=action, exact=True).click()
-        focus_return = management_trigger
-    else:
-        current_story = page.get_by_role("combobox", name="Truyện hiện tại")
-        expect(current_story).to_be_visible()
-        assert title in current_story.locator("option").all_text_contents()
-        direct_action = page.get_by_role("button", name=action, exact=True)
-        expect(direct_action).to_be_visible()
-        expect(direct_action).to_be_enabled()
-        direct_action.click()
-        focus_return = direct_action
+    management_trigger = page.get_by_role("button", name="Truyện và tác vụ", exact=True)
+    expect(management_trigger).to_be_visible()
+    management_trigger.click()
+    story_menu = page.get_by_role("dialog", name="Danh sách truyện")
+    expect(story_menu).to_be_visible(timeout=12000)
+    expect(story_menu.get_by_role("button", name=title, exact=True)).to_be_visible()
+    for label in ("Tạo truyện mới", "Nhập ChatGPT", "Nhập Legacy"):
+        expect(story_menu.get_by_role("button", name=label, exact=True)).to_be_visible()
+    expect(story_menu.get_by_role("button", name=action, exact=True)).to_be_enabled()
+    if screenshot_name and width == 375:
+        _visual_screenshot(page, "story-menu-375-dark.png", full_page=False)
+    story_menu.get_by_role("button", name=action, exact=True).click()
+    focus_return = management_trigger
 
     dialog_name = {
         "Tạo truyện mới": "Tạo truyện mới",
@@ -458,12 +474,7 @@ def _exercise_story_management_action(page, width: int, title: str, draft: str, 
 
 
 def _click_story_management_action(page, action: str):
-    """Use the direct nav control when visible, otherwise open its mobile menu."""
-    direct_action = page.get_by_role("button", name=action, exact=True)
-    if direct_action.is_visible():
-        direct_action.click()
-        return direct_action
-
+    """Open an action from the shared story menu."""
     management_trigger = page.get_by_role("button", name="Truyện và tác vụ", exact=True)
     expect(management_trigger).to_be_visible()
     management_trigger.click()
@@ -834,6 +845,7 @@ def browser_synthetic_chat() -> None:
                 assert not outbound, f"Demo browser attempted non-loopback requests: {outbound}"
                 for width in (360, 390, 430):
                     _assert_mobile(page, width)
+                _assert_short_viewport_reading(page)
 
                 page.reload(wait_until="domcontentloaded")
                 expect(page.locator(".story-turn")).to_have_count(6)

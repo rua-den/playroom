@@ -100,6 +100,7 @@ describe("CampaignHome", () => {
     render(<AppShell owner={owner} onLogout={vi.fn()} />);
     await user.click((await screen.findAllByRole("button", { name: "Mở truyện" }))[0]);
     expect(await screen.findByText("Câu cũ")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Truyện và tác vụ" }));
     await user.click(screen.getByRole("button", { name: "Hai chiến dịch" }));
     expect(screen.queryByText("Câu cũ")).not.toBeInTheDocument();
     resolveSecond(new Response(JSON.stringify(projection("two", "Hai chiến dịch", "Câu mới")), { status: 200 }));

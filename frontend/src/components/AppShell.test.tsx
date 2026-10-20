@@ -7,7 +7,7 @@ import { AppShell, ImportReviewPanel } from "./AppShell";
 import { api } from "../api/client";
 import type { CampaignProjection, CampaignSummary } from "../api/types";
 
-vi.mock("./GenerationComposer", () => ({ GenerationComposer: () => <div data-testid="generation-composer" /> }));
+vi.mock("./GenerationComposer", () => ({ GenerationComposer: () => <div data-testid="generation-composer"><textarea aria-label="Synthetic unsent draft" /></div> }));
 vi.mock("./ProfileEditor", () => ({ ProfileEditor: () => <div data-testid="profile-editor" /> }));
 vi.mock("./MemoryLibrary", () => ({ MemoryLibrary: () => <div data-testid="memory-library" /> }));
 vi.mock("./SceneEditor", () => ({ SceneEditor: () => <div data-testid="scene-editor" /> }));
@@ -59,9 +59,8 @@ describe("recoverable job summary", () => {
     render(<AppShell owner={{ id: "owner-1", email: "owner@example.test" }} onLogout={() => undefined} />);
 
     await userEvent.setup().click(await screen.findByRole("button", { name: "Mở truyện" }));
-    const campaignSelect = await screen.findByRole("combobox", { name: "Truyện hiện tại" });
-    expect(campaignSelect).toHaveValue("campaign-1");
-    expect(campaignSelect.closest("header")).toBeInTheDocument();
+    const storyMenu = await screen.findByRole("button", { name: "Truyện và tác vụ" });
+    expect(storyMenu.closest("header")).toBeInTheDocument();
     expect(await screen.findByText("Một buổi chiều yên ả.")).toBeInTheDocument();
     const contextTrigger = screen.getByRole("button", { name: "Mở hồ sơ và ký ức" });
     expect(contextTrigger.closest("header")).toBeInTheDocument();
@@ -280,6 +279,7 @@ describe("auxiliary modal routes", () => {
     expect(screen.queryByText("Đã tạo truyện mới.")).not.toBeInTheDocument();
     resolveCreate(new Response(JSON.stringify({ id: "created-story", title: "Created story", branch_id: "created-branch", character_ids: [] }), { status: 200 }));
     expect(await screen.findByText("Đã tạo truyện mới.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Truyện và tác vụ" }));
     await user.click(await screen.findByRole("button", { name: "Tạo truyện mới" }));
     expect(screen.getByLabelText("Tên truyện")).toHaveValue("");
   });
@@ -298,6 +298,31 @@ describe("story library navigation and last-story persistence", () => {
     vi.spyOn(api, "getCampaign").mockImplementation(async (id) => ({ ...summaries.find((item) => item.id === id)!, branch_id: `branch-${id}`, state_version: 1, checkpoint_id: `checkpoint-${id}`, profiles: {} }));
     vi.spyOn(api, "getCampaignProjection").mockImplementation(async (id) => projection(id));
   }
+
+  it("groups story navigation once and preserves the unsent draft through actions and context", async () => {
+    mockStories();
+    const user = userEvent.setup();
+    render(<AppShell owner={{ id: "reading-owner", email: "reader@example.test" }} onLogout={() => undefined} />);
+    await user.click((await screen.findAllByRole("button", { name: "Mở truyện" }))[0]);
+    const draft = await screen.findByRole("textbox", { name: "Synthetic unsent draft" });
+    await user.type(draft, "Một dòng chưa gửi.");
+    expect(screen.queryByRole("combobox", { name: "Truyện hiện tại" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Nhập ChatGPT" })).not.toBeInTheDocument();
+    const trigger = screen.getByRole("button", { name: "Truyện và tác vụ" });
+    expect(trigger.closest("header")).toBeInTheDocument();
+    await user.click(trigger);
+    const menu = screen.getByRole("dialog", { name: "Danh sách truyện" });
+    expect(within(menu).getByRole("button", { name: "Mùa hạ" })).toHaveAttribute("aria-pressed", "true");
+    await user.click(within(menu).getByRole("button", { name: "Tạo truyện mới" }));
+    expect(screen.getByRole("dialog", { name: "Tạo truyện mới" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(trigger).toHaveFocus();
+    expect(draft).toHaveValue("Một dòng chưa gửi.");
+    await user.click(screen.getByRole("button", { name: "Mở hồ sơ và ký ức" }));
+    await user.keyboard("{Escape}");
+    expect(draft).toHaveValue("Một dòng chưa gửi.");
+    expect(api.getCampaign).toHaveBeenCalledTimes(1);
+  });
 
   it("keeps story creation and both import routes available from the story menu", async () => {
     mockStories();
@@ -338,8 +363,9 @@ describe("story library navigation and last-story persistence", () => {
     render(<AppShell owner={{ id: "import-owner", email: "import@example.test" }} onLogout={() => undefined} />);
 
     expect(await screen.findByRole("heading", { name: "Đêm mưa" })).toBeInTheDocument();
-    const importTrigger = screen.getByRole("button", { name: "Nhập ChatGPT" });
+    const importTrigger = screen.getByRole("button", { name: "Truyện và tác vụ" });
     await user.click(importTrigger);
+    await user.click(screen.getByRole("button", { name: "Nhập ChatGPT" }));
     expect(await screen.findByRole("dialog", { name: "Nhập hội thoại ChatGPT" })).toBeInTheDocument();
 
     const exportFile = new File([
@@ -361,6 +387,7 @@ describe("story library navigation and last-story persistence", () => {
     expect(importTrigger).toHaveFocus();
 
     await user.click(importTrigger);
+    await user.click(screen.getByRole("button", { name: "Nhập ChatGPT" }));
     expect(await screen.findByRole("dialog", { name: "Nhập hội thoại ChatGPT" })).toBeInTheDocument();
     expect(screen.getByLabelText("Tên chiến dịch mới")).toHaveValue("Nháp hội thoại giữ lại");
     expect(screen.getByLabelText("Thế giới")).toHaveValue("Thành phố mưa");
