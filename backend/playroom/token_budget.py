@@ -10,7 +10,7 @@ def _estimate_tokens(text: str) -> int:
 
 def evaluate_budget(blocks: list[dict], config: dict, *, counter=None, counter_id: str = "synthetic-test-counter") -> dict:
     required = ("context_window", "input_limit", "output_limit", "wrapper_buffer", "requested_output")
-    if not isinstance(config, dict) or not (config.get("capabilities_verified") or config.get("is_test_profile")) or not all(isinstance(config.get(key), int) and config[key] >= 0 for key in required):
+    if not isinstance(config, dict) or not (config.get("capabilities_verified") or config.get("is_test_profile") or config.get("limits_source") == "application_default") or not all(isinstance(config.get(key), int) and config[key] >= 0 for key in required):
         return {"fits": False, "counter_mode": "unavailable", "blocks": [], "failure": {"code": "UNSUPPORTED_MODEL_LIMITS", "message": "Verified model input/output limits are required before context can be evaluated."}}
     if config["input_limit"] < 1 or config["output_limit"] < 1 or config["requested_output"] > config["output_limit"]:
         return {"fits": False, "counter_mode": "unavailable", "blocks": [], "failure": {"code": "UNSUPPORTED_MODEL_LIMITS", "message": "Configured model limits cannot satisfy the requested output allowance."}}

@@ -5,6 +5,23 @@ import { SettingsPanel } from "./SettingsPanel";
 import { ToastProvider } from "./Toast";
 
 describe("SettingsPanel", () => {
+  it("shows the three-field custom form and provider-managed cost copy", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([])))
+      .mockResolvedValueOnce(new Response(JSON.stringify([{ id: "custom-1", version: 1, provider: "custom", model: "local", endpoint: "http://127.0.0.1:1234/v1/chat/completions", pricing_verified: false, custom_billing: "provider_managed", limits_source: "application_default" }])))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ mode: "economy", policy: "free_only", roles: { narrator: { id: "custom-1", version: 1 } }, budgets: {} })));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ToastProvider><SettingsPanel /></ToastProvider>);
+    await screen.findByRole("heading", { name: "Cài đặt provider" });
+    expect(screen.getByLabelText("Provider")).toHaveValue("custom");
+    await screen.findByDisplayValue("http://127.0.0.1:1234/v1/chat/completions");
+    expect(screen.getByLabelText("Endpoint URL")).toBeInTheDocument();
+    expect(screen.getByLabelText("Model ID")).toBeInTheDocument();
+    expect(screen.getByLabelText("API key (optional)")).toBeInTheDocument();
+    expect(screen.queryByLabelText("OpenRouter API key")).not.toBeInTheDocument();
+    expect(screen.getByText(/Chi phí và quota do endpoint quản lý/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Giới hạn USD")).not.toBeInTheDocument();
+  });
   it("navigates between settings sections without saving or clearing drafts", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))

@@ -11,7 +11,7 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError as SchemaValidationError
 
 from .wire_cost import provider_wire
-from .model_profiles import OLLAMA_CLOUD_ENDPOINT
+from .model_profiles import OLLAMA_CLOUD_ENDPOINT, is_immutable_profile
 
 
 @dataclass(frozen=True)
@@ -240,7 +240,7 @@ class OpenRouterAdapter(ProviderAdapter):
                 code = str(error.get("code", "")).casefold() if isinstance(error, dict) else ""
                 normalized = "QUOTA_EXHAUSTED" if code in {"402", "429", "quota"} else "MODEL_UNAVAILABLE" if code in {"404", "503", "model_not_found"} else "PROVIDER_ERROR"
                 failed = True
-                return ProviderFailure(normalized, "OpenRouter provider returned an error")
+                return ProviderFailure(normalized, "Provider returned an error")
             if frame.get("usage") is not None:
                 usage = frame["usage"]
             choice = (frame.get("choices") or [{}])[0]
@@ -248,7 +248,7 @@ class OpenRouterAdapter(ProviderAdapter):
             refusal = delta.get("refusal") or choice.get("refusal")
             if refusal:
                 failed = True
-                return ProviderFailure("MODEL_REFUSED", "OpenRouter refused the request")
+                return ProviderFailure("MODEL_REFUSED", "Provider refused the request")
             if choice.get("finish_reason") is not None:
                 finish_reason = choice.get("finish_reason")
             if delta.get("content"):
@@ -257,14 +257,17 @@ class OpenRouterAdapter(ProviderAdapter):
             return None
 
         try:
-            with self.client.stream("POST", self.endpoint, headers={"Authorization": f"Bearer {self._key}", "Content-Type": "application/json"}, json=payload) as response:
+            headers = {"Content-Type": "application/json"}
+            if self._key:
+                headers["Authorization"] = f"Bearer {self._key}"
+            with self.client.stream("POST", self.endpoint, headers=headers, json=payload, follow_redirects=False) as response:
                 with self._response_lock:
                     self._active_response = response
                 if request and request.get("cancel_event") is not None and request["cancel_event"].is_set():
                     return
                 if response.status_code >= 400:
                     code = "QUOTA_EXHAUSTED" if response.status_code in {402, 429} else "MODEL_UNAVAILABLE" if response.status_code in {404, 503} else "PROVIDER_ERROR"
-                    yield ProviderFailure(code, "OpenRouter request failed")
+                    yield ProviderFailure(code, "Provider request failed")
                     return
                 for chunk in response.iter_bytes():
                     if request and request.get("cancel_event") is not None and request["cancel_event"].is_set():
@@ -302,7 +305,7 @@ class OpenRouterAdapter(ProviderAdapter):
             yield ProviderFailure("PROVIDER_TIMEOUT", "Provider request timed out")
             return
         except httpx.HTTPError:
-            yield ProviderFailure("MODEL_UNAVAILABLE", "OpenRouter provider could not be reached")
+            yield ProviderFailure("MODEL_UNAVAILABLE", "Provider could not be reached")
             return
         finally:
             with self._response_lock:
@@ -312,7 +315,7 @@ class OpenRouterAdapter(ProviderAdapter):
         if finish_reason == "length":
             yield ProviderFailure("OUTPUT_TRUNCATED", "Provider output reached its limit")
         elif finish_reason == "refusal":
-            yield ProviderFailure("MODEL_REFUSED", "OpenRouter refused the request")
+            yield ProviderFailure("MODEL_REFUSED", "Provider refused the request")
         elif finish_reason != "stop" or not done:
             yield ProviderFailure("MISSING_TERMINAL", "Provider stream did not provide a normal terminal frame")
         else:
@@ -335,12 +338,65 @@ class OllamaCloudAdapter(OpenRouterAdapter):
         return ProviderCapabilities(f"{OLLAMA_CLOUD_ENDPOINT}/chat/completions", profile["model"], int(profile["context_limit"]), int(profile["output_limit"]), structured_output=bool(profile.get("structured_output")), supported_parameters=tuple(profile.get("supported_parameters", ())), output_parameter=profile.get("output_parameter", "max_tokens"), provider_tag=None)
 
 
+class CustomOpenAIAdapter(OpenRouterAdapter):
+    """OpenAI-compatible custom endpoint; narrator economy only."""
+
+    def __init__(self, *, profile: dict, credential: str | None = None, http_client: httpx.Client | None = None):
+        if profile.get("provider") != "custom" or not is_immutable_profile(profile):
+            raise ValueError("Custom adapter requires an immutable custom profile")
+        keyless_contract = (
+            not credential
+            and not profile.get("secret_version")
+            and profile.get("custom_billing") == "provider_managed"
+            and profile.get("limits_source") == "application_default"
+            and profile.get("pricing_verified") is False
+            and profile.get("capabilities_verified") is False
+        )
+        if not credential and not keyless_contract:
+            raise ValueError("Keyless custom adapter requires the provider-managed profile contract")
+        self.endpoint = profile["endpoint"]
+        self.profile = dict(profile)
+        self._key = credential
+        self.client = http_client or httpx.Client(timeout=300, trust_env=False)
+        self._active_response = None
+        self._response_lock = threading.Lock()
+
+    def capabilities_for(self, profile: dict) -> ProviderCapabilities:
+        return ProviderCapabilities(self.endpoint, profile["model"], int(profile["context_limit"]), int(profile["output_limit"]), structured_output=False, supported_parameters=("max_tokens",), output_parameter="max_tokens")
+
+    def _payload(self, request: dict) -> dict:
+        model = self.profile.get("model")
+        if request.get("model") and request["model"] != model:
+            raise ValueError("Requested model does not match the custom profile")
+        if request.get("schema") is not None or request.get("stage") in {"context", "consolidation"}:
+            raise ValueError("Custom provider supports narrator economy only")
+        try:
+            output = int(request.get("reserved_completion_tokens", request.get("reserved_output_tokens")))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("A reserved output allowance is required") from exc
+        if output <= 0 or output > int(self.profile["output_limit"]):
+            raise ValueError("Reserved output allowance exceeds the custom endpoint limit")
+        return provider_wire({**request, "reserved_completion_tokens": output}, self.profile)
+
+    def generate_text(self, request: dict) -> Iterator[str | ProviderResult | ProviderFailure]:
+        try:
+            payload = self._payload(request)
+        except ValueError as exc:
+            yield ProviderFailure("CONFIG_INVALID", str(exc))
+            return
+        yield from self._stream(payload, request=request)
+
+
 def default_provider_factory(*, owner_id: str, stage: str, profile: dict, credential: str, http_client=None) -> ProviderAdapter:
     """Construct the pinned adapter for one immutable role dispatch."""
     if profile.get("provider") == "ollama":
         if stage != "narration":
             raise ValueError("Ollama Cloud is registered for narrator dispatch only")
         return OllamaCloudAdapter(credential, OLLAMA_CLOUD_ENDPOINT, profile=profile, http_client=http_client)
+    if profile.get("provider") == "custom":
+        if stage != "narration":
+            raise ValueError("Custom provider is registered for narrator dispatch only")
+        return CustomOpenAIAdapter(profile=profile, credential=credential, http_client=http_client)
     if profile.get("provider") != "openrouter":
         raise ValueError("No production adapter is registered for this provider")
     if not credential:

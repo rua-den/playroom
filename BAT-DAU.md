@@ -5,7 +5,7 @@
 1. Nhấp đúp **Start Playroom.cmd** trong thư mục Playroom.
 2. Lần đầu, nhập email đăng nhập và mật khẩu ít nhất 12 ký tự trong cửa sổ vừa mở. Nhập lại mật khẩu để xác nhận; ký tự mật khẩu được ẩn khi gõ.
 3. Trình duyệt tự mở khi ứng dụng sẵn sàng tại **http://127.0.0.1:8000**. Đăng nhập bằng tài khoản vừa tạo.
-4. Vào **Cài đặt** để thêm credential của bạn, kiểm tra model rồi chọn narrator. Giữ chính sách free-only nếu bạn chỉ muốn dùng model miễn phí.
+4. Vào **Cài đặt** để cấu hình model. Với API riêng, chọn **Custom / OpenAI-compatible**, nhập URL, model ID và API key nếu endpoint yêu cầu. Lưu cấu hình rồi chọn model kể chuyện; có thể đổi model ngay cạnh nút **Gửi**. Với OpenRouter hoặc Ollama Cloud, thêm credential và xác minh model theo luồng có sẵn.
 5. Mở **Thư viện truyện**, chọn **Tạo truyện mới** hoặc **Nhập Legacy Bundle / Nhập Legacy**. Mỗi truyện có bối cảnh, nhân vật và lịch sử trò chuyện riêng. Truyện nhập vẫn chờ bạn duyệt hồ sơ, canon, ký ức và cảnh; bạn quyết định việc cho phép gửi context tới provider trước khi chủ động Gửi.
 
 Trong **Thư viện truyện**, chọn **Mở truyện / Đọc tiếp** để trở lại truyện đã lưu. Màn trò chuyện ghi rõ **Đang đọc** và tên truyện. Tải lại sẽ mở truyện gần nhất đã chọn trên trình duyệt này; nếu chưa có lựa chọn hợp lệ, app mở thư viện. Nút **Thư viện truyện** luôn có để quay về danh sách. Chỉ nhấn **Tạo truyện mới** khi muốn bắt đầu một truyện riêng.
@@ -15,6 +15,8 @@ Trong **Thư viện truyện**, chọn **Mở truyện / Đọc tiếp** để t
 Khi lưu cấu hình, hồ sơ, ký ức hoặc cảnh, thông báo nổi xuất hiện ở góc trên màn hình. Thành công hiện khoảng 5 giây và tạm dừng khi rê chuột hoặc dùng bàn phím trên thông báo; lỗi có nút **Đóng** và vẫn có chi tiết cạnh form.
 
 Key đã lưu trong GitHub Actions được giữ riêng trong môi trường kiểm thử đó. Bản local không tự lấy key từ GitHub; bạn nhập credential của mình ở **Cài đặt**, không gửi key qua chat.
+
+Custom nhận API tương thích OpenAI Chat Completions, chẳng hạn base URL `http://127.0.0.1:1234/v1` hoặc URL đầy đủ kết thúc bằng `/chat/completions`. API local có thể bỏ trống key. HTTP chỉ dùng cho loopback; endpoint trên server cần HTTPS. Form không yêu cầu khai báo giá hoặc giới hạn token/ngân sách. App dùng ngân sách token mặc định; chi phí và quota Custom do endpoint quản lý, Playroom không coi chúng là miễn phí hay đã xác minh giá. Lưu cấu hình không gọi AI hoặc kiểm tra kết nối; chỉ khi bạn chủ động **Gửi** mới có yêu cầu kể chuyện. OpenRouter và Ollama Cloud vẫn giữ chính sách chi phí riêng.
 
 Những lần sau chỉ cần mở lại cùng file **Start Playroom.cmd**. Tài khoản, chiến dịch và cấu hình được giữ trong `.playroom-live/`. Không cần tạo tài khoản lại. Giữ cửa sổ chạy app mở; nhấn **Ctrl+C** trong cửa sổ đó để dừng.
 

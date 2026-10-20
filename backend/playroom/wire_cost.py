@@ -82,9 +82,13 @@ def provider_wire(request: dict, profile: dict, *, schema: dict | None = None) -
         "model": profile.get("model") or request.get("model"),
         "messages": request.get("messages", []),
         "stream": True,
-        "stream_options": {"include_usage": True},
         output_parameter: requested_output,
     }
+    if profile.get("provider") == "custom":
+        if schema is not None:
+            raise ValidationError("Custom provider supports narrator economy only")
+        return result
+    result["stream_options"] = {"include_usage": True}
     if profile.get("provider") != "ollama":
         provider = {"allow_fallbacks": False, "require_parameters": True}
         if profile.get("provider_tag"):

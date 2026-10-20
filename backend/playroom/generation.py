@@ -157,7 +157,14 @@ class GenerationService:
         return {"narrator": _copy(narrator), "context": _copy(context)}
 
     def _role_budget(self, profile: dict, settings: dict, role: str) -> dict:
-        configured = (settings.get("budgets") or {}).get(role) or {}
+        custom_defaults = (
+            profile.get("provider") == "custom"
+            and profile.get("custom_billing") == "provider_managed"
+            and profile.get("limits_source") == "application_default"
+            and profile.get("pricing_verified") is False
+            and profile.get("capabilities_verified") is False
+        )
+        configured = {} if custom_defaults else ((settings.get("budgets") or {}).get(role) or {})
         return normalized_budget(profile, configured)
 
     def _counter(self, profile: dict):
@@ -182,6 +189,7 @@ class GenerationService:
             **budget,
             "is_test_profile": bool(profile.get("is_test_profile")),
             "capabilities_verified": bool(profile.get("capabilities_verified", True)),
+            "limits_source": profile.get("limits_source"),
             "counter_id": self._counter_id(profile),
         }
 
@@ -206,6 +214,8 @@ class GenerationService:
     def _reservation(self, profiles: dict, mode: str, policy: str, cap, settings: dict | None = None) -> dict:
         settings = settings or self.settings
         if mode == "quality":
+            if (profiles.get("narrator") or {}).get("provider") == "custom":
+                raise ValidationError("Custom provider supports narrator economy only")
             context_profile = profiles.get("context") or {}
             if not context_profile.get("native_structured_output", context_profile.get("structured_output", True)):
                 raise ValidationError("Quality mode requires native strict structured output for the context role")
@@ -217,23 +227,27 @@ class GenerationService:
             budget = self._role_budget(profile, settings, role)
             input_tokens = budget["input_limit"]
             output_tokens = budget["requested_output"]
-            if policy == "free_only":
+            custom_unknown_cost = profile.get("provider") == "custom" and profile.get("custom_billing") == "provider_managed"
+            if custom_unknown_cost:
+                validate_dispatch(profile, policy, {"input_tokens": input_tokens, "completion_tokens": output_tokens}, cap)
+            elif policy == "free_only":
                 validate_dispatch(profile, policy, {"input_tokens": 0, "completion_tokens": output_tokens}, None)
             elif policy == "capped_paid":
                 if cap is None:
                     raise ValidationError("A confirmed USD cap is required")
                 total += estimate_cost_usd(profile, input_tokens, output_tokens)
+            estimated_cost = None if custom_unknown_cost else estimate_cost_usd(profile, input_tokens, output_tokens)
             entries[stage] = {
                 "role": role,
                 "reserved_input_tokens": input_tokens,
                 "reserved_output_tokens": output_tokens,
-                "estimated_cost_usd": str(estimate_cost_usd(profile, input_tokens, output_tokens)),
-                "estimated_status": "estimated",
+                "estimated_cost_usd": str(estimated_cost) if estimated_cost is not None else None,
+                "estimated_status": "unknown" if custom_unknown_cost else "estimated",
                 "provider_reported_cost_usd": None,
                 "provider_reported_status": "unknown",
                 "calculated_cost_usd": None,
                 "calculated_status": "unknown",
-                "cost_provenance": "estimated",
+                "cost_provenance": "provider_managed_unknown" if custom_unknown_cost else "estimated",
                 "actual_cost_usd": None,
                 "actual_status": "unknown",
                 "usage": None,
@@ -242,9 +256,10 @@ class GenerationService:
                 "profile_version": profile.get("version"),
                 "profile_hash": profile.get("profile_hash"),
             }
-        if policy == "capped_paid" and total > Decimal(str(cap)):
+        custom_unknown = any((profiles["context" if stage == "context" else "narrator"].get("provider") == "custom") for stage in stages)
+        if policy == "capped_paid" and not custom_unknown and total > Decimal(str(cap)):
             raise ValidationError("Aggregate generation estimate exceeds the confirmed USD cap")
-        return {"policy": policy, "cap": str(cap) if cap is not None else None, "stages": entries, "reserved_total_usd": str(total), "actual_total_usd": None}
+        return {"policy": policy, "cap": None if custom_unknown else (str(cap) if cap is not None else None), "stages": entries, "reserved_total_usd": None if custom_unknown else str(total), "actual_total_usd": None}
 
     def _request_hash(self, campaign_id, branch_id, action, checkpoint_id, preview_id, idempotency_key, mode, policy, cap, submitted_identity=None):
         # Recovery identity is derived only from the submitted request. Live
@@ -801,6 +816,9 @@ class GenerationService:
         if tokens > effective_input_cap(profile, budget):
             raise ValidationError("Final serialized provider wire exceeds the verified input budget")
         cap = json.loads(job["settings_snapshot_json"] or "{}").get("confirmed_usd_cap")
+        if profile.get("provider") == "custom" and profile.get("custom_billing") == "provider_managed":
+            validate_dispatch(profile, job["policy"], {"input_tokens": tokens, "completion_tokens": out}, cap)
+            return
         if job["policy"] == "capped_paid":
             if cap is None:
                 raise ValidationError("A confirmed USD cap is required")
@@ -834,7 +852,8 @@ class GenerationService:
 
     def _provider_for(self, job, stage, profile):
         secret = None
-        if self.credential_resolver is not None and (self.provider_factory is not None or self.provider.__class__.__name__ != "FakeProvider"):
+        keyless_custom = profile.get("provider") == "custom" and profile.get("custom_billing") == "provider_managed" and profile.get("limits_source") == "application_default" and profile.get("pricing_verified") is False and profile.get("capabilities_verified") is False and not profile.get("secret_version")
+        if self.credential_resolver is not None and (not keyless_custom) and (profile.get("secret_version") or profile.get("provider") != "custom") and (self.provider_factory is not None or self.provider.__class__.__name__ != "FakeProvider"):
             try:
                 secret = self.credential_resolver(job["owner_id"], profile.get("secret_version"))
             except Exception as exc:
@@ -1170,7 +1189,7 @@ class GenerationService:
         else:
             entry["actual_cost_usd"] = None
             entry["actual_status"] = "unknown"
-            entry["cost_provenance"] = "unknown"
+            entry["cost_provenance"] = "provider_managed_unknown" if entry.get("cost_provenance") == "provider_managed_unknown" else "unknown"
         provider_total = Decimal("0")
         calculated_total = Decimal("0")
         stage_values = list((ledger.get("stages") or {}).values())

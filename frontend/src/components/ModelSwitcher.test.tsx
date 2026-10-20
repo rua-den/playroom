@@ -123,4 +123,17 @@ describe("ModelSwitcher", () => {
     await waitFor(() => expect(screen.getByText(/pricing và tier của bản ghim không còn/)).toBeInTheDocument());
     expect(screen.queryByText(/Model hiện tại chưa được xác minh là Free/)).not.toBeInTheDocument();
   });
+
+  it("lists provider-managed custom profiles without free or pricing block hints", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...settings, roles: { narrator: { id: "custom-1", version: 1 } } })))
+      .mockResolvedValueOnce(new Response(JSON.stringify([{ id: "custom-1", version: 1, model: "local-model", provider: "custom", pricing_verified: false, credential_tier: "unknown", custom_billing: "provider_managed", limits_source: "application_default" }])))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...settings, roles: { narrator: { id: "custom-1", version: 1 } } })));
+    vi.stubGlobal("fetch", fetchMock);
+    const onSaved = vi.fn(); render(<ModelSwitcher open onClose={vi.fn()} onOpenCostSettings={vi.fn()} onSaved={onSaved} busy={false} />);
+    await waitFor(() => expect(screen.getByRole("option", { name: /local-model/ })).toBeInTheDocument());
+    expect(screen.queryByText(/chưa được xác minh là Free/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/pricing và tier/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Cài đặt API/ })).toBeInTheDocument();
+  });
 });

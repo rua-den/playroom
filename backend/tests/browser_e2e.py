@@ -1160,8 +1160,90 @@ def browser_synthetic_chat() -> None:
                 baseline_settings = original_settings.json()
                 original_narrator_id = baseline_settings["roles"]["narrator"]["id"]
                 assert original_narrator_id not in seeded_narrators
+
+                # Configure a synthetic keyless loopback custom profile. Save
+                # must only persist owner-declared metadata: no endpoint probe,
+                # catalog fetch, completion, or change to provider settings.
+                custom_port = _free_loopback_port()
+                custom_endpoint = f"http://127.0.0.1:{custom_port}/v1"
+                custom_model = "synthetic-local-story-model"
+                page.set_viewport_size({"width": 375, "height": 780})
+                settings_trigger = page.get_by_role("button", name="Cài đặt", exact=True)
+                settings_trigger.click()
+                settings_dialog = page.get_by_role("dialog", name="Cài đặt")
+                expect(settings_dialog).to_be_visible(timeout=12000)
+                _assert_modal_geometry(page, settings_dialog, 375)
+                _assert_modal_heading_readable(settings_dialog)
+                settings_dialog.get_by_role("combobox", name="Provider", exact=True).select_option("custom")
+                _assert_modal_scroll_header(page, settings_dialog)
+                settings_dialog.get_by_role("textbox", name=re.compile("^Endpoint(?: URL)?$", re.IGNORECASE)).scroll_into_view_if_needed()
+                _visual_screenshot(page, "custom-provider-form-375.png", full_page=False)
+                _assert_modal_focus(page, settings_dialog, settings_trigger)
+                settings_trigger.click()
+                settings_dialog = page.get_by_role("dialog", name="Cài đặt")
+                expect(settings_dialog).to_be_visible(timeout=12000)
+                settings_dialog.get_by_role("combobox", name="Provider", exact=True).select_option("custom")
+                settings_dialog.get_by_role("textbox", name=re.compile("^Endpoint(?: URL)?$", re.IGNORECASE)).fill(custom_endpoint)
+                settings_dialog.get_by_role("textbox", name="Model ID", exact=True).fill(custom_model)
+                optional_key = settings_dialog.get_by_role("textbox", name=re.compile(r"^API key \(optional\)$", re.IGNORECASE))
+                expect(optional_key).to_be_visible(timeout=12000)
+                expect(optional_key).to_have_value("")
+                save_custom = settings_dialog.get_by_role("button", name=re.compile("Lưu.*(custom|tùy chỉnh|provider)", re.IGNORECASE))
+                expect(save_custom).to_be_enabled(timeout=12000)
+                provider_calls_before_custom_save = len(campaign.calls)
+                save_custom.click()
+                custom_toast = page.get_by_role("region", name="Thông báo").get_by_role("status")
+                expect(custom_toast).to_be_visible(timeout=12000)
+                expect(custom_toast).to_contain_text(re.compile("custom|tùy chỉnh|provider", re.IGNORECASE))
+                assert len(campaign.calls) == provider_calls_before_custom_save
+                custom_profiles_response = page.context.request.get(f"{origin}/api/provider/profiles")
+                assert custom_profiles_response.ok
+                custom_profiles = [profile for profile in custom_profiles_response.json() if profile.get("provider") == "custom" and profile.get("model") == custom_model]
+                assert len(custom_profiles) == 1
+                custom_profile = custom_profiles[0]
+                expected_custom_endpoint = f"http://127.0.0.1:{custom_port}/v1/chat/completions"
+                assert custom_profile["endpoint"] == expected_custom_endpoint
+                assert custom_profile["model"] == custom_model
+                assert custom_profile["pricing_provenance"] == "unknown"
+                assert custom_profile["metadata_provenance"] == "owner_configured"
+                assert custom_profile.get("secret_version") is None
+                expect(settings_dialog.get_by_role("textbox", name=re.compile("^Endpoint(?: URL)?$", re.IGNORECASE))).to_have_value(re.compile(rf"127\.0\.0\.1:{custom_port}/v1(?:/chat/completions)?"))
+                expect(settings_dialog.get_by_role("textbox", name="Model ID", exact=True)).to_have_value(custom_model)
+                custom_toast.get_by_role("button", name="Đóng thông báo").click()
+                settings_dialog.get_by_role("button", name=re.compile("Đóng cài đặt|Đóng", re.IGNORECASE)).click()
+                expect(settings_dialog).not_to_be_visible()
+                expect(settings_trigger).to_be_focused()
+                # Reopen the settings modal to prove the saved custom profile
+                # is durable and the keyless form is restored from the API.
+                settings_trigger.click()
+                settings_dialog = page.get_by_role("dialog", name="Cài đặt")
+                expect(settings_dialog).to_be_visible(timeout=12000)
+                settings_dialog.get_by_role("combobox", name="Provider", exact=True).select_option("custom")
+                _assert_modal_geometry(page, settings_dialog, 375)
+                _assert_modal_heading_readable(settings_dialog)
+                _assert_modal_scroll_header(page, settings_dialog)
+                expect(settings_dialog.get_by_role("textbox", name=re.compile("^Endpoint(?: URL)?$", re.IGNORECASE))).to_have_value(expected_custom_endpoint)
+                expect(settings_dialog.get_by_role("textbox", name="Model ID", exact=True)).to_have_value(custom_model)
+                settings_dialog.get_by_role("textbox", name=re.compile("^Endpoint(?: URL)?$", re.IGNORECASE)).scroll_into_view_if_needed()
+                _visual_screenshot(page, "custom-provider-form-375.png", full_page=False)
+                _assert_modal_focus(page, settings_dialog, settings_trigger)
+                _assert_story_preserved(page, modal_title, modal_draft, 1)
+
                 for viewport_width in (375, 1280):
                     page.set_viewport_size({"width": viewport_width, "height": 780})
+                    if viewport_width == 1280:
+                        settings_trigger.click()
+                        settings_dialog = page.get_by_role("dialog", name="Cài đặt")
+                        expect(settings_dialog).to_be_visible(timeout=12000)
+                        settings_dialog.get_by_role("combobox", name="Provider", exact=True).select_option("custom")
+                        _assert_modal_geometry(page, settings_dialog, 1280)
+                        _assert_modal_heading_readable(settings_dialog)
+                        _assert_modal_scroll_header(page, settings_dialog)
+                        expect(settings_dialog.get_by_role("textbox", name=re.compile("^Endpoint(?: URL)?$", re.IGNORECASE))).to_have_value(expected_custom_endpoint)
+                        expect(settings_dialog.get_by_role("textbox", name="Model ID", exact=True)).to_have_value(custom_model)
+                        settings_dialog.get_by_role("textbox", name=re.compile("^Endpoint(?: URL)?$", re.IGNORECASE)).scroll_into_view_if_needed()
+                        _visual_screenshot(page, "custom-provider-form-1280.png", full_page=False)
+                        _assert_modal_focus(page, settings_dialog, settings_trigger)
                     model_trigger = page.get_by_role("button", name="\u0110\u1ed5i model", exact=True)
                     expect(model_trigger).to_be_visible()
                     model_trigger.click()
@@ -1180,10 +1262,14 @@ def browser_synthetic_chat() -> None:
                         option = narrator.locator(f"option[value='{profile['id']}']")
                         expect(option).to_have_count(1, timeout=12000)
                         expect(option).to_contain_text(profile["model_label"])
+                    custom_option = narrator.locator(f"option[value='{custom_profile['id']}']")
+                    expect(custom_option).to_have_count(1, timeout=12000)
+                    expect(custom_option).to_contain_text(custom_model)
+                    _visual_screenshot(page, f"custom-provider-picker-{viewport_width}.png", full_page=False)
                     assert narrator.locator(f"option[value='{original_narrator_id}']").count() == 0
                     _visual_screenshot(page, f"model-picker-{viewport_width}.png", full_page=False)
 
-                    selected_id = "openrouter-free0pricing-b" if viewport_width == 375 else "openrouter-free0pricing-a"
+                    selected_id = custom_profile["id"] if viewport_width == 375 else "openrouter-free0pricing-a"
                     narrator.select_option(selected_id)
                     save_model = model_dialog.get_by_role("button", name="L\u01b0u model", exact=True)
                     expect(save_model).to_be_enabled()
@@ -1196,8 +1282,9 @@ def browser_synthetic_chat() -> None:
                     saved_payload = saved_settings.json()
                     saved_binding = saved_payload["roles"]["narrator"]
                     assert saved_binding["id"] == selected_id
-                    assert saved_binding["version"] == seeded_narrators[selected_id]["version"]
-                    assert saved_binding.get("profile_hash") == seeded_narrators[selected_id].get("profile_hash")
+                    expected_profile = custom_profile if selected_id == custom_profile["id"] else seeded_narrators[selected_id]
+                    assert saved_binding["version"] == expected_profile["version"]
+                    assert saved_binding.get("profile_hash") == expected_profile.get("profile_hash")
                     for key in ("mode", "policy", "confirmed_usd_cap", "budgets"):
                         assert saved_payload.get(key) == baseline_settings.get(key), key
                     for role in ("context", "consolidation"):
@@ -1206,7 +1293,7 @@ def browser_synthetic_chat() -> None:
                     _assert_story_preserved(page, modal_title, modal_draft, 1)
 
                     if viewport_width == 375:
-                        model_dialog.get_by_role("button", name="C\u00e0i \u0111\u1eb7t chi ph\u00ed", exact=True).click()
+                        model_dialog.get_by_role("button", name="Cài đặt API", exact=True).click()
                         settings_dialog = page.get_by_role("dialog", name="C\u00e0i \u0111\u1eb7t")
                         expect(model_dialog).not_to_be_visible()
                         expect(settings_dialog).to_be_visible(timeout=12000)
