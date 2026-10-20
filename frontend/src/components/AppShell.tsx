@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api/client";
 import type { CampaignCreatePayload, CampaignProjection, CampaignSummary, Owner } from "../api/types";
 import { Markdown } from "./Markdown";
@@ -92,7 +92,6 @@ function AppShellContent({ owner, onLogout, notice }: AppShellProps) {
   useEffect(() => { if (ownerRef.current === owner.id) return; ownerRef.current = owner.id; setCampaigns([]); setTrashedCampaigns([]); setLibraryMode("active"); setSelectedId(null); setProjection(null); setError(null); setModelOpen(false); setDeleteTarget(null); setLibraryOpen(true); }, [owner.id]);
   const projectionRequest = useRef(0);
   const catalogRequest = useRef(0);
-  const drawerTrigger = useRef<HTMLButtonElement>(null);
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
   useEffect(() => { const token = ++catalogRequest.current; const targetOwner = owner.id; setLoading(true); if (import.meta.env.PROD) api.getDemoInfo().then((info) => { if (mountedRef.current && ownerRef.current === targetOwner) setDemoInfo(info); }).catch(() => undefined); api.listCampaigns().then((items) => { if (mountedRef.current && ownerRef.current === targetOwner && catalogRequest.current === token) { const safeItems = Array.isArray(items) ? items : []; const remembered = readLastStoryId(targetOwner); const restored = remembered && safeItems.some((item) => item.id === remembered) ? remembered : null; selectedIdRef.current = restored; setCampaigns(safeItems); setSelectedId(restored); setLibraryOpen(!restored); } }).catch(() => { if (mountedRef.current && ownerRef.current === targetOwner && catalogRequest.current === token) setError("Không thể tải thư viện truyện."); }).finally(() => { if (mountedRef.current && ownerRef.current === targetOwner && catalogRequest.current === token) setLoading(false); }); return () => { catalogRequest.current += 1; }; }, [owner.id]);
   useEffect(() => { const targetId = selectedId; const requestId = ++projectionRequest.current; if (!targetId) { setProjection(null); return; } setProjection(null); setError(null); api.getCampaign(targetId).then((detail) => { if (!mountedRef.current || selectedIdRef.current !== targetId || projectionRequest.current !== requestId) return null; return api.getCampaignProjection(targetId, detail.branch_id); }).then((next) => { if (next && mountedRef.current && selectedIdRef.current === targetId && projectionRequest.current === requestId) setProjection(next); }).catch(() => { if (mountedRef.current && selectedIdRef.current === targetId && projectionRequest.current === requestId) setError("Không thể tải truyện này."); }); return () => { projectionRequest.current += 1; }; }, [selectedId]);
@@ -140,7 +139,6 @@ function AppShellContent({ owner, onLogout, notice }: AppShellProps) {
   function closeSettings() { setSettingsOpen(false); }
   function openModel() { if (!projection || libraryOpen) return; setSettingsOpen(false); setModelOpen(true); }
   function openCostSettingsFromModel() { setModelOpen(false); setSettingsOpen(true); }
-  const selected = useMemo(() => campaigns.find((item) => item.id === selectedId) ?? null, [campaigns, selectedId]);
   async function refreshProjection() { if (!selectedId) return undefined; const targetId = selectedId; const requestId = ++projectionRequest.current; try { const detail = await api.getCampaign(targetId); const next = await api.getCampaignProjection(targetId, detail.branch_id); if (projectionRequest.current !== requestId || selectedIdRef.current !== targetId) return undefined; setProjection(next); return next; } catch { if (projectionRequest.current === requestId && selectedIdRef.current === targetId) setError("Không thể làm mới truyện."); return undefined; } }
   const editorChanged = () => refreshProjection();
   function chooseStory(id: string) { if (id !== selectedIdRef.current) { projectionRequest.current += 1; selectedIdRef.current = id; setProjection(null); } setSelectedId(id); writeLastStoryId(owner.id, id); setLibraryOpen(false); setCreateOpen(false); setImportOpen(false); }
@@ -157,11 +155,8 @@ function AppShellContent({ owner, onLogout, notice }: AppShellProps) {
       <div className="campaign-controls">
         <button type="button" className="quiet-button touch-target library-trigger" onClick={() => { setCreateOpen(false); setImportOpen(false); setLibraryOpen(true); }}>Thư viện truyện</button>
       {!libraryOpen && campaigns.length > 0 && <>
-        <label htmlFor="campaign-select">Truyện</label>
-        <select id="campaign-select" aria-label="Truyện hiện tại" value={selectedId ?? ""} onChange={(event) => chooseStory(event.target.value)}>{campaigns.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select>
-        <button type="button" className="quiet-button touch-target" onClick={openCreate}>Tạo truyện mới</button>
-        <button type="button" className="quiet-button touch-target" onClick={() => openImport("chatgpt")}>Nhập ChatGPT</button><button type="button" className="quiet-button touch-target" onClick={() => openImport("legacy")}>Nhập Legacy</button>
-        {campaigns.length > 1 && <div className="campaign-quick-list" aria-label="Truyện gần đây">{campaigns.map((item) => <button type="button" className="campaign-item" key={`quick-${item.id}`} onClick={() => chooseStory(item.id)} aria-pressed={item.id === selectedId}>{item.title}</button>)}</div>}
+        <button type="button" className="quiet-button touch-target" aria-haspopup="dialog" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(true)}>Truyện và tác vụ</button>
+        {projection && <button type="button" className="quiet-button touch-target mobile-context-trigger" onClick={openDetails}>AI đang nhớ gì</button>}
       </>}</div>
       <div className="account-menu">
         <span className="account-email">{owner.email}</span>
@@ -173,10 +168,6 @@ function AppShellContent({ owner, onLogout, notice }: AppShellProps) {
     {notice && <div role="alert" className="form-error shell-notice" aria-hidden={drawerOpen || detailsOpen || settingsOpen || createOpen || importOpen}> {notice}</div>}
     {error && !campaigns.length && <a className="catalog-retry" href="/">Thử lại</a>}
     <>{libraryOpen && library}{error && libraryOpen && <div role="alert" className="form-error shell-notice">{error}</div>}<div className={libraryOpen ? "library-story-hidden" : "story-workspace"} aria-hidden={libraryOpen || deleteTarget !== null} hidden={libraryOpen}>
-      <div className="mobile-actions" aria-hidden={libraryOpen || drawerOpen || detailsOpen || settingsOpen || modelOpen || createOpen || importOpen}>
-        <button type="button" className="quiet-button touch-target mobile-campaign-trigger" onClick={() => setDrawerOpen(true)} ref={drawerTrigger}>Truyện và tác vụ</button>
-        {projection && <button type="button" className="quiet-button touch-target" onClick={openDetails}>AI đang nhớ gì</button>}
-      </div>
       <div className="workspace-grid" aria-hidden={libraryOpen || drawerOpen || detailsOpen || settingsOpen || modelOpen || createOpen || importOpen || deleteTarget !== null}>
         <section className="story-column conversation-column">
           {error && <div role="alert" className="form-error">{error}</div>}
