@@ -714,14 +714,14 @@ def browser_synthetic_chat() -> None:
                     expect(page.get_by_role("button", name=re.compile("Nhập.*Legacy"), exact=False)).to_be_visible()
                     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
                     _visual_screenshot(page, filename)
-                second_card.locator("button").click()
+                second_card.get_by_role("button", name="Mở truyện", exact=True).click()
                 expect(page.get_by_role("heading", name="Synthetic history B")).to_be_visible(timeout=12000)
                 expect(page.locator(".story-turn")).to_have_count(0)
                 assert len(campaign.calls) == provider_before_library
                 page.locator(".library-trigger").click()
                 expect(page.locator("#library-title")).to_be_visible(timeout=12000)
                 first_card = page.locator("article").filter(has_text=first_title)
-                first_card.locator("button").click()
+                first_card.get_by_role("button", name=re.compile(r"^(?:Đọc tiếp|Mở truyện)$")).click()
                 expect(page.get_by_role("heading", name=first_title)).to_be_visible(timeout=12000)
                 expect(page.locator(".story-turn")).to_have_count(first_turn_count)
                 expect(page.locator(".story-turn").filter(has_text=NARRATION)).to_have_count(first_turn_count)
@@ -1470,6 +1470,159 @@ def browser_synthetic_chat() -> None:
                 raise RuntimeError("Demo server failed to shut down")
 
 
+def browser_synthetic_library_trash() -> None:
+    """Exercise the real Library/Trash flow with disposable synthetic stories."""
+    with tempfile.TemporaryDirectory(prefix="playroom-trash-") as tmp:
+        data_dir = Path(tmp)
+        app, server, thread, origin = _start_demo(data_dir)
+        provider = app.state.generation_provider
+        assert provider.calls == []
+        delete_requests: list[str] = []
+        try:
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(headless=True, args=["--no-sandbox"])
+                context = browser.new_context(
+                    viewport={"width": 1280, "height": 900},
+                    reduced_motion="reduce",
+                    locale="vi-VN",
+                )
+                page = context.new_page()
+                page.goto(origin, wait_until="domcontentloaded")
+                page.get_by_label("Email").fill(EMAIL)
+                page.get_by_label("Mật khẩu").fill(PASSWORD)
+                page.locator("button[type=submit]").click()
+                expect(page.locator(".story-library")).to_be_visible(timeout=15000)
+                page.on("request", lambda request: delete_requests.append(request.url) if request.method == "DELETE" else None)
+
+                def create_scratch(label: str) -> dict:
+                    response = page.context.request.post(
+                        f"{origin}/api/campaigns",
+                        data=json.dumps({
+                            "title": label,
+                            "world": {"name": "Synthetic trash world", "description": ""},
+                            "persona": {"name": "Synthetic player", "description": ""},
+                            "characters": [],
+                        }),
+                        headers={
+                            "content-type": "application/json",
+                            "origin": origin,
+                            "x-requested-with": "XMLHttpRequest",
+                        },
+                    )
+                    assert response.status == 201, response.text()
+                    return response.json()
+
+                def run_flow(width: int, suffix: str) -> None:
+                    page.set_viewport_size({"width": width, "height": 780})
+                    page.get_by_role("button", name="Thư viện truyện", exact=True).click()
+                    page.evaluate("() => Object.keys(localStorage).filter((key) => key.startsWith('playroom:last-story:')).forEach((key) => localStorage.removeItem(key))")
+                    story = create_scratch(f"Synthetic trash {suffix}")
+                    page.reload(wait_until="domcontentloaded")
+                    expect(page.get_by_role("heading", name="Thư viện truyện")).to_be_visible()
+                    card = page.locator("article.story-card").filter(
+                        has=page.get_by_role("heading", name=story["title"], exact=True)
+                    )
+                    expect(card).to_have_count(1)
+
+                    # Open the disposable story first so deletion also proves that
+                    # the current selection and remembered story are cleared.
+                    card.get_by_role("button", name=re.compile(r"^Mở truyện$")).click()
+                    expect(page.locator(".story-workspace")).to_be_visible()
+                    expect(page.get_by_role("heading", name=story["title"], exact=True)).to_be_visible()
+                    page.get_by_role("button", name="Thư viện truyện", exact=True).click()
+                    card = page.locator("article.story-card").filter(
+                        has=page.get_by_role("heading", name=story["title"], exact=True)
+                    )
+
+                    delete = card.get_by_role("button", name=re.compile(r"^Xo\u00e1"))
+                    delete.click()
+                    dialog = page.get_by_role("dialog", name=re.compile(r"^Xo\u00e1 truy\u1ec7n\?$"))
+                    expect(dialog).to_be_visible()
+                    _assert_modal_geometry(page, dialog, width)
+                    confirm = dialog.get_by_role("button", name=re.compile(r"^Xo\u00e1 truy\u1ec7n$"))
+                    cancel = dialog.get_by_role("button", name=re.compile(r"^Hu\u1ef7$"))
+                    expect(confirm).to_be_visible()
+                    expect(confirm).to_be_enabled()
+                    expect(dialog.get_by_text(story["title"], exact=False)).to_be_visible()
+
+                    # Cancel leaves the card active and sends no DELETE request.
+                    cancel.click()
+                    expect(dialog).to_be_hidden()
+                    expect(card).to_be_visible()
+                    assert not any(f"/api/campaigns/{story['id']}" in url for url in delete_requests)
+                    active_after_cancel = page.context.request.get(f"{origin}/api/campaigns").json()
+                    assert any(item["id"] == story["id"] for item in active_after_cancel)
+
+                    delete.click()
+                    dialog = page.get_by_role("dialog", name=re.compile(r"^Xo\u00e1 truy\u1ec7n\?$"))
+                    with page.expect_response(lambda response: response.request.method == "DELETE" and response.url.endswith(f"/api/campaigns/{story['id']}")) as deleted_response:
+                        dialog.get_by_role("button", name=re.compile(r"^Xo\u00e1 truy\u1ec7n$")).click()
+                    assert deleted_response.value.status == 200
+                    expect(dialog).to_be_hidden()
+                    expect(page.locator(".story-library")).to_be_visible()
+                    expect(page.locator(".story-workspace")).to_be_hidden()
+                    expect(page.locator("article.story-card").filter(has_text=story["title"])).to_have_count(0)
+
+                    toast = page.get_by_role("status")
+                    expect(toast).to_be_visible(timeout=5000)
+                    undo = toast.get_by_role("button", name="Hoàn tác", exact=True)
+                    expect(undo).to_be_visible()
+                    with page.expect_response(lambda response: response.request.method == "POST" and response.url.endswith(f"/api/campaigns/{story['id']}/restore")) as undo_response:
+                        undo.click()
+                    assert undo_response.value.status == 200
+                    card = page.locator("article.story-card").filter(has_text=story["title"])
+                    expect(card).to_have_count(1)
+
+                    # Delete again, then exercise the durable Trash view through a reload.
+                    card.get_by_role("button", name=re.compile(r"^Xo\u00e1")).click()
+                    dialog = page.get_by_role("dialog", name=re.compile(r"^Xo\u00e1 truy\u1ec7n\?$"))
+                    with page.expect_response(lambda response: response.request.method == "DELETE" and response.url.endswith(f"/api/campaigns/{story['id']}")) as second_deleted:
+                        dialog.get_by_role("button", name=re.compile(r"^Xo\u00e1 truy\u1ec7n$")).click()
+                    assert second_deleted.value.status == 200
+                    trash_toggle = page.locator(".library-view-toggle").get_by_role("button", name="Thùng rác", exact=True)
+                    with page.expect_response(lambda response: response.request.method == "GET" and "trashed=true" in response.url) as trash_response:
+                        trash_toggle.click()
+                    assert trash_response.value.status == 200
+                    trashed = page.locator("article.story-card").filter(has_text=story["title"])
+                    expect(trashed).to_have_count(1)
+                    assert not any(item["id"] == story["id"] for item in page.context.request.get(f"{origin}/api/campaigns").json())
+
+                    page.reload(wait_until="domcontentloaded")
+                    expect(page.get_by_role("heading", name="Thư viện truyện")).to_be_visible()
+                    with page.expect_response(lambda response: response.request.method == "GET" and "trashed=true" in response.url) as reload_trash:
+                        page.locator(".library-view-toggle").get_by_role("button", name="Thùng rác", exact=True).click()
+                    assert reload_trash.value.status == 200
+                    trashed = page.locator("article.story-card").filter(has_text=story["title"])
+                    expect(trashed).to_have_count(1)
+                    restore = trashed.get_by_role("button", name=re.compile(r"^Kh\u00f4i ph\u1ee5c"))
+                    with page.expect_response(lambda response: response.request.method == "POST" and response.url.endswith(f"/api/campaigns/{story['id']}/restore")) as restore_response:
+                        restore.click()
+                    assert restore_response.value.status == 200
+                    expect(trashed).to_have_count(0)
+                    page.locator(".library-view-toggle").get_by_role("button", name="Thư viện", exact=True).click()
+                    card = page.locator("article.story-card").filter(has_text=story["title"])
+                    expect(card).to_have_count(1)
+
+                    # Reopen after reload and confirm the restored story remains intact.
+                    card.get_by_role("button", name=re.compile(r"^Mở truyện$")).click()
+                    expect(page.get_by_role("heading", name=story["title"], exact=True)).to_be_visible()
+                    expect(page.locator(".story-empty")).to_be_visible()
+                    page.reload(wait_until="domcontentloaded")
+                    expect(page.get_by_role("heading", name=story["title"], exact=True)).to_be_visible()
+                    expect(page.locator(".story-empty")).to_be_visible()
+
+                run_flow(1280, "desktop")
+                run_flow(375, "mobile")
+                assert provider.calls == [], "Library trash actions must not invoke the AI provider"
+                browser.close()
+                print("Synthetic Library Trash Chromium: desktop/mobile cancel, delete, undo, durable trash, restore and reopen PASS")
+        finally:
+            server.should_exit = True
+            thread.join(timeout=10)
+            if thread.is_alive():
+                raise RuntimeError("Synthetic trash server failed to shut down")
+
+
 def browser_live_local_chat() -> None:
     """Exercise the real local assembly through a built React frontend."""
     with tempfile.TemporaryDirectory(prefix="playroom-live-local-") as tmp:
@@ -1530,4 +1683,5 @@ def browser_live_local_chat() -> None:
 
 if __name__ == "__main__":
     browser_synthetic_chat()
+    browser_synthetic_library_trash()
     browser_live_local_chat()

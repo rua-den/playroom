@@ -89,15 +89,23 @@ def create_campaign(connection: sqlite3.Connection, owner_id: str, title: str, w
     return Campaign(campaign_id, owner_id, title.strip(), branch_id, tuple(character_ids), profile_versions)
 
 
-def list_campaigns(connection: sqlite3.Connection, owner_id: str) -> list[dict]:
+def _campaign_summary(row: sqlite3.Row) -> dict:
+    return dict(row)
+
+
+def list_campaigns(connection: sqlite3.Connection, owner_id: str, *, trashed: bool = False) -> list[dict]:
     owner_id = require_uuid(owner_id, "owner_id")
-    rows = connection.execute("SELECT id, title, created_at, updated_at, archived_at FROM campaigns WHERE owner_id = ? ORDER BY archived_at IS NOT NULL, updated_at DESC, id", (owner_id,)).fetchall()
-    return [dict(row) for row in rows]
+    if trashed:
+        predicate = "deleted_at IS NOT NULL"
+    else:
+        predicate = "deleted_at IS NULL"
+    rows = connection.execute(f"SELECT id, title, created_at, updated_at, archived_at, deleted_at FROM campaigns WHERE owner_id = ? AND {predicate} ORDER BY archived_at IS NOT NULL, updated_at DESC, id", (owner_id,)).fetchall()
+    return [_campaign_summary(row) for row in rows]
 
 
 def get_campaign(connection: sqlite3.Connection, campaign_id: str, owner_id: str) -> dict:
     campaign_id, owner_id = require_uuid(campaign_id, "campaign_id"), require_uuid(owner_id, "owner_id")
-    row = connection.execute("SELECT id, owner_id, title, created_at, updated_at, archived_at FROM campaigns WHERE id = ? AND owner_id = ?", (campaign_id, owner_id)).fetchone()
+    row = connection.execute("SELECT id, owner_id, title, created_at, updated_at, archived_at, deleted_at FROM campaigns WHERE id = ? AND owner_id = ? AND deleted_at IS NULL", (campaign_id, owner_id)).fetchone()
     if row is None:
         raise NotFound("Campaign not found")
     branch = connection.execute("SELECT id, name, state_version, head_checkpoint_id FROM branches WHERE campaign_id = ? ORDER BY created_at LIMIT 1", (campaign_id,)).fetchone()
@@ -107,6 +115,33 @@ def get_campaign(connection: sqlite3.Connection, campaign_id: str, owner_id: str
         profile = connection.execute("SELECT kind, data_json FROM profile_versions WHERE id = ?", (version_id,)).fetchone()
         profiles[key] = {"kind": profile["kind"], "data": json.loads(profile["data_json"])}
     return {**dict(row), "branch_id": branch["id"], "state_version": branch["state_version"], "checkpoint_id": branch["head_checkpoint_id"], "profiles": profiles}
+
+
+def trash_campaign(connection: sqlite3.Connection, campaign_id: str, owner_id: str) -> dict:
+    campaign_id, owner_id = require_uuid(campaign_id, "campaign_id"), require_uuid(owner_id, "owner_id")
+    with transaction(connection):
+        row = connection.execute("SELECT id, title, created_at, updated_at, archived_at, deleted_at FROM campaigns WHERE id=? AND owner_id=?", (campaign_id, owner_id)).fetchone()
+        if row is None:
+            raise NotFound("Campaign not found")
+        if connection.execute("SELECT 1 FROM generation_branch_guards g JOIN branches b ON b.id=g.branch_id WHERE b.campaign_id=? LIMIT 1", (campaign_id,)).fetchone() is not None:
+            raise StateConflict("Campaign has an active generation")
+        if connection.execute("SELECT 1 FROM generation_jobs WHERE campaign_id=? AND status IN ('queued','running','cancelling','interrupted','candidate') LIMIT 1", (campaign_id,)).fetchone() is not None:
+            raise StateConflict("Campaign has an active generation")
+        deleted_at = row["deleted_at"] or utc_now()
+        connection.execute("UPDATE campaigns SET deleted_at=? WHERE id=? AND owner_id=?", (deleted_at, campaign_id, owner_id))
+        updated = connection.execute("SELECT id, title, created_at, updated_at, archived_at, deleted_at FROM campaigns WHERE id=? AND owner_id=?", (campaign_id, owner_id)).fetchone()
+        return _campaign_summary(updated)
+
+
+def restore_campaign(connection: sqlite3.Connection, campaign_id: str, owner_id: str) -> dict:
+    campaign_id, owner_id = require_uuid(campaign_id, "campaign_id"), require_uuid(owner_id, "owner_id")
+    with transaction(connection):
+        row = connection.execute("SELECT id, title, created_at, updated_at, archived_at, deleted_at FROM campaigns WHERE id=? AND owner_id=?", (campaign_id, owner_id)).fetchone()
+        if row is None:
+            raise NotFound("Campaign not found")
+        connection.execute("UPDATE campaigns SET deleted_at=NULL WHERE id=? AND owner_id=?", (campaign_id, owner_id))
+        updated = connection.execute("SELECT id, title, created_at, updated_at, archived_at, deleted_at FROM campaigns WHERE id=? AND owner_id=?", (campaign_id, owner_id)).fetchone()
+        return _campaign_summary(updated)
 
 
 def get_effective_profile(connection: sqlite3.Connection, campaign_id: str, branch_id: str, position: str | None, profile_key: str, owner_id: str | None = None) -> dict:

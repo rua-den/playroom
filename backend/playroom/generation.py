@@ -269,6 +269,10 @@ class GenerationService:
         return _hash({"campaign_id": campaign_id, "branch_id": branch_id, "action": action, "checkpoint_id": checkpoint_id, "preview_id": preview_id, "idempotency_key": idempotency_key, "mode": mode, "policy": policy, "cap": str(cap) if cap is not None else None})
 
     def existing_for_submitted_request(self, owner_id, campaign_id, branch_id, action, *, idempotency_key, expected_checkpoint_id, preview_id, submitted_identity):
+        # Recovery/idempotency is only valid while the campaign branch remains
+        # active. Historical terminal jobs stay readable through GET methods,
+        # but a trashed campaign cannot replay or reserve generation work.
+        get_branch_head(self.connection, campaign_id, branch_id, owner_id)
         request_hash = self._request_hash(campaign_id, branch_id, action, expected_checkpoint_id, preview_id, idempotency_key, None, None, None, submitted_identity=submitted_identity)
         existing = self.connection.execute("SELECT id,request_hash FROM generation_jobs WHERE owner_id=? AND branch_id=? AND operation='generation' AND idempotency_key=?", (owner_id, branch_id, idempotency_key)).fetchone()
         if existing is None:
@@ -283,6 +287,7 @@ class GenerationService:
         if not action.strip() or not idempotency_key.strip():
             raise ValidationError("Action and idempotency key are required")
         request_hash = self._request_hash(campaign_id, branch_id, action, expected_checkpoint_id, preview_id, idempotency_key, mode, policy, cap, submitted_identity=submitted_identity)
+        get_branch_head(self.connection, campaign_id, branch_id, owner_id)
         existing = self.connection.execute("SELECT id,request_hash FROM generation_jobs WHERE owner_id=? AND branch_id=? AND operation='generation' AND idempotency_key=?", (owner_id, branch_id, idempotency_key)).fetchone()
         if existing:
             if existing["request_hash"] != request_hash:
@@ -1239,6 +1244,7 @@ class GenerationService:
     def cancel(self, owner_id, job_id):
         job = self.get_job(owner_id, job_id)
         with transaction(self.connection):
+            get_branch_head(self.connection, job["campaign_id"], job["branch_id"], owner_id)
             active = self.connection.execute("SELECT COUNT(*) AS n FROM provider_attempts WHERE generation_job_id=? AND status='dispatched'", (job_id,)).fetchone()["n"]
             status = "cancelling" if active else "cancelled"
             self.connection.execute("UPDATE generation_jobs SET cancel_requested=1,status=? WHERE id=? AND owner_id=? AND status IN ('queued','running','candidate')", (status, job_id, owner_id))
@@ -1249,17 +1255,19 @@ class GenerationService:
             self.connection.execute("UPDATE provider_attempts SET status='interrupted',finished_at=?,failure_json=? WHERE generation_job_id=? AND status IN ('queued','claimed')", (_now(), json.dumps({"code": "CANCELLED", "message": "Generation was cancelled"}), job_id))
             if not active:
                 self.connection.execute("DELETE FROM generation_branch_guards WHERE generation_job_id=?", (job_id,))
-        self._event(job_id, None, "cancelled", None, "", {})
+            self._event(job_id, None, "cancelled", None, "", {})
         return self._job(job_id)
 
     def edit_draft(self, owner_id, job_id, draft: str):
         job = self.get_job(owner_id, job_id)
-        if job["status"] in {"candidate", "committed"}:
-            raise ValidationError("Complete candidates cannot be edited as drafts")
         if not isinstance(draft, str):
             raise ValidationError("Draft must be text")
-        self.connection.execute("UPDATE generation_jobs SET draft=? WHERE id=? AND owner_id=? AND status NOT IN ('candidate','committed')", (draft, job_id, owner_id))
-        self._event(job_id, None, "draft_edited", self._offset(draft), "", {"offset_unit": "utf16_code_units"})
+        with transaction(self.connection):
+            get_branch_head(self.connection, job["campaign_id"], job["branch_id"], owner_id)
+            if job["status"] in {"candidate", "committed"}:
+                raise ValidationError("Complete candidates cannot be edited as drafts")
+            self.connection.execute("UPDATE generation_jobs SET draft=? WHERE id=? AND owner_id=? AND status NOT IN ('candidate','committed')", (draft, job_id, owner_id))
+            self._event(job_id, None, "draft_edited", self._offset(draft), "", {"offset_unit": "utf16_code_units"})
         return self._job(job_id)
 
     def recover_after_restart(self):
@@ -1352,12 +1360,12 @@ class GenerationService:
 
     def commit_candidate(self, owner_id, job_id):
         job = self.get_job(owner_id, job_id)
-        if job["status"] == "committed":
-            return job
-        if job["status"] != "candidate":
-            raise ValidationError("Only a complete candidate can be committed")
         with transaction(self.connection):
             head = get_branch_head(self.connection, job["campaign_id"], job["branch_id"], owner_id)
+            if job["status"] == "committed":
+                return self._job(job_id)
+            if job["status"] != "candidate":
+                raise ValidationError("Only a complete candidate can be committed")
             if head.checkpoint_id != job["checkpoint_id"]:
                 raise StateConflict("Candidate is stale")
             competing = self.connection.execute("SELECT generation_job_id FROM generation_branch_guards WHERE branch_id=? AND generation_job_id<>?", (job["branch_id"], job_id)).fetchone()

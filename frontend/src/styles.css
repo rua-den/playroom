@@ -93,6 +93,12 @@ h3 { font-size: 18px; line-height: 1.35; font-weight: 620; }
 .story-card-status { margin: 0; color: var(--accent); font-size: 13px; font-weight: 620; }
 .story-card .details-meta { margin: 0; }
 .story-card .quiet-button { align-self: flex-start; }
+.story-card-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.library-view-toggle { display: flex; gap: 8px; margin: 0 0 18px; }
+.library-view-toggle .quiet-button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+.danger-button { border-color: var(--danger); color: var(--danger); }
+.toast-action { flex: 0 0 auto; min-height: 44px; padding: 0 8px; border: 0; color: var(--accent); background: transparent; font-weight: 650; text-decoration: underline; }
 .library-import-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--line); }
 .workspace-grid { width: min(100%, 820px); margin: 42px auto 0; }
 .story-column, .conversation-column { min-width: 0; }

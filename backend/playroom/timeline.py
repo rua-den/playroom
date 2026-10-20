@@ -17,7 +17,7 @@ def utc_now() -> str:
 
 
 def _branch_row(connection: sqlite3.Connection, campaign_id: str, branch_id: str, owner_id: str | None = None) -> sqlite3.Row:
-    sql = "SELECT b.* FROM branches b JOIN campaigns c ON c.id = b.campaign_id WHERE b.campaign_id = ? AND b.id = ?"
+    sql = "SELECT b.* FROM branches b JOIN campaigns c ON c.id = b.campaign_id WHERE b.campaign_id = ? AND b.id = ? AND c.deleted_at IS NULL"
     args: list[str] = [campaign_id, branch_id]
     if owner_id is not None:
         sql += " AND c.owner_id = ?"

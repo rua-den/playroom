@@ -25,7 +25,7 @@ _JOB_FIELDS = {
 
 def _owned_campaign(connection: sqlite3.Connection, owner_id: str, campaign_id: str) -> sqlite3.Row:
     row = connection.execute(
-        "SELECT id, title, created_at, updated_at, archived_at FROM campaigns WHERE id=? AND owner_id=?",
+        "SELECT id, title, created_at, updated_at, archived_at, deleted_at FROM campaigns WHERE id=? AND owner_id=? AND deleted_at IS NULL",
         (require_uuid(campaign_id, "campaign_id"), require_uuid(owner_id, "owner_id")),
     ).fetchone()
     if row is None:
@@ -35,7 +35,7 @@ def _owned_campaign(connection: sqlite3.Connection, owner_id: str, campaign_id: 
 
 def _owned_branch(connection: sqlite3.Connection, owner_id: str, campaign_id: str, branch_id: str) -> sqlite3.Row:
     row = connection.execute(
-        "SELECT b.id,b.name,b.state_version,b.head_checkpoint_id FROM branches b JOIN campaigns c ON c.id=b.campaign_id WHERE b.id=? AND b.campaign_id=? AND c.owner_id=?",
+        "SELECT b.id,b.name,b.state_version,b.head_checkpoint_id FROM branches b JOIN campaigns c ON c.id=b.campaign_id WHERE b.id=? AND b.campaign_id=? AND c.owner_id=? AND c.deleted_at IS NULL",
         (branch_id, campaign_id, owner_id),
     ).fetchone()
     if row is None:
