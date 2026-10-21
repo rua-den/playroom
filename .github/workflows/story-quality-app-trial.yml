@@ -1,0 +1,70 @@
+name: Synthetic app story quality trial
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/story-quality-app-trial.yml'
+      - 'backend/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/story-quality-app-trial.yml'
+      - 'backend/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: story-quality-app-trial-20261021
+  cancel-in-progress: false
+
+jobs:
+  offline-story-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHONPATH: backend:backend/tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.12'
+          enable-cache: true
+      - run: uv sync --locked --extra test
+      - run: uv run --locked --extra test pytest backend/tests/test_story_quality_trial.py backend/tests/test_ollama_three_turn_quality.py -q
+      - run: uv run --locked --extra test python backend/tests/story_quality_trial.py --dry-run --report story-quality-offline.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: story-quality-offline
+          path: story-quality-offline.*
+          if-no-files-found: ignore
+          retention-days: 14
+
+  owner-approved-live:
+    # This dated approval is for one first-attempt protected-main push only.
+    if: >-
+      ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.ref_protected && github.run_attempt == 1 && startsWith(github.event.head_commit.message, 'ci(ollama): owner-approved-story-quality-2026-10-21') }}
+    needs: offline-story-contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.12'
+          enable-cache: true
+      - run: uv sync --locked --extra test
+      - name: Three bounded synthetic turns through authenticated app
+        env:
+          PYTHONPATH: backend:backend/tests
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+          STORY_TRIAL_APPROVAL: OWNER_GPTOSS_APP_STORY_2026_10_21
+        run: uv run --locked --extra test python backend/tests/story_quality_trial.py --live --report story-quality-live.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: story-quality-live-synthetic-only
+          path: story-quality-live.*
+          if-no-files-found: ignore
+          retention-days: 14
