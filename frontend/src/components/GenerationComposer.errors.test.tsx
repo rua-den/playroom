@@ -83,6 +83,26 @@ describe("GenerationComposer provider validation messages", () => {
     expect(input).toHaveValue("keep Henn mine");
   });
 
+  it("explains NPC knowledge rejection without exposing internal fact text", async () => {
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "preview", campaign_id: "c", branch_id: "b", checkpoint_id: "cp", action: "ask Yuna", status: "ready", profile_id: "p" }), { status: 201 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: "job-knowledge", campaign_id: "c", branch_id: "b", checkpoint_id: "cp",
+        status: "failed", mode: "economy", action: "ask Yuna",
+        draft: "", offset: 0, offset_unit: "utf16_code_units",
+        failure: { code: "NPC_KNOWLEDGE_VIOLATION", message: "B-17 private fact leaked" },
+      }), { status: 201 })));
+    const user = userEvent.setup();
+    render(<GenerationComposer ownerId="o" projection={projection} profileId="p" onCommitted={vi.fn()} />);
+    const input = screen.getByLabelText("Hành động tiếp theo");
+    await user.type(input, "ask Yuna");
+    await user.click(screen.getByRole("button", { name: "Gửi" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("NPC đã cố dùng thông tin");
+    expect(alert).not.toHaveTextContent("B-17 private fact leaked");
+    expect(input).toHaveValue("ask Yuna");
+  });
+
   it("keeps model switching available when only an interrupted historical job exists", () => {
     const onOpenModelSettings = vi.fn();
     render(<GenerationComposer ownerId="o" projection={{ ...projection, jobs: [{ id: "old", campaign_id: "c", branch_id: "b", checkpoint_id: "cp", status: "interrupted", mode: "economy", action: "old", created_at: "", cancel_requested: false }] }} profileId="p" onCommitted={vi.fn()} onOpenModelSettings={onOpenModelSettings} />);

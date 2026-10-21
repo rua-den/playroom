@@ -14,6 +14,10 @@ class PlayerAgencyViolation(ValidationError):
     """Narrator authored a new action/state for the player-controlled persona."""
 
 
+class NpcKnowledgeViolation(ValidationError):
+    """NPC dialogue used a context fact outside that NPC knowledge scope."""
+
+
 _RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("nod", ("gật đầu",)),
     ("shake_head", ("lắc đầu",)),
@@ -176,3 +180,116 @@ def validate_player_agency(
                     raise PlayerAgencyViolation(
                         "Narrator attempted to author a new action, thought, emotion, or decision for the player persona"
                     )
+
+
+_KNOWLEDGE_STOPWORDS = {
+    "la", "va", "cua", "mot", "nhung", "voi", "cho", "o", "tai", "trong",
+    "tren", "duoi", "da", "se", "dang", "nay", "kia", "do", "thi", "co",
+    "khong", "chua", "roi", "sau", "truoc", "neu", "khi", "len", "xuong",
+    "rat", "qua", "lai",
+}
+
+
+def _knowledge_tokens(value: str) -> list[str]:
+    normalized = _normalize(value)
+    normalized = re.sub(r"(?<=\w)[_-](?=\w)", "", normalized)
+    return [
+        token
+        for token in re.findall(r"[a-z0-9]+", normalized)
+        if (len(token) >= 3 or any(char.isdigit() for char in token))
+        and token not in _KNOWLEDGE_STOPWORDS
+    ]
+
+
+def _fact_matches(candidate: str, fact: str) -> bool:
+    candidate_tokens = set(_knowledge_tokens(candidate))
+    fact_tokens = set(_knowledge_tokens(fact))
+    if not candidate_tokens or not fact_tokens:
+        return False
+    shared = candidate_tokens & fact_tokens
+    if any(any(char.isdigit() for char in token) for token in shared):
+        return True
+    if len(shared) >= 3:
+        return True
+    if len(fact_tokens) <= 3 and len(shared) >= 2 and len(shared) / len(fact_tokens) >= 2 / 3:
+        return True
+    return False
+
+
+def _player_dialogue(action_text: str) -> str:
+    return " ".join(
+        segment.get("text", "")
+        for segment in parse_player_input(action_text)
+        if segment.get("kind") == "dialogue"
+    )
+
+
+def _speaker_heard_current_disclosure(
+    speaker_id: str,
+    fact_text: str,
+    preview: Mapping[str, object],
+) -> bool:
+    action_text = preview.get("action")
+    if not isinstance(action_text, str):
+        return False
+    dialogue = _player_dialogue(action_text)
+    if not _fact_matches(dialogue, fact_text):
+        return False
+    selected = preview.get("selected_characters")
+    if not isinstance(selected, Sequence) or isinstance(selected, (str, bytes)):
+        return False
+    for item in selected:
+        if not isinstance(item, Mapping) or item.get("character_id") != speaker_id:
+            continue
+        if item.get("present") is True:
+            return True
+        name = item.get("name")
+        if isinstance(name, str) and name.strip():
+            if _contains_phrase(_normalize(dialogue), _normalize(name)):
+                return True
+    return False
+
+
+def validate_npc_knowledge(
+    segments: Sequence[Mapping[str, object]],
+    preview: Mapping[str, object],
+) -> None:
+    """Fail closed when attributed NPC dialogue leaks restricted context."""
+
+    blocks = preview.get("blocks")
+    if not isinstance(blocks, Sequence) or isinstance(blocks, (str, bytes)):
+        return
+    restricted = []
+    for block in blocks:
+        if not isinstance(block, Mapping) or block.get("type") != "memory":
+            continue
+        scope = block.get("knowledge_scope")
+        if scope not in {"narrator_only", "known_by"}:
+            continue
+        text = block.get("text")
+        if not isinstance(text, str) or not text.strip():
+            continue
+        known_by = block.get("known_by")
+        known_ids = (
+            {value for value in known_by if isinstance(value, str)}
+            if isinstance(known_by, Sequence) and not isinstance(known_by, (str, bytes))
+            else set()
+        )
+        restricted.append((scope, known_ids, text))
+
+    for segment in segments:
+        if not isinstance(segment, Mapping) or segment.get("kind") != "dialogue":
+            continue
+        speaker_id = segment.get("character_id")
+        text = segment.get("text")
+        if not isinstance(speaker_id, str) or not isinstance(text, str):
+            continue
+        for scope, known_ids, fact_text in restricted:
+            if scope == "known_by" and speaker_id in known_ids:
+                continue
+            if _speaker_heard_current_disclosure(speaker_id, fact_text, preview):
+                continue
+            if _fact_matches(text, fact_text):
+                raise NpcKnowledgeViolation(
+                    "NPC dialogue attempted to use a fact outside the speaker approved knowledge scope"
+                )
