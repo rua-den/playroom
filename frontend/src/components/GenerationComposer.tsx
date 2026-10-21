@@ -126,6 +126,8 @@ function isQuotaFailure(failure: GenerationJob["failure"]) {
 function generationJobFailureMessage(failure: GenerationJob["failure"]) {
   if (failure?.code === "PLAYER_AGENCY_VIOLATION")
     return "AI đã cố tự viết hành động, suy nghĩ hoặc quyết định thay nhân vật của bạn. Lượt này không được lưu; lời bạn nhập vẫn được giữ để gửi lại.";
+  if (failure?.code === "NPC_KNOWLEDGE_VIOLATION")
+    return "NPC đã cố dùng thông tin mà nhân vật đó chưa được biết. Lượt này không được lưu; lời bạn nhập vẫn được giữ để gửi lại.";
   return null;
 }
 
