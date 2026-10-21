@@ -120,7 +120,7 @@ def _aliases(persona: Mapping[str, object]) -> list[str]:
 
 def _subject_remainder(clause: str, aliases: Sequence[str]) -> str | None:
     value = _normalize(clause)
-    value = value.lstrip(' "'“”‘’([{—–-')
+    value = value.lstrip(" \"'“”‘’([{—–-")
     for intro in _INTROS:
         normalized = _normalize(intro)
         if value.startswith(normalized):
