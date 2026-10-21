@@ -2,7 +2,7 @@ import unicodedata
 
 import pytest
 
-from playroom.roleplay_policy import NpcKnowledgeViolation, PlayerAgencyViolation, validate_npc_knowledge, validate_player_agency
+from playroom.roleplay_policy import GroundingViolation, NpcKnowledgeViolation, PlayerAgencyViolation, validate_grounded_precision, validate_npc_knowledge, validate_player_agency
 
 
 def persona(name="Henn", aliases=None):
@@ -151,3 +151,52 @@ def test_player_thought_does_not_disclose_secret_to_npc():
     )
     with pytest.raises(NpcKnowledgeViolation):
         validate_npc_knowledge(npc_dialogue("yuna", "B17 là mã ngăn tủ."), context)
+
+
+
+def test_rejects_new_exact_clock_time_not_present_in_context():
+    context = preview(
+        {"id": "scene", "type": "scene", "text": "Cuối buổi chiều, cả hai vẫn ở thư viện."},
+        action="Mình đi tiếp nhé.",
+    )
+    with pytest.raises(GroundingViolation):
+        validate_grounded_precision(
+            [{"kind": "narration", "text": "Đồng hồ chỉ đúng 17:12 khi Yuna khép cửa."}],
+            context,
+        )
+
+
+def test_allows_exact_clock_time_when_player_supplied_it():
+    context = preview(action="**Henn nhìn đồng hồ: 17:12.**")
+    validate_grounded_precision(
+        [{"kind": "narration", "text": "17:12, tiếng chuông ngoài hành lang vang lên."}],
+        context,
+    )
+
+
+def test_allows_exact_clock_time_when_context_already_contains_it():
+    context = preview(
+        {"id": "memory-time", "type": "memory", "text": "Tin nhắn được gửi lúc 17:19.", "knowledge_scope": "public", "known_by": []},
+        action="Yuna, kiểm tra lại tin nhắn đi.",
+    )
+    validate_grounded_precision(
+        npc_dialogue("yuna", "Tin nhắn lúc 17:19 đúng không?"),
+        context,
+    )
+
+
+def test_rejects_unicode_fullwidth_clock_variant_when_not_grounded():
+    context = preview(action="Tiếp tục.")
+    with pytest.raises(GroundingViolation):
+        validate_grounded_precision(
+            [{"kind": "narration", "text": "Cuộc gọi bắt đầu lúc ６：００."}],
+            context,
+        )
+
+
+def test_does_not_treat_chapter_number_or_score_as_clock_time():
+    context = preview(action="Chương 157 bắt đầu.")
+    validate_grounded_precision(
+        [{"kind": "narration", "text": "Chương 157 tiếp tục với tỉ số 21-19."}],
+        context,
+    )
