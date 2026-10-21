@@ -123,6 +123,11 @@ function isQuotaFailure(failure: GenerationJob["failure"]) {
     ].includes(failure.code ?? "")),
   );
 }
+function generationJobFailureMessage(failure: GenerationJob["failure"]) {
+  if (failure?.code === "PLAYER_AGENCY_VIOLATION")
+    return "AI đã cố tự viết hành động, suy nghĩ hoặc quyết định thay nhân vật của bạn. Lượt này không được lưu; lời bạn nhập vẫn được giữ để gửi lại.";
+  return null;
+}
 
 export function GenerationComposer({
   ownerId,
@@ -432,7 +437,12 @@ export function GenerationComposer({
       (saved.action || found.action)
     )
       setAction(saved.action || found.action || "");
-    if (isQuotaFailure(found.failure)) {
+    const terminalFailure = generationJobFailureMessage(found.failure);
+    if (terminalFailure) {
+      setEconomyRetry(false);
+      setCostAction(false);
+      setError(terminalFailure);
+    } else if (isQuotaFailure(found.failure)) {
       setEconomyRetry(true);
       setError(
         "Nhà cung cấp đã từ chối lượt này. Có thể thử Economy + Free only, nhưng chỉ model được xác minh Free mới được gửi.",
@@ -690,6 +700,12 @@ export function GenerationComposer({
     draftDirty.current = false;
     setJob(nextJob);
     setDraft(nextJob.draft ?? "");
+    const terminalFailure = generationJobFailureMessage(nextJob.failure);
+    if (terminalFailure) {
+      setEconomyRetry(false);
+      setCostAction(false);
+      setError(terminalFailure);
+    }
     if (nextJob.status === "candidate") {
       try {
         await commitCandidate(nextJob, complete, context);
