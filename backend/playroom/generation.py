@@ -961,12 +961,13 @@ class GenerationService:
             raise _ProviderError(ProviderFailure("CANCELLED", "Generation was cancelled"))
 
     def _player_persona(self, job) -> dict:
+        owner_id = job["owner_id"] if "owner_id" in job.keys() else None
         checkpoint = load_state_checkpoint(
             self.connection,
             job["campaign_id"],
             job["branch_id"],
             job["checkpoint_id"],
-            job.get("owner_id"),
+            owner_id,
         )
         return next(
             (profile["data"] for profile in _profiles(self.connection, job["campaign_id"], checkpoint.snapshot) if profile["kind"] == "persona"),
