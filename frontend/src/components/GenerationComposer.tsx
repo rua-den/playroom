@@ -34,6 +34,16 @@ export function generationIdentityKey(
 ) {
   return `playroom:generation:${ownerId}:${campaignId}:${branchId}`;
 }
+function actionDraftKey(ownerId: string, campaignId: string, branchId: string, checkpointId: string) {
+  return `playroom:action-draft:${ownerId}:${campaignId}:${branchId}:${checkpointId}`;
+}
+function clearCommittedAction(saved: GenerationIdentity, unchanged: boolean) {
+  if (!unchanged) return;
+  try {
+    const key = actionDraftKey(saved.ownerId, saved.campaignId, saved.branchId, saved.checkpointId);
+    if (sessionStorage.getItem(key) === saved.action) sessionStorage.removeItem(key);
+  } catch { /* Keep the committed turn recoverable. */ }
+}
 export function mergeGenerationEvents(
   current: string,
   currentOffset: number,
@@ -166,6 +176,12 @@ export function GenerationComposer({
     projection.campaign.id,
     projection.branch.id,
   );
+  const actionStorageKey = actionDraftKey(
+    ownerId,
+    projection.campaign.id,
+    projection.branch.id,
+    projection.checkpoint.id,
+  );
   const scopeKey = `${ownerId}:${projection.campaign.id}:${projection.branch.id}`;
   if (scopeKeyRef.current !== scopeKey) {
     scopeKeyRef.current = scopeKey;
@@ -266,10 +282,9 @@ export function GenerationComposer({
         setIdentity(null);
         setJob(null);
         setDraft("");
-        if (
-          actionRevision.current === actionRevisionAtStart &&
-          latestAction.current === actionAtStart
-        )
+        const actionUnchanged = actionRevision.current === actionRevisionAtStart && latestAction.current === actionAtStart;
+        clearCommittedAction(saved, actionUnchanged);
+        if (actionUnchanged)
           setAction("");
         setError(null);
         return refreshed;
@@ -343,10 +358,9 @@ export function GenerationComposer({
         setIdentity(null);
         setJob(null);
         setDraft("");
-        if (
-          actionRevision.current === actionRevisionAtStart &&
-          latestAction.current === actionAtStart
-        )
+        const actionUnchanged = actionRevision.current === actionRevisionAtStart && latestAction.current === actionAtStart;
+        clearCommittedAction(saved, actionUnchanged);
+        if (actionUnchanged)
           setAction("");
         refreshedSuccessfully = true;
       } finally {
@@ -493,6 +507,27 @@ export function GenerationComposer({
       });
     }
   }, [storageKey]);
+  const previousDraftScope = useRef(actionStorageKey);
+  useEffect(() => {
+    const previous = previousDraftScope.current;
+    const changed = previous !== actionStorageKey;
+    const previousParts = previous.split(":");
+    const currentParts = actionStorageKey.split(":");
+    const sameBranch = previousParts[2] === currentParts[2] && previousParts[3] === currentParts[3] && previousParts[4] === currentParts[4];
+    if (changed && sameBranch) {
+      try {
+        const saved = sessionStorage.getItem(previous);
+        if (saved !== null) sessionStorage.setItem(actionStorageKey, saved);
+        sessionStorage.removeItem(previous);
+      } catch { /* Keep typing if storage is blocked. */ }
+    }
+    previousDraftScope.current = actionStorageKey;
+    try {
+      const saved = sessionStorage.getItem(actionStorageKey);
+      if (saved !== null) setAction(saved);
+      else if (changed && !sameBranch) setAction("");
+    } catch { if (changed && !sameBranch) setAction(""); }
+  }, [actionStorageKey, ownerId]);
   useEffect(() => {
     if (
       !identity?.jobId ||
@@ -756,7 +791,12 @@ export function GenerationComposer({
           value={action}
           onChange={(event) => {
             actionRevision.current += 1;
-            setAction(event.target.value);
+            const value = event.target.value;
+            setAction(value);
+            try {
+              if (value) sessionStorage.setItem(actionStorageKey, value);
+              else sessionStorage.removeItem(actionStorageKey);
+            } catch { /* Keep typing if storage is blocked. */ }
           }}
           onKeyDown={(event) => {
             if (event.key !== "Enter" || event.shiftKey) return;

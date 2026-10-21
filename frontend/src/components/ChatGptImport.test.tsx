@@ -50,6 +50,8 @@ async function prepareImport(items = [conversation("one"), conversation("two")],
   vi.spyOn(api, "previewChatGptImport").mockResolvedValue(preview);
   await userEvent.setup().click(screen.getByRole("button", { name: /Xem tr/ }));
   await screen.findByText(/Tìm thấy/);
+  await userEvent.setup().type(screen.getByLabelText("Thế giới"), "Synthetic world");
+  await userEvent.setup().type(screen.getByLabelText("Persona người chơi"), "Synthetic player");
   await userEvent.setup().click(screen.getByRole("checkbox"));
   return rendered;
 }
@@ -60,6 +62,23 @@ afterEach(() => {
 });
 
 describe("ChatGptImport", () => {
+  it("requires the owner to supply world and player instead of inventing imported canon", async () => {
+    readFiles.mockResolvedValue([conversation("one")]);
+    renderImport();
+    await chooseFiles([new File(["json"], "conversations.json")]);
+    vi.spyOn(api, "previewChatGptImport").mockResolvedValue(preview);
+    await userEvent.setup().click(screen.getByRole("button", { name: /Xem tr/ }));
+    const world = await screen.findByLabelText("Thế giới");
+    const persona = screen.getByLabelText("Persona người chơi");
+    expect(world).toHaveValue("");
+    expect(persona).toHaveValue("");
+    expect(world).toBeRequired();
+    expect(persona).toBeRequired();
+    await userEvent.setup().click(screen.getByRole("checkbox"));
+    const importSpy = vi.spyOn(api, "importChatGpt");
+    await userEvent.setup().click(screen.getByRole("button", { name: /Nhập v/ }));
+    expect(importSpy).not.toHaveBeenCalled();
+  });
   it("passes ZIP files to the local reader", async () => {
     readFiles.mockResolvedValue([conversation("one")]);
     renderImport();
@@ -108,6 +127,7 @@ describe("ChatGptImport", () => {
     await userEvent.setup().click(screen.getByRole("button", { name: /Nhập v/ }));
     await waitFor(() => expect(importSpy).toHaveBeenCalledTimes(1));
     expect(importSpy.mock.calls[0][0]).toEqual(conversation("one"));
+    expect(importSpy.mock.calls[0][1]).toMatchObject({ world: { name: "Synthetic world" }, persona: { name: "Synthetic player" } });
   });
 
   it("continues a bounded server import until every turn is durably stored", async () => {
@@ -222,6 +242,8 @@ describe("ChatGptImport", () => {
     vi.spyOn(api, "previewChatGptImport").mockResolvedValue(preview);
     await userEvent.setup().click(screen.getByRole("button", { name: /Xem tr/ }));
     await screen.findByText(/Tìm thấy/);
+    await userEvent.setup().type(screen.getByLabelText("Thế giới"), "Synthetic world");
+    await userEvent.setup().type(screen.getByLabelText("Persona người chơi"), "Synthetic player");
     await userEvent.setup().click(screen.getByRole("checkbox"));
     let resolveImport: (value: { campaign_id: string; branch_id: string; checkpoint_id: string; turn_count: number; imported_turns: number; complete: boolean; already_imported: boolean; resumed: boolean }) => void = () => undefined;
     vi.spyOn(api, "importChatGpt").mockReturnValue(new Promise((resolve) => { resolveImport = resolve; }));

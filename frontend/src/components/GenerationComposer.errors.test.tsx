@@ -7,7 +7,7 @@ import type { CampaignProjection } from "../api/types";
 const projection = { campaign: { id: "c", title: "Story", created_at: "", updated_at: "", archived_at: null }, branch: { id: "b", name: "main", state_version: 1, checkpoint_id: "cp" }, checkpoint: { id: "cp", state_version: 1, parent_checkpoint_id: null, selected_revision_ids: [], retrieval_policy: "auto" }, profiles: {}, scene: null, transcript: [], jobs: [] } as CampaignProjection;
 
 describe("GenerationComposer provider validation messages", () => {
-  beforeEach(() => { localStorage.clear(); vi.restoreAllMocks(); });
+  beforeEach(() => { localStorage.clear(); sessionStorage.clear(); vi.restoreAllMocks(); });
 
   it("maps a paid Ollama Free only validation to an actionable message", async () => {
     vi.stubGlobal("fetch", vi.fn()

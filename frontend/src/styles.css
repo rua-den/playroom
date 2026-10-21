@@ -1,3 +1,17 @@
+@font-face {
+  font-family: "Playroom Noto Serif";
+  src: url("/fonts/noto-serif/noto-serif-normal.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Playroom Noto Serif";
+  src: url("/fonts/noto-serif/noto-serif-italic.woff2") format("woff2");
+  font-style: italic;
+  font-weight: 400 700;
+  font-display: swap;
+}
 :root {
   color-scheme: dark;
   --canvas: #201d19;
@@ -11,7 +25,7 @@
   --on-accent: #272018;
   --line: #8e7c65;
   --danger: #ffb4a8;
-  --reading-font: Georgia, Cambria, "Times New Roman", serif;
+  --reading-font: "Playroom Noto Serif", Cambria, "Times New Roman", serif;
   color: var(--text);
   background: var(--canvas);
   font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
@@ -237,8 +251,8 @@ legend { padding: 0 6px; color: var(--accent); font-weight: 620; }
   .wordmark { max-width: 100%; flex-wrap: wrap; font-size: 16px; }
   .wordmark .demo-badge { display: inline-flex; align-items: center; justify-content: center; width: 48px; min-width: 48px; max-width: 48px; height: 24px; padding: 0 5px; overflow: hidden; font-size: 0; white-space: nowrap; }
   .wordmark .demo-badge::before { content: "Demo"; font-size: 12px; font-weight: 650; }
-  .campaign-controls { gap: 8px; }
-  .campaign-controls .quiet-button { flex: 1 1 auto; padding: 0 8px; font-size: 13px; }
+  .campaign-controls { flex-wrap: nowrap; gap: 8px; }
+  .campaign-controls .quiet-button { flex: 1 1 0; min-width: 0; padding: 0 8px; font-size: 13px; }
   .campaign-controls .mobile-context-trigger { margin-left: 0; }
   .account-menu { flex: 0 0 auto; gap: 8px; }
   .account-menu .quiet-button { min-width: 44px; padding: 0 9px; font-size: 13px; }
@@ -265,6 +279,7 @@ legend { padding: 0 6px; color: var(--accent); font-weight: 620; }
 .auth-layout { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: var(--canvas); }
 .auth-card { width: min(100%, 460px); padding: clamp(28px, 6vw, 48px); border: 1px solid var(--line); border-radius: 18px; background: var(--surface); box-shadow: 0 22px 72px color-mix(in srgb, var(--canvas) 55%, transparent); }
 .auth-card .eyebrow { margin-bottom: 13px; }
+.auth-theme { display: flex; justify-content: flex-end; margin-bottom: 12px; }
 .auth-card h1 { font-size: clamp(28px, 6vw, 34px); }
 .auth-form { display: grid; gap: 10px; margin-top: 26px; }
 .auth-form .primary-button { margin-top: 8px; }

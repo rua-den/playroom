@@ -34,6 +34,7 @@ describe("authentication shell", () => {
     privateCache.set("jobs:story-1", { id: "job-1" });
     privateCache.set("pending-key:story-1", "secretless-idempotency");
     localStorage.setItem(generationIdentityKey("owner-1", "campaign-1", "branch-1"), JSON.stringify({ idempotencyKey: "generation-key" }));
+    sessionStorage.setItem("playroom:action-draft:owner-1:campaign-1:branch-1:checkpoint-1", "unsent private action");
     const user = userEvent.setup();
     render(<App />);
     expect(await screen.findByRole("heading", { name: "Thư viện truyện" }))
@@ -42,6 +43,7 @@ describe("authentication shell", () => {
     expect(await screen.findByRole("heading", { name: "Đăng nhập Playroom" })).toBeInTheDocument();
     expect(privateCache.size).toBe(0);
     expect(localStorage.getItem(generationIdentityKey("owner-1", "campaign-1", "branch-1"))).toBeNull();
+    expect(sessionStorage.getItem("playroom:action-draft:owner-1:campaign-1:branch-1:checkpoint-1")).toBeNull();
     expect(fetchMock).toHaveBeenLastCalledWith("/api/auth/logout", expect.objectContaining({ method: "POST", credentials: "same-origin" }));
   });
 
