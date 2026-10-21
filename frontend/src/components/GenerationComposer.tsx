@@ -128,6 +128,8 @@ function generationJobFailureMessage(failure: GenerationJob["failure"]) {
     return "AI đã cố tự viết hành động, suy nghĩ hoặc quyết định thay nhân vật của bạn. Lượt này không được lưu; lời bạn nhập vẫn được giữ để gửi lại.";
   if (failure?.code === "NPC_KNOWLEDGE_VIOLATION")
     return "NPC đã cố dùng thông tin mà nhân vật đó chưa được biết. Lượt này không được lưu; lời bạn nhập vẫn được giữ để gửi lại.";
+  if (failure?.code === "UNGROUNDED_PRECISION")
+    return "AI đã tự thêm chi tiết thời gian chính xác không có trong dữ kiện đã duyệt. Lượt này không được lưu; lời bạn nhập vẫn được giữ để gửi lại.";
   return null;
 }
 

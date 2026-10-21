@@ -18,6 +18,10 @@ class NpcKnowledgeViolation(ValidationError):
     """NPC dialogue used a context fact outside that NPC knowledge scope."""
 
 
+class GroundingViolation(ValidationError):
+    """Narrator introduced unsupported precise state not present in context."""
+
+
 _RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("nod", ("gật đầu",)),
     ("shake_head", ("lắc đầu",)),
@@ -293,3 +297,44 @@ def validate_npc_knowledge(
                 raise NpcKnowledgeViolation(
                     "NPC dialogue attempted to use a fact outside the speaker approved knowledge scope"
                 )
+
+
+
+_CLOCK_RE = re.compile(r"(?<!\d)(?:[01]?\d|2[0-3]):[0-5]\d(?!\d)")
+
+
+def _clock_values(value: str) -> set[str]:
+    normalized = unicodedata.normalize("NFKC", value)
+    return set(_CLOCK_RE.findall(normalized))
+
+
+def validate_grounded_precision(
+    segments: Sequence[Mapping[str, object]],
+    preview: Mapping[str, object],
+) -> None:
+    """Reject new exact clock times that have no source in player/context text."""
+
+    source_parts: list[str] = []
+    action = preview.get("action")
+    if isinstance(action, str):
+        source_parts.append(action)
+    blocks = preview.get("blocks")
+    if isinstance(blocks, Sequence) and not isinstance(blocks, (str, bytes)):
+        for block in blocks:
+            if not isinstance(block, Mapping):
+                continue
+            text = block.get("text")
+            if isinstance(text, str):
+                source_parts.append(text)
+    grounded = _clock_values("\n".join(source_parts))
+    for segment in segments:
+        if not isinstance(segment, Mapping):
+            continue
+        text = segment.get("text")
+        if not isinstance(text, str):
+            continue
+        invented = _clock_values(text) - grounded
+        if invented:
+            raise GroundingViolation(
+                "Narrator introduced an exact clock time that is absent from the approved context"
+            )
