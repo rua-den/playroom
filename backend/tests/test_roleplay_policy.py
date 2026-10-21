@@ -2,7 +2,7 @@ import unicodedata
 
 import pytest
 
-from playroom.roleplay_policy import PlayerAgencyViolation, validate_player_agency
+from playroom.roleplay_policy import NpcKnowledgeViolation, PlayerAgencyViolation, validate_npc_knowledge, validate_player_agency
 
 
 def persona(name="Henn", aliases=None):
@@ -69,3 +69,85 @@ def test_npc_dialogue_can_mention_player_without_becoming_player_action():
 def test_unicode_nfd_player_action_still_matches_authorized_action():
     action = unicodedata.normalize("NFD", "**Henn gật đầu**")
     validate_player_agency(action, narration("Henn gật đầu."), persona())
+
+
+
+def preview(*blocks, action="Ừ.", selected=None):
+    return {
+        "action": action,
+        "blocks": list(blocks),
+        "selected_characters": selected or [
+            {"character_id": "yuna", "name": "Yuna", "present": True},
+            {"character_id": "linh", "name": "Linh", "present": True},
+        ],
+    }
+
+
+def restricted(text, scope="narrator_only", known_by=None):
+    return {
+        "id": "memory-secret",
+        "type": "memory",
+        "text": text,
+        "knowledge_scope": scope,
+        "known_by": known_by or [],
+    }
+
+
+def npc_dialogue(character_id, text):
+    return [{"kind": "dialogue", "text": text, "character_id": character_id, "profile_version_id": f"{character_id}-v1"}]
+
+
+def test_narrator_only_code_cannot_leak_into_npc_dialogue_even_with_unicode_variant():
+    with pytest.raises(NpcKnowledgeViolation):
+        validate_npc_knowledge(
+            npc_dialogue("yuna", "B17 có lẽ là mã của một ngăn tủ."),
+            preview(restricted(unicodedata.normalize("NFD", "Mã B-17 là ngăn tủ số 17."))),
+        )
+
+
+def test_known_by_fact_is_allowed_only_for_listed_npc():
+    context = preview(restricted("Chiếc chìa khóa nằm dưới chậu cây.", "known_by", ["linh"]))
+    validate_npc_knowledge(npc_dialogue("linh", "Chìa khóa nằm dưới chậu cây."), context)
+    with pytest.raises(NpcKnowledgeViolation):
+        validate_npc_knowledge(npc_dialogue("yuna", "Chìa khóa nằm dưới chậu cây."), context)
+
+
+def test_narration_may_use_narrator_only_fact():
+    validate_npc_knowledge(
+        [{"kind": "narration", "text": "Mã B-17 nằm trên mặt sau tờ giấy."}],
+        preview(restricted("Mã B-17 nằm trên mặt sau tờ giấy.")),
+    )
+
+
+def test_paraphrase_with_same_distinctive_entities_is_caught():
+    with pytest.raises(NpcKnowledgeViolation):
+        validate_npc_knowledge(
+            npc_dialogue("yuna", "Người giao hàng đã đổi tờ giấy."),
+            preview(restricted("Người giao hàng đã tráo tờ giấy.")),
+        )
+
+
+def test_unrelated_dialogue_with_only_one_common_word_is_not_blocked():
+    validate_npc_knowledge(
+        npc_dialogue("yuna", "Tớ để tờ giấy lên bàn nhé."),
+        preview(restricted("Người giao hàng đã tráo tờ giấy.")),
+    )
+
+
+def test_player_can_disclose_restricted_fact_in_dialogue_to_present_npc():
+    context = preview(
+        restricted("Mã B-17 là mã ngăn tủ."),
+        action="Yuna, B-17 là mã ngăn tủ.",
+        selected=[{"character_id": "yuna", "name": "Yuna", "present": True}],
+    )
+    validate_npc_knowledge(npc_dialogue("yuna", "B17 là mã ngăn tủ à?"), context)
+
+
+def test_player_thought_does_not_disclose_secret_to_npc():
+    context = preview(
+        restricted("Mã B-17 là mã ngăn tủ."),
+        action="**Henn nghĩ B-17 là mã ngăn tủ.**",
+        selected=[{"character_id": "yuna", "name": "Yuna", "present": True}],
+    )
+    with pytest.raises(NpcKnowledgeViolation):
+        validate_npc_knowledge(npc_dialogue("yuna", "B17 là mã ngăn tủ."), context)
