@@ -10,6 +10,12 @@ function clearGenerationIdentities() {
     const key = localStorage.key(index);
     if (key?.startsWith("playroom:generation:")) localStorage.removeItem(key);
   }
+  try {
+    for (let index = sessionStorage.length - 1; index >= 0; index -= 1) {
+      const key = sessionStorage.key(index);
+      if (key?.startsWith("playroom:action-draft:")) sessionStorage.removeItem(key);
+    }
+  } catch { /* Logout still clears server and in-memory state when storage is blocked. */ }
 }
 
 export default function App() {

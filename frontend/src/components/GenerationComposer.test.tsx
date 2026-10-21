@@ -10,7 +10,71 @@ const projection = { campaign: { id: "campaign-1", title: "Test", created_at: ""
 describe("GenerationComposer", () => {
   beforeEach(() => {
     localStorage.clear();
+    sessionStorage.clear();
     vi.restoreAllMocks();
+  });
+  it("restores only the matching unsent action after remount and navigation", () => {
+    const props = { ownerId: "owner-1", projection, profileId: "profile-1", onCommitted: vi.fn() };
+    const first = render(<GenerationComposer {...props} />);
+    fireEvent.change(screen.getByLabelText("Hành động tiếp theo"), { target: { value: "Unsent action" } });
+    first.unmount();
+    const next = render(<GenerationComposer {...props} />);
+    expect(screen.getByLabelText("Hành động tiếp theo")).toHaveValue("Unsent action");
+    next.rerender(<GenerationComposer {...props} ownerId="owner-2" />);
+    expect(screen.getByLabelText("Hành động tiếp theo")).toHaveValue("");
+    next.rerender(<GenerationComposer {...props} />);
+    expect(screen.getByLabelText("Hành động tiếp theo")).toHaveValue("Unsent action");
+    next.rerender(<GenerationComposer {...props} projection={{ ...projection, campaign: { ...projection.campaign, id: "other-campaign" } }} />);
+    expect(screen.getByLabelText("Hành động tiếp theo")).toHaveValue("");
+    next.rerender(<GenerationComposer {...props} />);
+    expect(screen.getByLabelText("Hành động tiếp theo")).toHaveValue("Unsent action");
+    next.rerender(<GenerationComposer {...props} projection={{ ...projection, branch: { ...projection.branch, id: "other-branch" } }} />);
+    expect(screen.getByLabelText("Hành động tiếp theo")).toHaveValue("");
+    next.rerender(<GenerationComposer {...props} />);
+    expect(screen.getByLabelText("Hành động tiếp theo")).toHaveValue("Unsent action");
+    next.rerender(<GenerationComposer {...props} projection={{ ...projection, checkpoint: { ...projection.checkpoint, id: "new-checkpoint" } }} />);
+    expect(screen.getByLabelText("Hành động tiếp theo")).toHaveValue("Unsent action");
+    next.unmount();
+    render(<GenerationComposer {...props} projection={{ ...projection, checkpoint: { ...projection.checkpoint, id: "new-checkpoint" } }} />);
+    expect(screen.getByLabelText("Hành động tiếp theo")).toHaveValue("Unsent action");
+  });
+
+  it("allows typing when draft storage is blocked", () => {
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("blocked"); });
+    render(<GenerationComposer ownerId="owner-1" projection={projection} profileId="profile-1" onCommitted={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText("Hành động tiếp theo"), { target: { value: "Still typing" } });
+    expect(screen.getByLabelText("Hành động tiếp theo")).toHaveValue("Still typing");
+  });
+
+  it("migrates newer typing when a late commit advances the checkpoint", async () => {
+    const advanced = { ...projection, branch: { ...projection.branch, state_version: 4, checkpoint_id: "checkpoint-2" }, checkpoint: { ...projection.checkpoint, id: "checkpoint-2", state_version: 4 } };
+    let resolveCommit!: (response: Response) => void;
+    const commit = new Promise<Response>((resolve) => { resolveCommit = resolve; });
+    let resolveRefresh!: (value: CampaignProjection) => void;
+    const refresh = new Promise<CampaignProjection>((resolve) => { resolveRefresh = resolve; });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "preview", campaign_id: "campaign-1", branch_id: "branch-1", checkpoint_id: "checkpoint-1", action: "Old action", status: "ready", profile_id: "profile-1" }), { status: 201 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "job", campaign_id: "campaign-1", branch_id: "branch-1", checkpoint_id: "checkpoint-1", status: "candidate", action: "Old action", draft: "Done", offset: 4, offset_unit: "utf16_code_units" }), { status: 201 }))
+      .mockReturnValueOnce(commit);
+    vi.stubGlobal("fetch", fetchMock);
+    const onCommitted = vi.fn().mockReturnValue(refresh);
+    const user = userEvent.setup();
+    const view = render(<GenerationComposer ownerId="owner-1" projection={projection} profileId="profile-1" onCommitted={onCommitted} />);
+    const input = screen.getByLabelText("Hành động tiếp theo");
+    await user.type(input, "Old action");
+    await user.click(screen.getByRole("button", { name: "Gửi" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    await user.clear(input);
+    await user.type(input, "Old action");
+    resolveCommit(new Response(JSON.stringify({ ok: true })));
+    await waitFor(() => expect(onCommitted).toHaveBeenCalledOnce());
+    resolveRefresh(advanced);
+    await refresh;
+    view.rerender(<GenerationComposer ownerId="owner-1" projection={advanced} profileId="profile-1" onCommitted={onCommitted} />);
+    expect(screen.getByLabelText("Hành động tiếp theo")).toHaveValue("Old action");
+    view.unmount();
+    render(<GenerationComposer ownerId="owner-1" projection={advanced} profileId="profile-1" onCommitted={onCommitted} />);
+    expect(screen.getByLabelText("Hành động tiếp theo")).toHaveValue("Old action");
   });
   it("explains synthetic demo behavior when demo mode is enabled", () => {
     render(<GenerationComposer ownerId="owner-1" projection={projection} profileId="profile-1" onCommitted={vi.fn()} demoMode />);

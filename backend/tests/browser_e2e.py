@@ -283,6 +283,14 @@ def _assert_mobile(page, width: int) -> None:
     expect(page.get_by_role("button", name="Gửi", exact=True)).to_be_visible()
     overflow = page.evaluate("document.documentElement.scrollWidth - window.innerWidth")
     assert overflow <= 1, f"Horizontal overflow at {width}px: {overflow}px"
+    if width <= 560:
+        controls = page.locator(".campaign-controls > button").evaluate_all(
+            "buttons => buttons.map(button => { const r = button.getBoundingClientRect(); return {top:r.top, height:r.height, width:r.width}; })"
+        )
+        assert len(controls) == 3 and all(control["height"] >= 44 and control["width"] >= 44 for control in controls)
+        assert max(control["top"] for control in controls) - min(control["top"] for control in controls) <= 1, (
+            f"Mobile story controls must share one row at {width}px: {controls}"
+        )
     management_trigger = page.get_by_role("button", name="Truyện và tác vụ", exact=True)
     expect(management_trigger).to_be_visible()
     management_trigger.click()
@@ -313,6 +321,50 @@ def _assert_mobile(page, width: int) -> None:
         expect(details).to_be_visible()
         page.get_by_role("button", name="Đóng hồ sơ và ký ức").click()
         expect(details).not_to_be_visible()
+
+
+def _assert_vietnamese_reading_font(page) -> None:
+    import unicodedata
+
+    text = "ĂăÂâĐđÊêÔôƠơƯư " + "".join(chr(code) for code in range(0x1EA0, 0x1EFA)) + " “Truyện” — …"
+    samples = [unicodedata.normalize(form, text) for form in ("NFC", "NFD")]
+    page.evaluate("""samples => {
+        const fixture = document.createElement('div');
+        fixture.id = 'vietnamese-font-fixture';
+        fixture.className = 'transcript';
+        for (const [index, text] of samples.entries()) {
+            for (const style of ['normal', 'italic']) {
+                for (const weight of [400, 700]) {
+                    const sample = document.createElement('p');
+                    sample.className = 'markdown-content';
+                    sample.id = `font-${index}-${style}-${weight}`;
+                    sample.style.fontStyle = style;
+                    sample.style.fontWeight = weight;
+                    sample.textContent = text;
+                    fixture.append(sample);
+                }
+            }
+        }
+        document.body.append(fixture);
+    }""", samples)
+    session = page.context.new_cdp_session(page)
+    try:
+        page.evaluate("document.fonts.ready")
+        session.send("DOM.enable")
+        session.send("CSS.enable")
+        root = session.send("DOM.getDocument")["root"]["nodeId"]
+        for index in range(2):
+            for style in ("normal", "italic"):
+                for weight in (400, 700):
+                    selector = f"#font-{index}-{style}-{weight}"
+                    node = session.send("DOM.querySelector", {"nodeId": root, "selector": selector})["nodeId"]
+                    fonts = session.send("CSS.getPlatformFontsForNode", {"nodeId": node})["fonts"]
+                    assert fonts and all(font["isCustomFont"] and "Noto Serif" in font["familyName"] for font in fonts), (
+                        f"Vietnamese {selector} must render entirely in the bundled reading font: {fonts}"
+                    )
+    finally:
+        page.locator("#vietnamese-font-fixture").evaluate("element => element.remove()")
+        session.detach()
 
 
 def _assert_short_viewport_reading(page) -> None:
@@ -578,6 +630,14 @@ def browser_synthetic_chat() -> None:
                 page.on("request", lambda r: outbound.append(r.url) if not r.url.startswith(origin) else None)
                 page.goto(origin, wait_until="domcontentloaded")
                 expect(page.get_by_role("heading", name="Đăng nhập Playroom")).to_be_visible()
+                _assert_vietnamese_reading_font(page)
+                page.emulate_media(color_scheme="light")
+                page.get_by_role("button", name="Chuyển sang giao diện tối").click()
+                expect(page.locator("html")).to_have_attribute("data-theme", "dark")
+                expect(page.locator('meta[name="theme-color"]')).to_have_attribute("content", "#201d19")
+                page.reload(wait_until="domcontentloaded")
+                page.get_by_role("button", name="Chuyển sang giao diện sáng").click()
+                expect(page.locator("html")).to_have_attribute("data-theme", "light")
                 for width, suffix in ((375, "375"), (757, None), (1280, "1280")):
                     page.set_viewport_size({"width": width, "height": 900})
                     _assert_no_horizontal_overflow(page, width, "login")
@@ -843,7 +903,7 @@ def browser_synthetic_chat() -> None:
                 assert all(t["narrative_text"] == NARRATION for t in final["transcript"])
                 assert len({t["revision_id"] for t in final["transcript"]}) == 6
                 assert not outbound, f"Demo browser attempted non-loopback requests: {outbound}"
-                for width in (360, 390, 430):
+                for width in (320, 360, 375, 390, 430):
                     _assert_mobile(page, width)
                 _assert_short_viewport_reading(page)
 
@@ -935,6 +995,10 @@ def browser_synthetic_chat() -> None:
                 expect(page.get_by_text("Đã đọc 1 cuộc hội thoại", exact=False)).to_be_visible()
                 page.get_by_role("button", name="Xem trước thread này").click()
                 expect(page.get_by_text("Tìm thấy", exact=False)).to_be_visible()
+                expect(page.get_by_label("Thế giới", exact=True)).to_have_value("")
+                expect(page.get_by_label("Persona người chơi", exact=True)).to_have_value("")
+                page.get_by_label("Thế giới", exact=True).fill("Synthetic market")
+                page.get_by_label("Persona người chơi", exact=True).fill("Lan")
                 page.get_by_label("Tôi đã xem đúng thread", exact=False).check()
                 page.get_by_role("button", name="Nhập và mở chiến dịch").click()
                 expect(page.get_by_role("heading", name="Nhập thử từ ChatGPT")).to_be_visible(timeout=12000)
@@ -1003,6 +1067,8 @@ def browser_synthetic_chat() -> None:
                 assert "EXTERNAL UNSELECTED SOURCE" not in preview_text
                 assert "account_metadata" not in preview_text and "ATTACHMENT MUST BE IGNORED" not in preview_text
                 assert len(campaign.calls) == before_zip_calls, "Preview must not call the provider"
+                page.get_by_label("Thế giới", exact=True).fill("Synthetic ZIP world")
+                page.get_by_label("Persona người chơi", exact=True).fill("Synthetic ZIP player")
                 page.get_by_label("Tôi đã xem đúng thread", exact=False).check()
                 page.get_by_role("button", name="Nhập và mở chiến dịch").click()
                 expect(page.get_by_role("heading", name="ZIP selected 125 — Unicode")).to_be_visible(timeout=12000)
@@ -1351,6 +1417,9 @@ def browser_synthetic_chat() -> None:
                     if viewport_width in (375, 1280):
                         theme = "dark" if viewport_width == 375 else "light"
                         settings_dialog.get_by_label("Giao diện").select_option(theme)
+                        expect(page.locator(".topbar .theme-toggle")).to_have_attribute(
+                            "aria-label", "Chuyển sang giao diện sáng" if theme == "dark" else "Chuyển sang giao diện tối"
+                        )
                         _visual_screenshot(page, f"settings-opening-{viewport_width}-{theme}.png", full_page=False)
                     endpoint = settings_dialog.get_by_label("Endpoint")
                     endpoint.fill("https://synthetic.invalid/" + "long-provider-path-" * 24)

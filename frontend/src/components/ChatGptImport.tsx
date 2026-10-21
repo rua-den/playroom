@@ -17,8 +17,8 @@ export function ChatGptImport({ onImported, onCancel }: Props) {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [title, setTitle] = useState("");
-  const [world, setWorld] = useState("Bangtan");
-  const [persona, setPersona] = useState("Henn");
+  const [world, setWorld] = useState("");
+  const [persona, setPersona] = useState("");
   const [cast, setCast] = useState("");
   const [approved, setApproved] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -155,8 +155,8 @@ export function ChatGptImport({ onImported, onCancel }: Props) {
         <label htmlFor="import-campaign-title">Tên chiến dịch mới</label><input id="import-campaign-title" required maxLength={160} value={title} onChange={(event) => setTitle(event.target.value)} />
         <label htmlFor="import-world">Thế giới</label><input id="import-world" required value={world} onChange={(event) => setWorld(event.target.value)} />
         <label htmlFor="import-persona">Persona người chơi</label><input id="import-persona" required value={persona} onChange={(event) => setPersona(event.target.value)} />
-        <label htmlFor="import-cast">Nhân vật đã xác nhận (cách nhau dấu phẩy)</label><input id="import-cast" value={cast} onChange={(event) => setCast(event.target.value)} placeholder="Yuna, Gi A, Yoongi" />
-        <p>Import giữ nguyên lời người chơi và AI cũ; chưa tự tạo trí nhớ/canon, chưa tự xác định NPC nào đang có mặt. Kiểm tra Hồ sơ / Cảnh trước khi chơi tiếp, nhất là quy tắc không tự điều khiển Henn.</p>
+        <label htmlFor="import-cast">Nhân vật đã xác nhận (cách nhau dấu phẩy)</label><input id="import-cast" value={cast} onChange={(event) => setCast(event.target.value)} placeholder="Tên nhân vật, tên nhân vật khác" />
+        <p>Import giữ nguyên lời người chơi và AI cũ; chưa tự tạo trí nhớ/canon, chưa tự xác định NPC nào đang có mặt. Kiểm tra Hồ sơ / Cảnh trước khi chơi tiếp, nhất là quy tắc không tự điều khiển nhân vật của người chơi.</p>
         <label><input type="checkbox" checked={approved} onChange={(event) => setApproved(event.target.checked)} /> Tôi đã xem đúng thread, hiểu phần bị bỏ qua và muốn tạo chiến dịch tạm khóa để duyệt riêng.</label>
         <button className="primary-button touch-target" type="submit" disabled={!approved || busy || importing}>{busy ? "Đang nhập…" : "Nhập và mở chiến dịch"}</button>
       </form>}

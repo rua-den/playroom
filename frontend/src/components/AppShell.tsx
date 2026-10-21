@@ -8,7 +8,7 @@ import { SceneEditor } from "./SceneEditor";
 import { SettingsPanel } from "./SettingsPanel";
 import { GenerationComposer } from "./GenerationComposer";
 import { ModelSwitcher } from "./ModelSwitcher";
-import { ThemeSelector } from "./ThemeSelector";
+import { ThemeSelector, ThemeToggle } from "./ThemeSelector";
 import { ChatGptImport } from "./ChatGptImport";
 import { LegacyImport } from "./LegacyImport";
 import { Modal } from "./Modal";
@@ -159,6 +159,7 @@ function AppShellContent({ owner, onLogout, notice }: AppShellProps) {
         {projection && <button type="button" className="quiet-button touch-target mobile-context-trigger" onClick={openDetails}>AI đang nhớ gì</button>}
       </>}</div>
       <div className="account-menu">
+        <ThemeToggle />
         <span className="account-email">{owner.email}</span>
         {projection && !libraryOpen && <button type="button" className="quiet-button touch-target context-trigger" onClick={openDetails}>Mở hồ sơ và ký ức</button>}
         <button type="button" className="quiet-button touch-target" onClick={() => setSettingsOpen(true)}>Cài đặt</button>
