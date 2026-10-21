@@ -103,6 +103,26 @@ describe("GenerationComposer provider validation messages", () => {
     expect(input).toHaveValue("ask Yuna");
   });
 
+  it("explains ungrounded precision rejection without leaking invented value", async () => {
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "preview", campaign_id: "c", branch_id: "b", checkpoint_id: "cp", action: "continue", status: "ready", profile_id: "p" }), { status: 201 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: "job-grounding", campaign_id: "c", branch_id: "b", checkpoint_id: "cp",
+        status: "failed", mode: "economy", action: "continue",
+        draft: "", offset: 0, offset_unit: "utf16_code_units",
+        failure: { code: "UNGROUNDED_PRECISION", message: "invented 17:12" },
+      }), { status: 201 })));
+    const user = userEvent.setup();
+    render(<GenerationComposer ownerId="o" projection={projection} profileId="p" onCommitted={vi.fn()} />);
+    const input = screen.getByLabelText("Hành động tiếp theo");
+    await user.type(input, "continue");
+    await user.click(screen.getByRole("button", { name: "Gửi" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("chi tiết thời gian chính xác");
+    expect(alert).not.toHaveTextContent("17:12");
+    expect(input).toHaveValue("continue");
+  });
+
   it("keeps model switching available when only an interrupted historical job exists", () => {
     const onOpenModelSettings = vi.fn();
     render(<GenerationComposer ownerId="o" projection={{ ...projection, jobs: [{ id: "old", campaign_id: "c", branch_id: "b", checkpoint_id: "cp", status: "interrupted", mode: "economy", action: "old", created_at: "", cancel_requested: false }] }} profileId="p" onCommitted={vi.fn()} onOpenModelSettings={onOpenModelSettings} />);
