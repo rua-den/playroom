@@ -80,6 +80,8 @@ def _normalize(value: str) -> str:
     return value.strip()
 
 
+_NORMALIZED_NEGATIONS = tuple(_normalize(value) for value in _NEGATIONS)
+
 _NORMALIZED_RULES = tuple(
     (name, tuple(_normalize(variant) for variant in variants))
     for name, variants in _RULES
@@ -165,7 +167,7 @@ def validate_player_agency(
             continue
         for clause in re.split(r"[.!?;\n]+", text):
             rest = _subject_remainder(clause, aliases)
-            if not rest or any(rest.startswith(prefix) for prefix in _NEGATIONS):
+            if not rest or any(rest.startswith(prefix) for prefix in _NORMALIZED_NEGATIONS):
                 continue
             for name, variants in _NORMALIZED_RULES:
                 if name in authorized:
