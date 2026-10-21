@@ -100,3 +100,14 @@ def test_guard_rejects_redirect_target():
     with pytest.raises(RuntimeError):
         guard.check('POST', 'https://other.invalid/chat/completions', {'model': MODEL, 'max_tokens': 1800})
     assert guard.provider_posts == 0
+
+
+
+def test_offline_app_trial_reports_current_production_fences():
+    report = run_trial()
+    assert report["production_fences"] == [
+        "PLAYER_AGENCY_VIOLATION",
+        "NPC_KNOWLEDGE_VIOLATION",
+        "UNGROUNDED_PRECISION",
+    ]
+    assert report["status"] == "completed"
