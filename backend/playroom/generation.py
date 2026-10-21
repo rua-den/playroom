@@ -30,7 +30,7 @@ from .context_director import deterministic_selection, validate_director_plan
 from .timeline import _create_committed_revision_in_transaction, get_branch_head, load_state_checkpoint
 from .chatgpt_import import assert_import_review_approved
 from .roleplay_segments import parse_narrator_payload, validate_narrator_segments
-from .roleplay_policy import PlayerAgencyViolation, validate_player_agency
+from .roleplay_policy import NpcKnowledgeViolation, PlayerAgencyViolation, validate_npc_knowledge, validate_player_agency
 from .attempt_runtime import PhysicalAttemptRegistry
 from .wire_cost import (
     DEFAULT_COUNTER_ID,
@@ -1055,6 +1055,15 @@ class GenerationService:
                     self._require_active(key, job["id"])
                     self._record_usage(job["id"], "narration", result)
                 raise _ProviderError(failure) from exc
+            try:
+                if output_segments is not None:
+                    validate_npc_knowledge(output_segments, preview)
+            except NpcKnowledgeViolation as exc:
+                failure = ProviderFailure("NPC_KNOWLEDGE_VIOLATION", str(exc))
+                with transaction(self.connection):
+                    self._require_active(key, job["id"])
+                    self._record_usage(job["id"], "narration", result)
+                raise _ProviderError(failure) from exc
             with transaction(self.connection):
                 self._require_active(key, job["id"])
                 self._finish_attempt(key, "completed", result, "".join(parts))
@@ -1396,8 +1405,14 @@ class GenerationService:
             if output_segments is not None:
                 try:
                     validate_player_agency(job["action"], output_segments, self._player_persona(job))
-                except PlayerAgencyViolation as exc:
-                    failure = {"code": "PLAYER_AGENCY_VIOLATION", "message": str(exc)}
+                    validate_npc_knowledge(output_segments, selected_context)
+                except (PlayerAgencyViolation, NpcKnowledgeViolation) as exc:
+                    failure = {
+                        "code": "PLAYER_AGENCY_VIOLATION"
+                        if isinstance(exc, PlayerAgencyViolation)
+                        else "NPC_KNOWLEDGE_VIOLATION",
+                        "message": str(exc),
+                    }
                     with transaction(self.connection):
                         changed = self.connection.execute(
                             "UPDATE generation_jobs SET status='failed',failure_json=? WHERE id=? AND owner_id=? AND status='candidate'",
