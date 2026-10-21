@@ -30,6 +30,7 @@ from playroom.model_profiles import OLLAMA_CLOUD_ENDPOINT as ENDPOINT, OLLAMA_CL
 from playroom.provider import default_provider_factory
 
 APPROVAL = 'OWNER_GPTOSS_APP_STORY_2026_10_21'
+PRODUCTION_FENCES = ('PLAYER_AGENCY_VIOLATION', 'NPC_KNOWLEDGE_VIOLATION', 'UNGROUNDED_PRECISION')
 MAX_USD = Decimal('0.02')
 MAX_INPUT_BYTES = 30000
 MAX_OUTPUT = 1800
@@ -149,7 +150,7 @@ def run_trial(*, transport=None, preflight=None, live=False):
     transport = transport if transport is not None else (None if live else OfflineTransport())
     secret = os.environ['OLLAMA_API_KEY'] if live else 'synthetic-fixture-key'
     guard = Guard(preflight=preflight if preflight is not None else (lambda: balance_preflight(secret)) if live else None)
-    report = {'mode': 'live model' if live else 'offline fixture; not model quality', 'model': MODEL, 'status': 'stopped', 'quality_verdict': 'needs human review', 'turns': [], 'committed_turns': 0}
+    report = {'mode': 'live model' if live else 'offline fixture; not model quality', 'model': MODEL, 'status': 'stopped', 'quality_verdict': 'needs human review', 'production_fences': list(PRODUCTION_FENCES), 'turns': [], 'committed_turns': 0}
     with tempfile.TemporaryDirectory(prefix='playroom-story-') as directory:
         root = Path(directory)
         _create_owner(root)
