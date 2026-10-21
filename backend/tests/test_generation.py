@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import pytest
+from uuid import uuid4
 
 from playroom.generation import DEFAULT_PROFILE, GenerationService
 from playroom.provider import FakeProvider, ProviderFailure
 from playroom.db import connect, migrate
 from playroom.auth import create_owner
 from playroom.campaigns import create_campaign
-from playroom.timeline import get_branch_head
+from playroom.timeline import get_branch_head, load_state_checkpoint
+from playroom.memory import append_memory_version
 
 
 def _story(tmp_path):
@@ -71,3 +73,60 @@ def test_generation_fails_before_candidate_when_narrator_steals_player_action(tm
     assert get_branch_head(db, campaign.id, campaign.initial_branch_id).checkpoint_id == head.checkpoint_id
     with pytest.raises(Exception, match="complete candidate"):
         service.commit_candidate(owner.id, job["id"])
+
+
+
+def test_generation_fails_before_candidate_when_npc_leaks_narrator_only_memory(tmp_path):
+    db = connect(tmp_path / "knowledge-fence.sqlite3")
+    migrate(db)
+    owner = create_owner(db, "knowledge@example.test", "knowledge password")
+    yuna_id = str(uuid4())
+    campaign = create_campaign(
+        db,
+        owner.id,
+        "Knowledge fence",
+        {"name": "World"},
+        [{"id": yuna_id, "name": "Yuna", "aliases": []}],
+        {"name": "Henn"},
+    )
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    append_memory_version(
+        db,
+        campaign.id,
+        campaign.initial_branch_id,
+        "canon",
+        "Mã B-17 là ngăn tủ số 17.",
+        origin="user",
+        expected_state_version=head.state_version,
+        source_revision_ids=[],
+        mandatory=True,
+        knowledge_scope="narrator_only",
+    )
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    checkpoint = load_state_checkpoint(db, campaign.id, campaign.initial_branch_id, head.checkpoint_id)
+    yuna_profile = checkpoint.snapshot["profile_versions"][f"character:{yuna_id}"]
+    profile = {
+        **DEFAULT_PROFILE,
+        "is_test_profile": False,
+        "legacy_plain_output": False,
+        "native_structured_output": False,
+        "supported_parameters": [],
+    }
+    provider = FakeProvider([
+        '{"segments":[{"kind":"dialogue","text":"B17 chắc là mã của một ngăn tủ.",'
+        f'"character_id":"{yuna_id}","profile_version_id":"{yuna_profile}"'
+        '}]}'
+    ])
+    service = GenerationService(db, provider, profile=profile)
+    job = service.generate(
+        owner.id,
+        campaign.id,
+        campaign.initial_branch_id,
+        "Yuna, cậu nghĩ sao?",
+        idempotency_key="knowledge-fence-1",
+        expected_checkpoint_id=head.checkpoint_id,
+    )
+
+    assert job["status"] == "failed"
+    assert job["failure"]["code"] == "NPC_KNOWLEDGE_VIOLATION"
+    assert get_branch_head(db, campaign.id, campaign.initial_branch_id).checkpoint_id == head.checkpoint_id
