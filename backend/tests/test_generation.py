@@ -130,3 +130,32 @@ def test_generation_fails_before_candidate_when_npc_leaks_narrator_only_memory(t
     assert job["status"] == "failed"
     assert job["failure"]["code"] == "NPC_KNOWLEDGE_VIOLATION"
     assert get_branch_head(db, campaign.id, campaign.initial_branch_id).checkpoint_id == head.checkpoint_id
+
+
+
+def test_generation_fails_before_candidate_on_invented_exact_time(tmp_path):
+    db, owner, campaign = _story(tmp_path)
+    profile = {
+        **DEFAULT_PROFILE,
+        "is_test_profile": False,
+        "legacy_plain_output": False,
+        "native_structured_output": False,
+        "supported_parameters": [],
+    }
+    provider = FakeProvider([
+        '{"segments":[{"kind":"narration","text":"Đúng 17:12, tiếng chuông vang lên."}]}'
+    ])
+    service = GenerationService(db, provider, profile=profile)
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    job = service.generate(
+        owner.id,
+        campaign.id,
+        campaign.initial_branch_id,
+        "Tiếp tục.",
+        idempotency_key="grounded-time-1",
+        expected_checkpoint_id=head.checkpoint_id,
+    )
+
+    assert job["status"] == "failed"
+    assert job["failure"]["code"] == "UNGROUNDED_PRECISION"
+    assert get_branch_head(db, campaign.id, campaign.initial_branch_id).checkpoint_id == head.checkpoint_id
