@@ -29,7 +29,7 @@ from playroom.db import connect
 from playroom.model_profiles import OLLAMA_CLOUD_ENDPOINT as ENDPOINT, OLLAMA_CLOUD_MODELS, OLLAMA_FREE_CLOUD_MODEL, OllamaCloudVerifier
 from playroom.provider import default_provider_factory
 
-APPROVAL = 'OWNER_GEMMA_APP_STORY_OUTPUT_2026_10_22'
+APPROVAL = 'OWNER_GEMMA_APP_STORY_VOICE_2026_10_22'
 MODEL_LABEL = os.environ.get('STORY_TRIAL_MODEL_LABEL', OLLAMA_FREE_CLOUD_MODEL)
 if MODEL_LABEL not in OLLAMA_CLOUD_MODELS:
     raise RuntimeError('story trial model is not allowlisted')
@@ -60,11 +60,20 @@ def evaluate(segments, previous):
     paragraphs = {normalize(part) for part in narrative.splitlines() if part.strip()}
     old_paragraphs = {normalize(part) for old in previous for part in old.splitlines() if part.strip()}
     opening = re.split(r'[.!?]', normalized)[0]
+    opening_tokens = opening.split()
+    opening_stem = ' '.join(opening_tokens[:2])
+    old_stems = []
+    for old in previous:
+        old_opening = re.split(r'[.!?]', normalize(old))[0]
+        old_stems.append(' '.join(old_opening.split()[:2]))
+    stock_markers = ('hơi khựng', 'cau mày', 'vẻ mặt', 'ngạc nhiên', 'bối rối', 'khẽ gật', 'nhìn sang', 'nhìn theo')
     return {
         'narrative': narrative, 'schema_speaker_valid': True,
         'agency_warning': agency, 'absent_warning': absent, 'knowledge_warning': knowledge,
         'repeated_reply': any(SequenceMatcher(None, normalized, normalize(old), autojunk=False).ratio() >= .9 for old in previous),
         'repeated_opening': any(opening == re.split(r'[.!?]', normalize(old))[0] for old in previous),
+        'repeated_opening_stem': bool(opening_stem and opening_stem in old_stems),
+        'stock_stage_marker_count': sum(normalized.count(marker) for marker in stock_markers),
         'repeated_paragraph': bool(paragraphs & old_paragraphs),
         'continuity_anchor_present': any(anchor in normalized for anchor in ('hộp', 'giấy', 'quầy', 'ngăn kéo')),
     }
@@ -179,7 +188,29 @@ def run_trial(*, transport=None, preflight=None, live=False):
                     return _assert_ok(client.post(path, json=data, headers=headers), status)
                 try:
                     post('/api/auth/login', {'email': OWNER_EMAIL, 'password': OWNER_PASSWORD})
-                    campaign = post('/api/campaigns', {'title': 'Synthetic story quality trial', 'world': {'name': 'Hiệu sách vắng lúc tối', 'public_canon': 'Lan và Vy ở quầy. Tờ giấy xanh từng nằm trong hộp gỗ; nội dung chưa ai biết. Bình ở nơi khác và không xuất hiện trong cảnh.', 'narrator_private': 'Người giao hàng đã tráo tờ giấy. Vy không biết và chưa quan sát được việc này.'}, 'characters': [{'id': NPC_ID, 'name': 'Vy', 'present': True, 'knowledge': 'Không biết ai đã lấy hay tráo tờ giấy.'}], 'persona': {'name': 'Lan', 'player_controlled': True}}, 201)
+                    campaign = post('/api/campaigns', {
+                        'title': 'Synthetic story quality trial',
+                        'world': {
+                            'name': 'Hiệu sách vắng lúc tối',
+                            'public_canon': 'Lan và Vy ở quầy. Tờ giấy xanh từng nằm trong hộp gỗ; nội dung chưa ai biết. Bình ở nơi khác và không xuất hiện trong cảnh.',
+                            'narrator_private': 'Người giao hàng đã tráo tờ giấy. Vy không biết và chưa quan sát được việc này.',
+                        },
+                        'characters': [{
+                            'id': NPC_ID,
+                            'name': 'Vy',
+                            'present': True,
+                            'knowledge': 'Không biết ai đã lấy hay tráo tờ giấy.',
+                            'traits': ['Nhanh miệng, trực tính, tinh ý.', 'Khi căng thẳng thường đùa khô thay vì nói trang trọng.'],
+                            'voice': 'Câu ngắn, tự nhiên, hơi châm chọc; tránh giảng giải dài và tránh nói như trợ lý.',
+                        }],
+                        'persona': {'name': 'Lan', 'player_controlled': True},
+                        'style': {
+                            'language': 'vi',
+                            'length': 'medium',
+                            'viewpoint': 'third_person',
+                            'custom': 'Thanh xuân đời thường; ưu tiên thoại cá tính và hệ quả cụ thể. Ít sân khấu hóa, không lặp chuỗi nhìn/rồi/cau mày để mở lượt.',
+                        },
+                    }, 201)
                     credential = post('/api/provider/credentials', {'secret': secret}, 201)
                     profile = post('/api/provider/profiles/verify', {'provider': 'ollama', 'credential_id': credential['id'], 'model': MODEL_LABEL, 'endpoint': ENDPOINT}, 201)
                     settings = _assert_ok(client.put('/api/provider/settings', json={'narrator_profile_id': profile['id'], 'mode': 'economy', 'policy': 'capped_paid', 'confirmed_usd_cap': str(MAX_USD), 'budgets': {'narrator': {'input_limit': MAX_INPUT_BYTES, 'requested_output': MAX_OUTPUT, 'wrapper_buffer': 64}}}, headers=headers))

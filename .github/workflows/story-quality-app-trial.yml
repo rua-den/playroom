@@ -42,9 +42,9 @@ jobs:
           retention-days: 14
 
   owner-approved-live:
-    # This dated approval is for one first-attempt protected-main push only.
+    # This dated approval is for one first-attempt owner push to main only.
     if: >-
-      ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'rua-den' && github.run_attempt == 1 && startsWith(github.event.head_commit.message, 'ci(ollama): owner-approved-story-output-2026-10-22') }}
+      ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'rua-den' && github.run_attempt == 1 && startsWith(github.event.head_commit.message, 'ci(ollama): owner-approved-story-voice-2026-10-22') }}
     needs: offline-story-contract
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -59,7 +59,7 @@ jobs:
         env:
           PYTHONPATH: backend:backend/tests
           OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
-          STORY_TRIAL_APPROVAL: OWNER_GEMMA_APP_STORY_OUTPUT_2026_10_22
+          STORY_TRIAL_APPROVAL: OWNER_GEMMA_APP_STORY_VOICE_2026_10_22
         run: uv run --locked --extra test python backend/tests/story_quality_trial.py --live --report story-quality-live.json
       - uses: actions/upload-artifact@v4
         if: always()

@@ -526,7 +526,8 @@ class GenerationService:
             "Exclude pending/foreign/rejected/future facts. Associations/known_by describe knowledge, not presence; narrator knowledge may differ from NPC. "
             "Respect focus/parallel scenes; StyleProfile voice; player controls choices. "
             "Use selected_characters only; never invent speakers. Dialogue only for selected chars; stable IDs character_id/profile_version_id; narration prose. "
-            "Respond to the latest player action or dialogue with eligible context. React with a concrete consequence in each selected NPC's established voice; avoid generic atmosphere or reused prior-turn openings/ambient beats. "
+            "Respond to the latest player action or dialogue with eligible context. React in established NPC voices; selected presence need not speak. "
+            "Avoid generic atmosphere, stock emotion labels and repeated look/turn/pause openings; vary with dialogue, grounded consequence, scene-specific NPC action or object/world change. "
             "Preserve selected voice/knowledge; plausibly present. End on a natural open scene beat, leaving the player's next action open. Player controls actions and thoughts. Do not force A/B choices, quests, stats, or other game mechanics. "
             "No invented canon"
         )
@@ -536,8 +537,9 @@ class GenerationService:
             system = (
                 "Continue Vietnamese using supplied context. Respect canon; committed raw turns override summaries. "
                 "Exclude pending, foreign, rejected and future facts. known_by means knowledge, not presence. "
-                "Respect scenes, selected NPC established voices and player choices. Only selected NPCs may speak. "
-                "React to latest player input with grounded consequences; avoid generic atmosphere or reused prior-turn openings/ambient beats. End on a natural open scene beat, leaving the player's next action open. "
+                "Respect scenes, selected NPC established voices and player choices. Only selected NPCs may speak; selected presence need not speak. "
+                "React with grounded consequences. Avoid generic atmosphere, stock emotion labels and repeated look/turn/pause openings; vary with dialogue, NPC action or object/world change. "
+                "End on a natural open scene beat, leaving the player's next action open. "
                 "Never narrate new actions, dialogue, thoughts, or decisions for the player persona. "
                 "Do not force A/B choices, quests, stats, or other game mechanics. No invented canon"
             )
