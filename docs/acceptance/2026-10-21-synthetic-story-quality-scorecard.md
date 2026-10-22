@@ -86,3 +86,38 @@ Still intentionally manual / observational:
 - official ChatGPT-export acceptance for #27.
 
 Do not send private BANGTAN material to a cloud provider merely to improve this scorecard. The next useful quality evidence should come from owner play with reviewed data and normal explicit Send actions, not an automated private-story benchmark.
+
+
+## 22/10/2026 live authenticated-app follow-up
+
+Codex #83 changed narrator guidance, so prose quality was re-verified with real `gemma4:31b-cloud` output through the authenticated Playroom HTTP + SQLite path. All trials below used only the same synthetic Lan/Vy fixture, at most three provider requests, no retry, purchased-credit-zero preflight, and no private BANGTAN/Henn data.
+
+### Stage A — verify #83 instead of trusting prompt wording
+
+Run `39765453148`, live job `119779786075`, main after #86: 3/3 turns committed and the existing agency/knowledge/cast checks were clean. Human review still found generic stage direction and repeated opening shape: turns 2 and 3 both began with variants of `Vy nhìn ... rồi ...`. The existing checker only caught identical openings, so it missed this repetition.
+
+### Stage B — explicit voice/style + opening-shape diagnostics
+
+#87 merged as `60f109985e069c5f978d1f278ab1e12e829ca1a0`. It:
+- made the anti-repetition narrator guidance concrete without hard-rejecting style;
+- gave synthetic Vy explicit traits/voice and the campaign an explicit youth-story style;
+- added `repeated_opening_stem` and stock-stage observations.
+
+Run `39766598161`, live job `119783595280` showed a clear style improvement: openings varied and Vy's dialogue became shorter, drier and more character-specific. Human review then found two deeper issues the older checks missed:
+- Vy invented unsupported testimony: `Lúc nãy tôi thấy cậu cất vào đấy mà`;
+- narration assigned the player an observable emotion: `khuôn mặt đầy lo lắng của Lan`.
+
+### Stage C — player-emotion guard + sourced NPC observation guidance
+
+#88 merged as `83b29b595bbe93bda843eed165e1c7f4a77e3c3f`. High-confidence narrator-authored player emotion cues now fail closed as `PLAYER_AGENCY_VIOLATION` unless the player authored that emotion. NPC memories/observations about player actions are instructed to require context evidence; potential first-person witness claims are surfaced for human review rather than hard-blocked, because legitimate transcript-backed memories must remain possible.
+
+Final run `39767494310`, live job `119786579721`: **PASS 3/3**, exactly three provider POSTs and three committed turns. The app reserved USD `0.01476000` under the test cap; this is a Playroom reservation, not a provider invoice.
+
+Human-reviewed final outputs:
+- Turn 1: Vy remembers only that the paper had been in the box, then jokes/speculates that Lan might have discarded it. This is NPC suspicion, not narrator-authored player history.
+- Turn 2: Lan says she will inspect the drawer; Vy waits. The model does **not** perform the drawer inspection for Lan.
+- Turn 3: Vy agrees to keep the matter from Bình without assigning Lan an emotion, thought or internal state.
+
+Final diagnostics reported no player-agency, absent-speaker, restricted-knowledge, repeated-reply, repeated-opening, repeated-opening-stem, or player-observation-claim warnings. The final prose is materially less templated and Vy's dry/direct voice is more distinct than the #83 baseline.
+
+**Verdict:** short synthetic authenticated-app narration acceptance is PASS for this fixture. This does not prove arbitrary semantic grounding, long-range character quality, or private BANGTAN characterization; those remain owner-play observations, and private story data should not be uploaded merely to extend this benchmark.
