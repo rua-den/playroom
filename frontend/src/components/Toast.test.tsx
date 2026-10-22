@@ -1,6 +1,7 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
+import { Modal } from "./Modal";
 import { ToastProvider, useToast } from "./Toast";
 
 function Trigger() { const toast = useToast(); return <><button onClick={() => toast.success("Saved")}>success</button><button onClick={() => toast.error("Failed")}>error</button></>; }
@@ -82,5 +83,73 @@ describe("ToastProvider", () => {
     expect(screen.getByRole("region", { name: "Thông báo" })).not.toHaveTextContent("Late stale toast");
     fireEvent.click(screen.getByText("success"));
     expect(screen.getByRole("status")).toHaveTextContent("Saved");
+  });
+
+  it("relocates the stack into the topmost modal and restores the body outlet without losing actions", async () => {
+    const undo = vi.fn();
+    function Fixture() {
+      const [firstOpen, setFirstOpen] = useState(false);
+      const [secondOpen, setSecondOpen] = useState(false);
+      const toast = useToast();
+      return <>
+        <button onClick={() => setFirstOpen(true)}>open first</button>
+        <button onClick={() => toast.success("Saved", { label: "Undo", onClick: undo })}>save</button>
+        <Modal open={firstOpen} title="First" onClose={() => setFirstOpen(false)}>
+          <button onClick={() => setSecondOpen(true)}>open second</button>
+          <Modal open={secondOpen} title="Second" onClose={() => setSecondOpen(false)}><p>Second body</p></Modal>
+        </Modal>
+      </>;
+    }
+    render(<ToastProvider><Fixture /></ToastProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "open first" }));
+    fireEvent.click(screen.getByRole("button", { name: "save" }));
+    await waitFor(() => expect(screen.getByRole("region", { name: "Thông báo" }).closest(".modal-toast-outlet")).toBeInTheDocument());
+    const firstOutlet = screen.getByRole("region", { name: "Thông báo" }).parentElement;
+    const firstDialog = screen.getByRole("dialog", { name: "First" });
+    expect(firstDialog.querySelector("h2")).toHaveTextContent("First");
+    await within(screen.getByRole("dialog", { name: "First" })).findByRole("button", { name: "open second" }).then((button) => fireEvent.click(button));
+    await waitFor(() => expect(screen.getByRole("dialog", { name: "Second" })).toBeInTheDocument());
+    expect(screen.getByRole("region", { name: "Thông báo" }).closest(".app-modal")).not.toBe(firstDialog);
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(undo).toHaveBeenCalledTimes(1);
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Second" })).getByRole("button", { name: "Đóng" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Second" })).not.toBeInTheDocument());
+    expect(screen.queryByRole("status")).toBeNull();
+    fireEvent.click(within(screen.getByRole("dialog", { name: "First" })).getByRole("button", { name: "Đóng" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "First" })).not.toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "save" }));
+    await waitFor(() => expect(screen.getByRole("region", { name: "Thông báo" }).closest(".toast-portal-host")?.parentElement).toBe(document.body));
+  });
+
+  it("preserves a pending undo while the modal outlet moves and rejects a second invocation", async () => {
+    let resolveUndo!: () => void;
+    const undo = vi.fn(() => new Promise<void>((resolve) => { resolveUndo = resolve; }));
+    function Fixture() {
+      const [open, setOpen] = useState(false);
+      const toast = useToast();
+      return <>
+        <button onClick={() => toast.success("Saved", { label: "Undo", onClick: undo })}>save pending</button>
+        <button onClick={() => setOpen(true)}>open modal</button>
+        <Modal open={open} title="Pending" onClose={() => setOpen(false)}><p>Modal body</p></Modal>
+      </>;
+    }
+    render(<ToastProvider><Fixture /></ToastProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "save pending" }));
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    const undoButton = screen.getByRole("button", { name: "Đang xử lý…" });
+    expect(undo).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "open modal" }));
+    await waitFor(() => expect(screen.getByRole("dialog", { name: "Pending" })).toBeVisible());
+    expect(screen.getByRole("region", { name: "Thông báo" }).closest("[inert]")).toBeNull();
+    expect(screen.getByRole("button", { name: "Đang xử lý…" })).toBeDisabled();
+    const pendingDialog = screen.getByRole("dialog", { name: "Pending" });
+    fireEvent.click(within(pendingDialog).getByRole("button", { name: "Đóng" }));
+    await waitFor(() => expect(pendingDialog).not.toBeVisible());
+    expect(screen.getByRole("region", { name: "Thông báo" }).closest("[inert]")).toBeNull();
+    expect(screen.getByRole("button", { name: "Đang xử lý…" })).toBe(undoButton);
+    fireEvent.click(undoButton);
+    expect(undo).toHaveBeenCalledTimes(1);
+    resolveUndo();
+    await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
   });
 });

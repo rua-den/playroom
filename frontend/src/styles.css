@@ -39,7 +39,7 @@
   --inset: #ede6da;
   --surface-raised: #e9dfcd;
   --text: #332b24;
-  --muted: #6e6255;
+  --muted: #6d6154;
   --accent: #795b2e;
   --accent-strong: #e2d4ba;
   --on-accent: #fffaf0;
@@ -50,7 +50,7 @@
   :root:not([data-theme]) {
     color-scheme: light;
     --canvas: #f5f0e7; --surface: #fffcf6; --inset: #ede6da;
-    --surface-raised: #e9dfcd; --text: #332b24; --muted: #6e6255;
+    --surface-raised: #e9dfcd; --text: #332b24; --muted: #6d6154;
     --accent: #795b2e; --accent-strong: #e2d4ba; --on-accent: #fffaf0; --line: #89775e;
     --danger: #a13f34;
   }
@@ -163,6 +163,7 @@ h3 { font-size: 18px; line-height: 1.35; font-weight: 620; }
 .model-switcher-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
 .generation-details { grid-column: 1 / -1; padding-top: 12px; color: var(--muted); font-size: 13px; }
 .generation-details summary, details summary { cursor: pointer; }
+.editor-stack details > summary, .settings-panel details > summary { min-height: 44px; box-sizing: border-box; padding: 10px 0; }
 .generation-details textarea { margin-top: 8px; }
 .demo-runtime-notice, .free-mode-info { display: grid; gap: 8px; margin-bottom: 18px; padding: 16px 18px; border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--line)); border-radius: 12px; color: var(--text); background: var(--surface-raised); line-height: 1.55; }
 .generation-composer .composer-runtime-notice { display: block; gap: 0; margin-bottom: 10px; padding: 0 10px; border-radius: 9px; font-size: 12px; line-height: 1.4; }
@@ -240,6 +241,11 @@ legend { padding: 0 6px; color: var(--accent); font-weight: 620; }
 .app-modal-body .settings-panel legend { padding: 0 6px; font-size: 16px; }
 .app-modal-body label { min-width: 0; overflow-wrap: anywhere; }
 .app-modal-body .character-row > *, .app-modal-body .character-fields { min-width: 0; }
+.modal-toast-outlet:empty { display: none; }
+.modal-toast-outlet { pointer-events: none; }
+.modal-toast-outlet .toast-portal-host { pointer-events: auto; }
+.app-modal > .modal-toast-outlet:has(.toast-viewport > *) { position: relative; z-index: 1; padding: 12px 24px 0; }
+.app-modal > .modal-toast-outlet .toast-portal-host .toast-viewport { position: static; width: 100%; max-height: min(240px, 32dvh); overflow-y: auto; scrollbar-gutter: stable; }
 .toast-viewport { position: fixed; z-index: 20; top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); display: grid; gap: 10px; width: min(380px, calc(100vw - 32px)); pointer-events: none; }
 .toast { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 12px 12px 12px 16px; border: 1px solid var(--line); border-radius: 12px; color: var(--text); background: var(--surface); box-shadow: 0 10px 28px rgb(0 0 0 / 22%); overflow-wrap: anywhere; pointer-events: auto; }
 .toast-success { border-color: var(--accent); background: var(--surface-raised); }
@@ -280,6 +286,7 @@ legend { padding: 0 6px; color: var(--accent); font-weight: 620; }
   .app-modal-backdrop.mobile-overlay { padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); }
   .app-modal, .app-modal-wide { width: 100%; max-height: calc(100dvh - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); border-radius: 14px; }
   .app-modal-header { padding: 14px 16px; }
+  .app-modal > .modal-toast-outlet:has(.toast-viewport > *) { padding: 12px 16px 0; }
   .app-modal-body { padding: 16px 16px 20px; scrollbar-gutter: auto; }
   .app-modal-body .settings-panel fieldset { padding: 14px 12px; }
   .character-row { align-items: stretch; }

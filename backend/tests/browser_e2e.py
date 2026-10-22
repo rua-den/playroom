@@ -349,7 +349,16 @@ def _assert_vietnamese_reading_font(page) -> None:
     }""", samples)
     session = page.context.new_cdp_session(page)
     try:
-        page.evaluate("document.fonts.ready")
+        page.evaluate("""async () => {
+            await Promise.all([
+                document.fonts.load('normal 400 1em "Playroom Noto Serif"'),
+                document.fonts.load('normal 700 1em "Playroom Noto Serif"'),
+                document.fonts.load('italic 400 1em "Playroom Noto Serif"'),
+                document.fonts.load('italic 700 1em "Playroom Noto Serif"'),
+            ]);
+            await document.fonts.ready;
+            await new Promise(requestAnimationFrame);
+        }""")
         session.send("DOM.enable")
         session.send("CSS.enable")
         root = session.send("DOM.getDocument")["root"]["nodeId"]
@@ -1518,12 +1527,12 @@ def browser_synthetic_chat() -> None:
                 )
 
                 # Saving unchanged provider budget settings must surface a
-                # body-level toast above the scrolled settings sheet at both
-                # supported narrow widths. The save itself never calls the
+                # In-flow toast above the scrolled settings sheet at portrait
+                # and landscape mobile widths. The save itself never calls the
                 # generation provider.
                 toast_screenshot_dir = VISUAL_SCREENSHOT_DIR
-                for viewport_width in (757, 375):
-                    page.set_viewport_size({"width": viewport_width, "height": 780})
+                for viewport_width, viewport_height in ((757, 780), (375, 780), (812, 375)):
+                    page.set_viewport_size({"width": viewport_width, "height": viewport_height})
                     page.get_by_role("button", name="Cài đặt").click()
                     settings_dialog = page.get_by_role("dialog", name="Cài đặt")
                     expect(settings_dialog).to_be_visible(timeout=12000)
@@ -1533,35 +1542,38 @@ def browser_synthetic_chat() -> None:
                     save_budget.scroll_into_view_if_needed()
                     provider_calls_before_settings_save = len(campaign.calls)
                     save_budget.click()
-                    expect(save_budget).to_be_focused()
                     toast_region = page.get_by_role("region", name="Thông báo")
-                    success_toast = toast_region.get_by_role("status")
+                    success_toast = toast_region.get_by_role("status").first
                     expect(success_toast).to_be_visible(timeout=12000)
                     assert len(campaign.calls) == provider_calls_before_settings_save
+                    for _ in range(2):
+                        save_budget.click()
+                    expect(toast_region.get_by_role("status")).to_have_count(3)
 
-                    toast_box = success_toast.bounding_box()
+                    toast_boxes = [toast.bounding_box() for toast in toast_region.get_by_role("status").all()]
                     viewport = page.evaluate("() => ({width: window.innerWidth, height: window.innerHeight})")
-                    assert toast_box
-                    assert 0 <= toast_box["x"] and 0 <= toast_box["y"]
-                    assert toast_box["x"] + toast_box["width"] <= viewport["width"]
-                    assert toast_box["y"] + toast_box["height"] <= viewport["height"]
-                    toast_z_index = toast_region.evaluate("(el) => Number.parseInt(getComputedStyle(el).zIndex, 10) || 0")
-                    active_overlay = settings_dialog.locator(
-                        "xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), ' mobile-overlay ')]"
-                    )
-                    assert active_overlay.count() == 1, "Settings dialog must have one active modal backdrop"
-                    overlay_z_index = active_overlay.evaluate("(el) => Number.parseInt(getComputedStyle(el).zIndex, 10) || 0")
-                    toast_center_is_topmost = success_toast.evaluate(
-                        """(el) => {
-                          const box = el.getBoundingClientRect();
-                          const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
-                          return hit === el || el.contains(hit);
+                    assert all(box and 0 <= box["x"] and 0 <= box["y"] and box["x"] + box["width"] <= viewport["width"] and box["y"] + box["height"] <= viewport["height"] for box in toast_boxes), toast_boxes
+                    assert toast_region.locator("xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), ' modal-toast-outlet ')]").count() == 1
+                    assert settings_dialog.locator(".modal-toast-outlet").get_by_role("region", name="Thông báo").count() == 1
+                    save_budget.focus()
+                    expect(save_budget).to_be_focused()
+                    assert success_toast.evaluate(
+                        """el => {
+                          const overlaps = (a, b) => {
+                            const x = a.getBoundingClientRect();
+                            const y = b.getBoundingClientRect();
+                            return x.left < y.right && x.right > y.left && x.top < y.bottom && x.bottom > y.top;
+                          };
+                          const modal = el.closest('.app-modal');
+                          const focused = document.activeElement;
+                          return ![modal?.querySelector('.app-modal-header'), modal?.querySelector('[data-modal-close]'), focused]
+                            .filter(Boolean).some(target => overlaps(el, target));
                         }"""
-                    )
-                    assert toast_z_index > overlay_z_index or toast_center_is_topmost
-                    _visual_screenshot(page, f"save-toast-{viewport_width}.png")
-                    success_toast.get_by_role("button", name="Đóng thông báo").click()
-                    expect(success_toast).not_to_be_visible()
+                    ), "Toast must not cover modal header, close control, or focused save control"
+                    _visual_screenshot(page, f"save-toast-{viewport_width}.png", full_page=False)
+                    while toast_region.get_by_role("status").count():
+                        toast_region.get_by_role("status").first.get_by_role("button", name="Đóng thông báo").click()
+                    expect(toast_region.get_by_role("status")).to_have_count(0)
                     page.get_by_role("button", name="Đóng cài đặt").click()
                     expect(settings_dialog).not_to_be_visible()
 
