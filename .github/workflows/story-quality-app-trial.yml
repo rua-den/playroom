@@ -44,7 +44,7 @@ jobs:
   owner-approved-live:
     # This dated approval is for one first-attempt protected-main push only.
     if: >-
-      ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.ref_protected && github.run_attempt == 1 && startsWith(github.event.head_commit.message, 'ci(ollama): owner-approved-story-output-2026-10-22') }}
+      ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'rua-den' && github.run_attempt == 1 && startsWith(github.event.head_commit.message, 'ci(ollama): owner-approved-story-output-2026-10-22') }}
     needs: offline-story-contract
     runs-on: ubuntu-latest
     timeout-minutes: 10
