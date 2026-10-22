@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api/client";
 import type {
   CredentialSummary,
@@ -50,6 +50,11 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (error && !loading && !pendingAction) errorRef.current?.focus();
+  }, [error, loading, pendingAction]);
   useEffect(() => {
     let active = true;
     Promise.all([
@@ -114,7 +119,8 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
     };
   }, []);
   async function addCredential() {
-    if (!secret.trim()) return;
+    if (!secret.trim() || pendingAction) return;
+    setPendingAction("credential");
     try {
       const record = await api.addCredential(secret.trim());
       setCredentials((current) => [...current, record]);
@@ -125,6 +131,8 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
     } catch (cause) {
       setError("Không thể lưu credential.");
       toast.error("Không thể lưu khóa API.");
+    } finally {
+      setPendingAction(null);
     }
   }
   async function verifyProfile() {
@@ -134,6 +142,8 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
       (provider === "openrouter" && (!verifyModel || !verifyTag))
     )
       return;
+    if (pendingAction) return;
+    setPendingAction("verify");
     try {
       const profile = await api.verifyProviderProfile({
         provider,
@@ -159,9 +169,12 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
           : "Không thể xác minh profile.",
       );
       toast.error("Không thể xác minh model.");
+    } finally {
+      setPendingAction(null);
     }
   }
   async function saveBudget() {
+    if (pendingAction) return;
     const payload: SettingsUpdatePayload = {
       mode,
       policy,
@@ -174,6 +187,7 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
           : {}),
       },
     };
+    setPendingAction("budget");
     try {
       const next = await api.updateProviderSettings(payload);
       setSettings(next);
@@ -190,18 +204,22 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
         cause instanceof ApiError ? cause.message : "Không thể lưu cài đặt.",
       );
       toast.error("Không thể lưu ngân sách và chính sách.");
+    } finally {
+      setPendingAction(null);
     }
   }
   async function switchRole(
     role: "narrator" | "context" | "consolidation",
     profileId: string,
   ) {
-    if (!profileId) return;
+    if (!profileId || pendingAction) return;
     const selectedProfile = profiles.find((profile) => profile.id === profileId);
     if (role === "narrator" && selectedProfile?.provider === "custom" && mode === "quality") {
       setError("Custom provider chỉ hỗ trợ Economy. Hãy chuyển mode sang Economy trước khi đổi model narrator.");
       return;
     }
+    const action = `role-${role}`;
+    setPendingAction(action);
     try {
       const payload: SettingsUpdatePayload =
         role === "narrator"
@@ -219,9 +237,13 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
         cause instanceof ApiError ? cause.message : "Không thể đổi model.",
       );
       toast.error("Không thể lưu lựa chọn model.");
+    } finally {
+      setPendingAction(null);
     }
   }
   async function loadPaidTrial() {
+    if (pendingAction) return;
+    setPendingAction("trial-load");
     try {
       setTrial(await api.getPaidTrial());
       setError(null);
@@ -231,6 +253,8 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
           ? cause.message
           : "Không thể tải hạn mức phiên.",
       );
+    } finally {
+      setPendingAction(null);
     }
   }
   async function approvePaidTrial() {
@@ -242,6 +266,8 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
       mode !== "economy"
     )
       return;
+    if (pendingAction) return;
+    setPendingAction("trial-approve");
     try {
       const result = await api.createPaidTrial({
         profile_id: binding.id,
@@ -265,10 +291,13 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
           : "Không thể tạo hạn mức phiên trả phí.",
       );
       toast.error("Không thể chấp thuận ngân sách phiên.");
+    } finally {
+      setPendingAction(null);
     }
   }
   async function revokePaidTrial() {
-    if (!trial?.id) return;
+    if (!trial?.id || pendingAction) return;
+    setPendingAction("trial-revoke");
     try {
       setTrial(await api.revokePaidTrial(trial.id));
       setPaidConsent(false);
@@ -282,6 +311,8 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
           : "Không thể thu hồi hạn mức phiên.",
       );
       toast.error("Không thể thu hồi hạn mức phiên.");
+    } finally {
+      setPendingAction(null);
     }
   }
   const pinnedNarrator = profiles.find(
@@ -314,19 +345,19 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
           aria-label="Chế độ demo tổng hợp"
         >
           <strong>Chế độ demo tổng hợp</strong>
-          <span>
-            Playroom dùng phản hồi mẫu có thể lặp lại; model đã chọn không thay
-            đổi demo và không gọi AI thật.
-          </span>
-          <span>
-            Muốn dùng provider thật, chạy Playroom - Local Test / Start
-            Playroom.cmd, dùng tài khoản và dữ liệu riêng rồi nhập lại key trong
-            Cài đặt.
-          </span>
+          <span>Demo dùng phản hồi mẫu và không gọi AI thật.</span>
+          <details>
+            <summary>Chi tiết cách chuyển sang provider thật</summary>
+            <span>
+              Model đã chọn không thay đổi demo. Muốn dùng provider thật, chạy
+              Playroom - Local Test / Start Playroom.cmd, dùng tài khoản và dữ
+              liệu riêng rồi nhập lại key trong Cài đặt.
+            </span>
+          </details>
         </div>
       )}
       {error && (
-        <div role="alert" className="form-error">
+        <div ref={errorRef} role="alert" tabIndex={-1} aria-label="Lỗi cài đặt" className="form-error">
           {error}
         </div>
       )}
@@ -350,7 +381,7 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
           <h3 id="settings-connection-title">Kết nối provider</h3>
           <p>{provider === "custom" ? "Lưu endpoint và model trước khi dùng." : "Thêm khóa và xác minh model trước khi dùng."}</p>
         </div>
-        {policy === "free_only" && !customNarrator && provider !== "custom" && (
+        {policy === "free_only" && provider === "ollama" && (
           <div
             className="free-mode-info"
             aria-label="Thông tin chế độ miễn phí"
@@ -374,6 +405,7 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
           id="provider-kind"
           aria-label="Provider"
           value={provider}
+          disabled={Boolean(pendingAction)}
           onChange={(event) => setProvider(event.target.value as "openrouter" | "ollama" | "custom")}
         >
           <option value="openrouter">OpenRouter</option>
@@ -382,7 +414,7 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
         </select>
         {provider !== "custom" && (
           <>
-            <fieldset>
+            <fieldset disabled={Boolean(pendingAction)}>
               <legend>Credential</legend>
               <label htmlFor="provider-secret">
                 {provider === "ollama"
@@ -401,8 +433,9 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
                 type="button"
                 className="primary-button touch-target"
                 onClick={addCredential}
+                disabled={Boolean(pendingAction)}
               >
-                Lưu credential
+                {pendingAction === "credential" ? "Đang lưu…" : "Lưu credential"}
               </button>
               {credentials.map((credential) => (
                 <p key={credential.id}>
@@ -411,7 +444,7 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
                 </p>
               ))}
             </fieldset>
-            <fieldset>
+            <fieldset disabled={Boolean(pendingAction)}>
               <legend>Xác minh model</legend>
               <label htmlFor="verify-credential">Credential</label>
               <select
@@ -490,8 +523,9 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
                 type="button"
                 className="quiet-button touch-target"
                 onClick={verifyProfile}
+                disabled={Boolean(pendingAction)}
               >
-                Xác minh profile
+                {pendingAction === "verify" ? "Đang xác minh…" : "Xác minh profile"}
               </button>
             </fieldset>
           </>
@@ -528,7 +562,7 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
               : `Model narrator ${pinnedNarrator?.model} không được xác minh là model miễn phí. Với Free only Playroom chặn model này; muốn thử cần bật Capped paid và chấp thuận ngân sách.`}
           </div>
         )}
-        <fieldset>
+        <fieldset disabled={Boolean(pendingAction)}>
           <legend>Model narrator</legend>
           {mode === "quality" &&
             profiles.find((profile) => profile.id === narrator)?.provider === "custom" && (
@@ -566,15 +600,15 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
             className="quiet-button touch-target"
             onClick={() => switchRole("narrator", narrator)}
             disabled={
-              !narrator ||
+              Boolean(pendingAction) || !narrator ||
               (mode === "quality" &&
                 profiles.find((profile) => profile.id === narrator)?.provider === "custom")
             }
           >
-            Đổi model narrator
+            {pendingAction === "role-narrator" ? "Đang lưu…" : "Đổi model narrator"}
           </button>
         </fieldset>
-        <fieldset>
+        <fieldset disabled={Boolean(pendingAction)}>
           <legend>Model context / consolidation</legend>
           {settings?.roles?.context && (
             <p className="details-meta">
@@ -601,8 +635,9 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
             type="button"
             className="quiet-button touch-target"
             onClick={() => switchRole("context", contextProfile)}
+            disabled={Boolean(pendingAction) || !contextProfile}
           >
-            Đổi model context
+            {pendingAction === "role-context" ? "Đang lưu…" : "Đổi model context"}
           </button>
           {settings?.roles?.consolidation && (
             <p className="details-meta">
@@ -629,8 +664,9 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
             type="button"
             className="quiet-button touch-target"
             onClick={() => switchRole("consolidation", consolidationProfile)}
+            disabled={Boolean(pendingAction) || !consolidationProfile}
           >
-            Đổi model consolidation
+            {pendingAction === "role-consolidation" ? "Đang lưu…" : "Đổi model consolidation"}
           </button>
         </fieldset>
       </section>
@@ -653,7 +689,7 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
             </p>
           )}
         </div>
-        <fieldset>
+        <fieldset disabled={Boolean(pendingAction)}>
           <legend>Ngân sách và chính sách</legend>
           <label htmlFor="provider-mode">Chế độ</label>
           <select
@@ -681,60 +717,47 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
             <option value="free_only">Free only</option>
             <option value="capped_paid">Capped paid</option>
           </select>
-          <details>
-            <summary>Nâng cao</summary>
-            {policy === "capped_paid" && !customNarrator && (
-              <>
-                <label htmlFor="provider-cap">Giới hạn USD</label>
-                <input
-                  className="touch-target"
-                  id="provider-cap"
-                  inputMode="decimal"
-                  value={cap}
-                  onChange={(event) => setCap(event.target.value)}
-                  required
-                />
-              </>
-            )}
-          </details>
+          {policy === "capped_paid" && !customNarrator && (
+            <>
+              <label htmlFor="provider-cap">Giới hạn USD</label>
+              <input
+                className="touch-target"
+                id="provider-cap"
+                inputMode="decimal"
+                value={cap}
+                onChange={(event) => setCap(event.target.value)}
+                required
+              />
+            </>
+          )}
           {policy === "capped_paid" && !customNarrator && (
             <div className="budget-fields-paid">
               <p className="details-meta">
                 Giới hạn token nâng cao dành cho chế độ trả phí; không phải số
                 lượt Free của nhà cung cấp.
               </p>
-              <BudgetFields
-                label="Narrator"
-                budget={narratorBudget}
-                onChange={setNarratorBudget}
-              />
-              <BudgetFields
-                label="Context"
-                budget={contextBudget}
-                onChange={setContextBudget}
-                hidden={mode !== "quality"}
-              />
-              <BudgetFields
-                label="Consolidation"
-                budget={consolidationBudget}
-                onChange={setConsolidationBudget}
-                hidden={!settings?.budgets?.consolidation}
-              />
+              <details>
+                <summary>Nâng cao</summary>
+                <BudgetFields label="Narrator" budget={narratorBudget} onChange={setNarratorBudget} />
+                <BudgetFields label="Context" budget={contextBudget} onChange={setContextBudget} hidden={mode !== "quality"} />
+                <BudgetFields label="Consolidation" budget={consolidationBudget} onChange={setConsolidationBudget} hidden={!settings?.budgets?.consolidation} />
+              </details>
             </div>
           )}
           <button
             type="button"
             className="primary-button touch-target"
             onClick={saveBudget}
+            disabled={Boolean(pendingAction)}
           >
-            Lưu ngân sách
+            {pendingAction === "budget" ? "Đang lưu…" : "Lưu ngân sách"}
           </button>
         </fieldset>
         {policy === "capped_paid" && (
-          <fieldset>
+          <fieldset disabled={Boolean(pendingAction)}>
             <legend>Ngân sách toàn phiên trả phí</legend>
             <p className="details-meta">
-              Giới hạn USD trong phần Nâng cao áp dụng từng lượt. Phiên nhiều
+              Giới hạn USD ở trên áp dụng từng lượt. Phiên nhiều
               lượt cần chấp thuận riêng. Dự toán nội bộ không bảo đảm hóa đơn
               nhà cung cấp.
             </p>
@@ -742,8 +765,9 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
               type="button"
               className="quiet-button touch-target"
               onClick={loadPaidTrial}
+              disabled={Boolean(pendingAction)}
             >
-              Xem hạn mức toàn phiên
+              {pendingAction === "trial-load" ? "Đang tải…" : "Xem hạn mức toàn phiên"}
             </button>
             {trial && (
               <p role="status">
@@ -806,11 +830,12 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
                   disabled={
                     !paidConsent ||
                     !settings?.roles?.narrator ||
-                    mode !== "economy"
+                    mode !== "economy" ||
+                    Boolean(pendingAction)
                   }
                   onClick={approvePaidTrial}
                 >
-                  Chấp thuận ngân sách phiên
+                  {pendingAction === "trial-approve" ? "Đang lưu…" : "Chấp thuận ngân sách phiên"}
                 </button>
               </>
             )}
@@ -819,8 +844,9 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
                 type="button"
                 className="quiet-button touch-target"
                 onClick={revokePaidTrial}
+                disabled={Boolean(pendingAction)}
               >
-                Thu hồi phiên trả phí
+                {pendingAction === "trial-revoke" ? "Đang thu hồi…" : "Thu hồi phiên trả phí"}
               </button>
             )}
           </fieldset>
