@@ -42,7 +42,7 @@ jobs:
           retention-days: 14
 
   owner-approved-live:
-    # This dated approval is for one first-attempt protected-main push only.
+    # This dated approval is for one first-attempt owner push to main only.
     if: >-
       ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'rua-den' && github.run_attempt == 1 && startsWith(github.event.head_commit.message, 'ci(ollama): owner-approved-story-voice-2026-10-22') }}
     needs: offline-story-contract
