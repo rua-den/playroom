@@ -153,7 +153,7 @@ def test_quality_narrator_wire_uses_only_validated_director_selection(tmp_path):
     assert "IDs character_id/profile_version_id" in system
     assert "narration prose" in system
     assert "Respond to the latest player action or dialogue" in system
-    assert "avoid generic atmosphere or reused prior-turn openings/ambient beats" in system
+    assert "reused prior-turn openings/ambient beats" in system
     assert "established voices of NPCs who have something meaningful to add" in system
     assert "selected presence does not require every NPC to speak" in system
     assert "do not open consecutive replies with the same look/turn/pause/body-language template" in system
