@@ -135,3 +135,20 @@ def test_checker_flags_reused_opening_stem_without_identical_sentence():
     assert row["repeated_opening_stem"] is True
     assert row["repeated_opening"] is False
     assert row["stock_stage_marker_count"] >= 1
+
+
+
+def test_checker_surfaces_npc_claim_of_observing_player_action():
+    row = evaluate(
+        [{"kind": "dialogue", "text": "Lúc nãy tớ thấy cậu cất tờ giấy vào hộp.", "character_id": "npc-vy-synthetic", "profile_version_id": "vy-v1"}],
+        [],
+    )
+    assert row["player_observation_claim"] is True
+
+
+def test_checker_does_not_flag_ordinary_npc_question_as_observation_claim():
+    row = evaluate(
+        [{"kind": "dialogue", "text": "Cậu định kiểm tra ngăn kéo à?", "character_id": "npc-vy-synthetic", "profile_version_id": "vy-v1"}],
+        [],
+    )
+    assert row["player_observation_claim"] is False
