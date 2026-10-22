@@ -88,8 +88,8 @@ export function LegacyImport({ onImported, onCancel }: {
 
   return <section className="create-card" aria-labelledby="legacy-import-title">
     <div className="section-heading"><div><p className="eyebrow">CHUYỂN TRUYỆN CŨ</p><h2 id="legacy-import-title">Nhập Legacy Story Bundle</h2></div><button type="button" className="quiet-button touch-target" onClick={onCancel}>Đóng</button></div>
-    <p>Chỉ nhập bundle riêng mà mày tự chọn vào Playroom đang chạy. Không gửi dữ liệu tới AI khi xem trước hoặc nhập. Nếu Playroom chạy trên máy chủ khác, tệp sẽ được gửi tới máy chủ đó.</p>
-    <p className="form-error">Đây là gói canon / sự kiện / checkpoint thiếu lịch sử đầy đủ, KHÔNG PHẢI transcript 156 chương. Không tự tạo lượt cũ hay chương kế tiếp.</p>
+    <p>Chỉ nhập bundle riêng mà bạn tự chọn vào Playroom đang chạy. Không gửi dữ liệu tới AI khi xem trước hoặc nhập. Nếu Playroom chạy trên máy chủ khác, tệp sẽ được gửi tới máy chủ đó.</p>
+    <p className="form-error">Đây là gói canon / sự kiện / checkpoint có lịch sử chưa đầy đủ. Không tự tạo lượt cũ hay chương kế tiếp.</p>
     {error && <div role="alert" className="form-error">{error}</div>}
     <div className="campaign-form">
       <label htmlFor="legacy-bundle-file">Bundle JSON (tối đa 20 MiB)</label>

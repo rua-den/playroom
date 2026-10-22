@@ -114,6 +114,52 @@ describe("SettingsPanel", () => {
     expect(screen.queryByText("sk-secret-value")).not.toBeInTheDocument();
   });
 
+  it("disables credential save while the request is pending", async () => {
+    let resolveCredential!: (response: Response) => void;
+    const credentialRequest = new Promise<Response>((resolve) => {
+      resolveCredential = resolve;
+    });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ mode: "economy", policy: "free_only", roles: {}, budgets: {} }), { status: 200 }))
+      .mockReturnValueOnce(credentialRequest);
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<SettingsPanel />);
+    const secret = await screen.findByLabelText("OpenRouter API key");
+    await user.type(secret, "sk-secret-value");
+    const save = screen.getByRole("button", { name: "Lưu credential" });
+    await user.click(save);
+    expect(save).toBeDisabled();
+    expect(secret).toBeDisabled();
+    await user.click(save);
+    expect(fetchMock.mock.calls.filter((call) => call[0] === "/api/provider/credentials" && call[1]?.method === "POST")).toHaveLength(1);
+    resolveCredential(new Response(JSON.stringify({ id: "cred-2", masked: "sk-••••5678" }), { status: 201 }));
+    await waitFor(() => expect(save).not.toBeDisabled());
+  });
+
+  it("focuses credential errors, keeps the draft, and re-enables the fieldset", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ mode: "economy", policy: "free_only", roles: {}, budgets: {} }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "credential rejected" }), { status: 400 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "credential rejected" }), { status: 400 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<SettingsPanel />);
+    const secret = await screen.findByLabelText("OpenRouter API key");
+    await user.type(secret, "sk-secret-value");
+    await user.click(screen.getByRole("button", { name: "Lưu credential" }));
+    const error = await screen.findByRole("alert", { name: "Lỗi cài đặt" });
+    expect(error).toHaveFocus();
+    expect(secret).toHaveValue("sk-secret-value");
+    expect(secret).not.toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Lưu credential" }));
+    await waitFor(() => expect(error).toHaveFocus());
+  });
+
   it("saves budget and policy without changing pinned role IDs, while explicit model switch sends the selected role", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
@@ -203,7 +249,7 @@ describe("SettingsPanel", () => {
     expect(Array.from(panel.querySelectorAll("input, select, textarea")).every((control) => control.classList.contains("touch-target"))).toBe(true);
   });
 
-  it("hides a saved paid cap until Advanced is expanded", async () => {
+  it("keeps the required paid cap visible while optional token metadata is advanced", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
@@ -212,9 +258,11 @@ describe("SettingsPanel", () => {
     const user = userEvent.setup();
     render(<SettingsPanel />);
     await screen.findByLabelText("Chính sách chi phí");
-    expect(screen.getByLabelText("Giới hạn USD")).not.toBeVisible();
-    await user.click(screen.getByText("Nâng cao"));
+    expect(screen.getByLabelText("Giới hạn USD")).toBeVisible();
     expect(screen.getByLabelText("Giới hạn USD")).toHaveValue("0.02");
+    expect(screen.getByLabelText("Narrator input tokens")).not.toBeVisible();
+    await user.click(screen.getByText("Nâng cao"));
+    expect(screen.getByLabelText("Narrator input tokens")).toBeVisible();
   });
 });
 
@@ -286,8 +334,12 @@ describe("Free-first provider settings", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ mode: "economy", policy: "free_only", roles: {}, budgets: {} }), { status: 200 })));
+    const user = userEvent.setup();
     render(<SettingsPanel />);
-    expect(await screen.findByText("Chơi với tài khoản Free")).toBeInTheDocument();
+    await screen.findByLabelText("Provider");
+    expect(screen.queryByText("Chơi với tài khoản Free")).not.toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText("Provider"), "ollama");
+    expect(screen.getByText("Chơi với tài khoản Free")).toBeInTheDocument();
     expect(screen.getByText(/credits miễn phí.*token/)).toBeInTheDocument();
     expect(screen.queryByLabelText("Giới hạn USD")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Số lượt Send tối đa")).not.toBeInTheDocument();
@@ -314,9 +366,11 @@ describe("Free-first provider settings", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ mode: "economy", policy: "free_only", roles: {}, budgets: { narrator: { input_limit: 12000, requested_output: 4000, wrapper_buffer: 512 } } }), { status: 200 })));
     const user = userEvent.setup();
     render(<SettingsPanel />);
-    await screen.findByText("Chơi với tài khoản Free");
+    await screen.findByLabelText("Chính sách chi phí");
     expect(screen.queryByLabelText("Narrator input tokens")).not.toBeInTheDocument();
     await user.selectOptions(screen.getByLabelText("Chính sách chi phí"), "capped_paid");
+    expect(screen.getByLabelText("Narrator input tokens")).not.toBeVisible();
+    await user.click(screen.getByText("Nâng cao"));
     expect(screen.getByLabelText("Narrator input tokens")).toBeInTheDocument();
     expect(screen.getByLabelText("Số lượt Send tối đa")).toHaveValue(null);
   });

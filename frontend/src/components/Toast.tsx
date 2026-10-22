@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { getActiveModalToastOutlet, subscribeModalStack } from "./Modal";
 
 type ToastAction = { label: string; onClick: () => void | Promise<void> };
 type Toast = { id: number; kind: "success" | "error"; message: string; action?: ToastAction };
@@ -23,7 +24,18 @@ export function ToastProvider({ children, ownerKey }: { children: ReactNode; own
 }
 
 function ToastViewport({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id: number) => void }) {
-  return <div className="toast-viewport" role="region" aria-label="Thông báo">{toasts.map((toast) => <ToastItem key={toast.id} toast={toast} onDismiss={onDismiss} />)}</div>;
+  const [host, setHost] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const nextHost = document.createElement("div");
+    nextHost.className = "toast-portal-host";
+    const moveHost = () => (getActiveModalToastOutlet() ?? document.body).appendChild(nextHost);
+    document.body.appendChild(nextHost);
+    const unsubscribe = subscribeModalStack(moveHost);
+    setHost(nextHost);
+    return () => { unsubscribe(); nextHost.remove(); };
+  }, []);
+  return host ? createPortal(<div className="toast-viewport" role="region" aria-label="Thông báo">{toasts.map((toast) => <ToastItem key={toast.id} toast={toast} onDismiss={onDismiss} />)}</div>, host) : null;
 }
 
 function ToastItem({ toast, onDismiss }: { toast: Toast; onDismiss: (id: number) => void }) {

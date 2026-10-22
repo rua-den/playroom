@@ -5,6 +5,17 @@ import { MemoryLibrary } from "./MemoryLibrary";
 import { ToastProvider } from "./Toast";
 
 describe("MemoryLibrary", () => {
+  it("keeps advanced metadata unique and collapsed until requested", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 })));
+    render(<ToastProvider><MemoryLibrary campaignId="campaign-1" branchId="branch-1" stateVersion={3} /></ToastProvider>);
+    await screen.findByText("Chưa có ký ức đã duyệt");
+    const ids = Array.from(document.querySelectorAll("#memory-kind, #memory-text, #memory-sources, #memory-entities, #memory-subject, #memory-predicate, #memory-value, #memory-object, #memory-supersedes, #memory-scope, #memory-known-by"), (element) => element.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    const details = screen.getByText("Thông tin nguồn và quan hệ nâng cao").closest("details")!;
+    expect(details).not.toHaveAttribute("open");
+    expect(details.querySelector("#memory-entities")).toBeInTheDocument();
+  });
+
   it("shows saved status after a create acknowledgement even when refresh fails", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
@@ -78,6 +89,7 @@ describe("MemoryLibrary", () => {
     await user.selectOptions(screen.getByLabelText("Revision kết thúc"), "r2");
     await user.selectOptions(screen.getByLabelText("Phạm vi kiến thức"), "known_by");
     await user.type(screen.getByLabelText("Nhân vật biết (UUID)"), "char-1");
+    await user.click(screen.getByText("Thông tin nguồn và quan hệ nâng cao"));
     await user.type(screen.getByLabelText("Nhân vật liên quan (UUID)"), "char-2");
     await user.type(screen.getByLabelText("Chủ thể (UUID)"), "char-1");
     await user.type(screen.getByLabelText("Predicate"), "owns");

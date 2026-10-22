@@ -15,6 +15,19 @@ const FOCUSABLE = ["button:not([disabled])", "[href]", "input:not([disabled])", 
 let activePortals: HTMLElement[] = [];
 let savedOverflow: string | null = null;
 const savedInert = new Map<HTMLElement, { property: boolean; attribute: boolean }>();
+const modalStackListeners = new Set<() => void>();
+
+export function subscribeModalStack(listener: () => void) {
+  modalStackListeners.add(listener);
+  listener();
+  return () => modalStackListeners.delete(listener);
+}
+
+export function getActiveModalToastOutlet() {
+  return activePortals[activePortals.length - 1]?.querySelector<HTMLElement>(".modal-toast-outlet") ?? null;
+}
+
+function notifyModalStack() { modalStackListeners.forEach((listener) => listener()); }
 
 function setInert(node: HTMLElement, inert: boolean) {
   node.inert = inert;
@@ -42,7 +55,7 @@ function syncModalEnvironment() {
   Array.from(document.body.children).forEach((child) => {
     const node = child as HTMLElement;
     if (!savedInert.has(node)) savedInert.set(node, { property: node.inert, attribute: node.hasAttribute("inert") });
-    const isToast = node.classList.contains("toast-viewport");
+    const isToast = node.classList.contains("toast-viewport") || node.classList.contains("toast-portal-host");
     setInert(node, node !== activePortal && !isToast);
   });
 }
@@ -69,6 +82,7 @@ export function Modal({ open, title, onClose, children, closeLabel = "Đóng", s
     activePortals = activePortals.filter((item) => item !== portal);
     activePortals.push(portal);
     syncModalEnvironment();
+    notifyModalStack();
 
     const close = dialogElement.querySelector<HTMLElement>("[data-modal-close]");
     (close ?? dialogElement.querySelector<HTMLElement>(FOCUSABLE) ?? dialogElement).focus();
@@ -106,6 +120,7 @@ export function Modal({ open, title, onClose, children, closeLabel = "Đóng", s
       document.removeEventListener("keydown", onKeyDown);
       activePortals = activePortals.filter((item) => item !== portal);
       syncModalEnvironment();
+      notifyModalStack();
       const target = priorFocus.current;
       priorFocus.current = null;
       if (target?.isConnected && !target.closest("[inert]")) target.focus();
@@ -120,6 +135,7 @@ export function Modal({ open, title, onClose, children, closeLabel = "Đóng", s
             <h2 id={titleId}>{title}</h2>
             <button type="button" className="quiet-button touch-target" data-modal-close onClick={onClose} aria-label={closeLabel}><span aria-hidden="true">Đóng</span></button>
           </header>
+          <div className="modal-toast-outlet" />
           <div className="app-modal-body">{(open || hasOpened) && children}</div>
         </section>
       </div>

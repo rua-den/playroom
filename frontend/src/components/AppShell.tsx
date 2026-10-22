@@ -148,7 +148,7 @@ function AppShellContent({ owner, onLogout, notice }: AppShellProps) {
   const formatStoryDate = (value: string) => { const date = new Date(value); return Number.isNaN(date.valueOf()) ? "" : new Intl.DateTimeFormat("vi-VN", { dateStyle: "medium" }).format(date); };
   const library = <CampaignLibrary campaigns={campaigns} trash={trashedCampaigns} mode={libraryMode} selectedId={selectedId} error={error} trashLoading={trashLoading} restorePending={restorePendingIds} ariaHidden={settingsOpen || drawerOpen || detailsOpen || createOpen || importOpen || modelOpen || deleteTarget !== null} onMode={(mode) => { if (mode === "trash") void openTrash(); else openActiveLibrary(); }} onCreate={openCreate} onChoose={chooseStory} onDelete={(item) => { setDeleteError(null); setDeleteTarget(item); }} onRestore={(item) => { void restoreStory(item).catch(() => undefined); }} onImport={openImport} formatDate={formatStoryDate} />;
   if (loading) return <main className="app-shell loading-screen" role="status">Đang tải phòng truyện…</main>;
-  const contextPanel = projection && <ContextPanel projection={projection} editorTab={editorTab} setEditorTab={setEditorTab} editorChanged={editorChanged} />;
+  const contextPanel = projection && <ContextPanel key={`${projection.campaign.id}:${projection.branch.id}`} projection={projection} editorTab={editorTab} setEditorTab={setEditorTab} editorChanged={editorChanged} />;
   return <main className={`app-shell story-app ${error && !campaigns.length ? "catalog-failed" : ""}`}>
     <header className="topbar" aria-hidden={drawerOpen || detailsOpen || settingsOpen || modelOpen || createOpen || importOpen || deleteTarget !== null}>
       <div className="wordmark"><span className="brand-mark small" aria-hidden="true"><svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M4 5.5c3.2-.8 5.9-.1 8 1.9v12c-2.1-2-4.8-2.7-8-1.9z"/><path d="M20 5.5c-3.2-.8-5.9-.1-8 1.9v12c2.1-2 4.8-2.7 8-1.9z"/><path d="M7 9h2M15 9h2M7 12h2M15 12h2"/></svg></span><span>Playroom</span>{demoInfo?.mode === "synthetic" && <span className="demo-badge" aria-label={demoInfo.label} title={demoInfo.label}>{demoInfo.label}</span>}</div>
@@ -290,20 +290,19 @@ export function ImportReviewPanel({ projection, onApproved }: { projection: Camp
   </section>;
 }
 
-function ProfileBlock({ title, profile }: { title: string; profile?: { data: Record<string, unknown> } }) { if (!profile) return null; const name = typeof profile.data.name === "string" ? profile.data.name : title; const description = typeof profile.data.description === "string" ? profile.data.description : ""; return <section className="profile-block"><h3>{name}</h3>{description && <p>{description}</p>}</section>; }
-
 function ContextPanel({ projection, editorTab, setEditorTab, editorChanged }: { projection: CampaignProjection; editorTab: "profiles" | "memory" | "scene"; setEditorTab: (tab: "profiles" | "memory" | "scene") => void; editorChanged: () => void }) {
+  const [mountedTabs, setMountedTabs] = useState<Array<"profiles" | "memory" | "scene">>([editorTab]);
+  useEffect(() => { setMountedTabs((current) => current.includes(editorTab) ? current : [...current, editorTab]); }, [editorTab]);
+  const tabVisible = (tab: "profiles" | "memory" | "scene") => editorTab === tab;
   return <>
     <div className="editor-tabs" aria-label="Nội dung phụ trợ">
       <button type="button" aria-pressed={editorTab === "profiles"} className="quiet-button touch-target" onClick={() => setEditorTab("profiles")}>Hồ sơ</button>
       <button type="button" aria-pressed={editorTab === "memory"} className="quiet-button touch-target" onClick={() => setEditorTab("memory")}>Ký ức</button>
       <button type="button" aria-pressed={editorTab === "scene"} className="quiet-button touch-target" onClick={() => setEditorTab("scene")}>Cảnh</button>
     </div>
-    <ProfileBlock title="Thế giới" profile={projection.profiles.world} />
-    <ProfileBlock title="Persona" profile={projection.profiles.persona} />
-    <p className="details-meta">{recoverableJobSummary(recoverableJobCount(projection.jobs))}</p>
-    {editorTab === "profiles" && <ProfileEditor campaignId={projection.campaign.id} branchId={projection.branch.id} stateVersion={projection.branch.state_version} profiles={projection.profiles} onSaved={editorChanged} onConflict={editorChanged} />}
-    {editorTab === "memory" && <MemoryLibrary campaignId={projection.campaign.id} branchId={projection.branch.id} stateVersion={projection.branch.state_version} sourceRevisionIds={projection.transcript.map((turn) => turn.revision_id)} retrievalPolicy={projection.checkpoint.retrieval_policy} onChanged={editorChanged} onConflict={editorChanged} />}
-    {editorTab === "scene" && <SceneEditor campaignId={projection.campaign.id} branchId={projection.branch.id} stateVersion={projection.branch.state_version} onSaved={editorChanged} onConflict={editorChanged} characters={Object.entries(projection.profiles).filter(([key]) => key.startsWith("character:")).map(([, profile]) => ({ id: String(profile.data.id ?? ""), name: String(profile.data.name ?? "Nhân vật") }))} />}
+    {recoverableJobCount(projection.jobs) > 0 && <p className="details-meta">{recoverableJobSummary(recoverableJobCount(projection.jobs))}</p>}
+    {mountedTabs.includes("profiles") && <div hidden={!tabVisible("profiles")} aria-hidden={!tabVisible("profiles")}><ProfileEditor campaignId={projection.campaign.id} branchId={projection.branch.id} stateVersion={projection.branch.state_version} profiles={projection.profiles} onSaved={editorChanged} onConflict={editorChanged} /></div>}
+    {mountedTabs.includes("memory") && <div hidden={!tabVisible("memory")} aria-hidden={!tabVisible("memory")}><MemoryLibrary campaignId={projection.campaign.id} branchId={projection.branch.id} stateVersion={projection.branch.state_version} sourceRevisionIds={projection.transcript.map((turn) => turn.revision_id)} retrievalPolicy={projection.checkpoint.retrieval_policy} onChanged={editorChanged} onConflict={editorChanged} /></div>}
+    {mountedTabs.includes("scene") && <div hidden={!tabVisible("scene")} aria-hidden={!tabVisible("scene")}><SceneEditor campaignId={projection.campaign.id} branchId={projection.branch.id} stateVersion={projection.branch.state_version} onSaved={editorChanged} onConflict={editorChanged} characters={Object.entries(projection.profiles).filter(([key]) => key.startsWith("character:")).map(([, profile]) => ({ id: String(profile.data.id ?? ""), name: String(profile.data.name ?? "Nhân vật") }))} /></div>}
   </>;
 }
