@@ -68,7 +68,7 @@ def evaluate(segments, previous):
         old_stems.append(' '.join(old_opening.split()[:2]))
     stock_markers = ('hơi khựng', 'cau mày', 'vẻ mặt', 'ngạc nhiên', 'bối rối', 'khẽ gật', 'nhìn sang', 'nhìn theo')
     player_observation_claim = bool(
-        re.search(r"\b(?:toi|to|minh)\s+(?:nho|thay|nhin thay).{0,48}\b(?:cau|ban)\b", normalized)
+        re.search(r"\b(?:tôi|tớ|mình)\s+(?:nhớ|thấy|nhìn thấy).{0,48}\b(?:cậu|bạn)\b", normalized)
     )
     return {
         'narrative': narrative, 'schema_speaker_valid': True,
