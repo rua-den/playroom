@@ -4,6 +4,7 @@ import json
 import http.client
 import threading
 import time
+from uuid import uuid4
 
 import pytest
 import uvicorn
@@ -19,7 +20,7 @@ from playroom.generation import DEFAULT_PROFILE, GenerationRuntime, GenerationSe
 from playroom.attempt_runtime import PhysicalAttemptRegistry
 from playroom.campaigns import update_profile
 from playroom.provider import FakeProvider, ProviderAdapter, ProviderFailure, ProviderResult
-from playroom.timeline import get_branch_head
+from playroom.timeline import create_committed_revision, get_branch_head
 from playroom.app import create_app
 
 
@@ -152,11 +153,75 @@ def test_quality_narrator_wire_uses_only_validated_director_selection(tmp_path):
     assert "IDs character_id/profile_version_id" in system
     assert "narration prose" in system
     assert "Respond to the latest player action or dialogue" in system
-    assert "Avoid generic atmosphere-setting" in system
-    assert "Advance with concrete reaction, consequence, or change when context supports it" in system
+    assert "avoid generic atmosphere or reused prior-turn openings/ambient beats" in system
+    assert "concrete consequence in each selected NPC's established voice" in system
+    assert "End on a natural open scene beat, leaving the player's next action open" in system
     assert "Preserve selected voice/knowledge" in system
     assert "Player controls actions and thoughts" in system
     assert "Do not force A/B choices, quests, stats, or other game mechanics" in system
+
+
+@pytest.mark.parametrize("legacy_plain_output", [False, True])
+def test_narrator_dispatch_preserves_turn_style_cast_and_action_in_both_wire_modes(tmp_path, legacy_plain_output):
+    db = connect(tmp_path / f"narrator-{legacy_plain_output}.sqlite3")
+    migrate(db)
+    owner = create_owner(db, "narrator-wire@example.test", "narrator password")
+    npc_id = str(uuid4())
+    campaign = create_campaign(
+        db,
+        owner.id,
+        "Narrator wire",
+        {"name": "Synthetic world"},
+        [{"id": npc_id, "name": "Vy", "aliases": [], "voice": "dry and quick"}],
+        {"name": "Player"},
+        style={"language": "Vietnamese", "voice": "dry, scene-specific, lightly comic"},
+    )
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    create_committed_revision(
+        db,
+        campaign.id,
+        campaign.initial_branch_id,
+        "Vy leaves the blue ledger on the counter.",
+        "Vy watches the counter without explaining herself.",
+        expected_state_version=head.state_version,
+    )
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    profile = {
+        **DEFAULT_PROFILE,
+        "is_test_profile": False,
+        "legacy_plain_output": legacy_plain_output,
+        "native_structured_output": False,
+        "supported_parameters": [],
+    }
+    output = "Vy taps the ledger once." if legacy_plain_output else json.dumps({"segments": [{"kind": "narration", "text": "Vy taps the ledger once."}]})
+    provider = FakeProvider([output])
+    service = GenerationService(db, provider, profile=profile)
+    job = service.generate(
+        owner.id,
+        campaign.id,
+        campaign.initial_branch_id,
+        "Vy, I pick up the blue ledger and wait.",
+        idempotency_key=f"narrator-wire-{legacy_plain_output}",
+        expected_checkpoint_id=head.checkpoint_id,
+    )
+
+    assert job["status"] == "candidate"
+    request = provider.calls[-1]
+    system = request["messages"][0]["content"]
+    payload = json.loads(request["messages"][1]["content"])
+    blocks = json.dumps(payload["blocks"], ensure_ascii=False)
+    assert payload["action"] == "Vy, I pick up the blue ledger and wait."
+    assert {item["character_id"] for item in payload["selected_characters"]} == {npc_id}
+    assert "dry and quick" in blocks
+    assert "dry, scene-specific, lightly comic" in blocks
+    assert "Vy leaves the blue ledger on the counter." in blocks
+    assert '"type": "scene"' in blocks
+    assert "Never narrate new actions, dialogue, thoughts, or decisions for the player persona" in system
+    assert ("known_by means knowledge, not presence" if legacy_plain_output else "Associations/known_by describe knowledge, not presence") in system
+    assert "No invented canon" in system
+    assert ("selected NPC established voices" if legacy_plain_output else "concrete consequence in each selected NPC's established voice") in system
+    assert "avoid generic atmosphere or reused prior-turn openings/ambient beats" in system
+    assert "End on a natural open scene beat, leaving the player's next action open" in system
 
 
 def test_free_only_rejects_paid_profile_before_provider_call(tmp_path):
