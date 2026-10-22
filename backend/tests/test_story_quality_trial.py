@@ -73,12 +73,26 @@ def test_default_remains_offline_even_with_credential(monkeypatch):
     assert run_trial()['provider_posts'] == 3
 
 
-def test_live_gate_requires_protected_main_first_attempt(monkeypatch):
+def test_live_gate_requires_owner_push_to_main_first_attempt(monkeypatch):
     from story_quality_trial import APPROVAL
-    for name, value in {'STORY_TRIAL_APPROVAL': APPROVAL, 'GITHUB_REF': 'refs/heads/main', 'GITHUB_REF_PROTECTED': 'true', 'GITHUB_RUN_ATTEMPT': '1', 'OLLAMA_API_KEY': 'fixture'}.items():
+    required = {
+        'STORY_TRIAL_APPROVAL': APPROVAL,
+        'GITHUB_EVENT_NAME': 'push',
+        'GITHUB_REF': 'refs/heads/main',
+        'GITHUB_ACTOR': 'rua-den',
+        'GITHUB_RUN_ATTEMPT': '1',
+        'OLLAMA_API_KEY': 'fixture',
+    }
+    for name, value in required.items():
         monkeypatch.setenv(name, value)
     assert live_gate()
-    for name, value in [('GITHUB_RUN_ATTEMPT', '2'), ('GITHUB_REF', 'refs/heads/feature'), ('GITHUB_REF_PROTECTED', 'false'), ('STORY_TRIAL_APPROVAL', 'old-approval')]:
+    for name, value in [
+        ('GITHUB_RUN_ATTEMPT', '2'),
+        ('GITHUB_REF', 'refs/heads/feature'),
+        ('GITHUB_EVENT_NAME', 'pull_request'),
+        ('GITHUB_ACTOR', 'someone-else'),
+        ('STORY_TRIAL_APPROVAL', 'old-approval'),
+    ]:
         with monkeypatch.context() as context:
             context.setenv(name, value)
             assert not live_gate()
