@@ -141,17 +141,21 @@ h3 { font-size: 18px; line-height: 1.35; font-weight: 620; }
 .story-empty, .empty-campaign { padding: 24px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
 .story-empty p, .empty-campaign p { max-width: 62ch; margin-bottom: 0; color: var(--muted); line-height: 1.65; }
 .loading-story { padding: 24px 0; color: var(--muted); }
-.generation-composer { position: sticky; z-index: 2; bottom: 0; margin: 28px -16px 0; padding: 12px 16px max(12px, env(safe-area-inset-bottom)); border: 1px solid var(--line); border-radius: 12px 12px 0 0; background: var(--surface); box-shadow: 0 -8px 24px color-mix(in srgb, var(--canvas) 60%, transparent); }
-.generation-composer form { display: grid; grid-template-columns: minmax(0, 1fr); gap: 7px; }
+.generation-composer { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 10px; position: sticky; z-index: 2; bottom: 0; margin: 28px -16px 0; padding: 12px 16px max(12px, env(safe-area-inset-bottom)); border: 1px solid var(--line); border-radius: 12px 12px 0 0; background: var(--surface); box-shadow: 0 -8px 24px color-mix(in srgb, var(--canvas) 60%, transparent); }
+.generation-composer form { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr); gap: 7px; margin: 0; }
 .generation-composer form > label, .composer-hint { grid-column: 1 / -1; }
 .generation-composer form > label { font-size: 14px; }
-.composer-hint { margin: -3px 0 2px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.generation-composer > .demo-runtime-notice { grid-column: 1; margin: 0 0 4px; }
+.generation-composer > .composer-help { grid-column: 2; margin: 0 0 4px; color: var(--muted); font-size: 13px; }
+.composer-help summary { min-height: 44px; box-sizing: border-box; padding: 10px 0; cursor: pointer; }
+.composer-hint { margin: 4px 0 2px; line-height: 1.5; }
 .generation-composer textarea, .app-modal-body textarea, .campaign-form textarea, .editor-stack textarea { width: 100%; min-width: 0; min-height: 48px; padding: 12px 14px; resize: vertical; border: 1px solid var(--line); border-radius: 10px; color: var(--text); background: var(--inset); line-height: 1.5; }
 .generation-composer form > textarea { min-height: 72px; max-height: 180px; }
 .generation-composer form > button { min-width: 84px; }
 .generation-composer .composer-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .generation-composer .composer-actions > button { min-width: 84px; }
 .generation-composer .composer-error-settings { margin-top: 8px; }
+.generation-composer .composer-status { margin: 4px 0 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
 .model-switcher { display: grid; gap: 10px; max-width: 560px; }
 .model-switcher-current { margin: -4px 0 2px; color: var(--text); font-size: 18px; font-weight: 650; }
 .model-switcher-current span { color: var(--muted); font-size: 13px; font-weight: 500; }
@@ -161,9 +165,9 @@ h3 { font-size: 18px; line-height: 1.35; font-weight: 620; }
 .generation-details summary, details summary { cursor: pointer; }
 .generation-details textarea { margin-top: 8px; }
 .demo-runtime-notice, .free-mode-info { display: grid; gap: 8px; margin-bottom: 18px; padding: 16px 18px; border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--line)); border-radius: 12px; color: var(--text); background: var(--surface-raised); line-height: 1.55; }
-.generation-composer .composer-runtime-notice { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 9px; margin-bottom: 10px; padding: 8px 10px; border-radius: 9px; font-size: 12px; line-height: 1.4; }
-.generation-composer .composer-runtime-notice strong { flex: 0 0 auto; font-size: 12px; }
-.generation-composer .composer-runtime-notice span { flex: 1 1 170px; }
+.generation-composer .composer-runtime-notice { display: block; gap: 0; margin-bottom: 10px; padding: 0 10px; border-radius: 9px; font-size: 12px; line-height: 1.4; }
+.generation-composer .composer-runtime-notice summary { min-height: 44px; box-sizing: border-box; padding: 10px 0; }
+.generation-composer .composer-runtime-notice p { margin: 0 0 10px; }
 .demo-runtime-notice strong, .free-mode-info h3 { color: var(--accent); }
 .free-mode-info h3 { margin: 0; font-size: 20px; }
 .free-mode-info p { max-width: 66ch; margin: 0; font-size: 14px; }
@@ -211,7 +215,13 @@ legend { padding: 0 6px; color: var(--accent); font-weight: 620; }
 .settings-section-heading p { color: var(--muted); }
 .story-menu-actions { display: grid; gap: 8px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
 .story-menu-actions .quiet-button { width: 100%; text-align: left; }
-.import-review-snapshot { max-height: 240px; overflow: auto; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--inset); }
+.import-review-snapshot { display: grid; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--inset); }
+.import-review-snapshot > details { padding: 4px 10px; border-bottom: 1px solid var(--line); }
+.import-review-snapshot > details:last-child { border-bottom: 0; }
+.import-review-snapshot > details > summary { min-height: 44px; box-sizing: border-box; padding: 10px 0; cursor: pointer; color: var(--text); font-weight: 650; }
+.import-review-snapshot > details > section { padding: 0 0 10px; }
+.import-review-snapshot > details > section > h3 { display: none; }
+.import-review-warning { margin: 0 0 12px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--danger) 65%, var(--line)); border-radius: 10px; color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, var(--surface)); font-size: 14px; line-height: 1.5; }
 .app-modal-portal[hidden] { display: none; }
 .app-modal-backdrop.mobile-overlay { position: fixed; inset: 0; z-index: 15; display: grid; place-items: center; overflow: auto; padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); background: rgb(25 20 14 / 72%); }
 .app-modal { display: flex; flex-direction: column; width: min(720px, 100%); max-height: calc(100dvh - 32px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); min-height: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 16px; color: var(--text); background: var(--surface); box-shadow: 0 24px 72px rgb(0 0 0 / 38%); text-align: left; }

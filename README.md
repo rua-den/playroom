@@ -4,11 +4,11 @@ App roleplay cá nhân bằng tiếng Việt, ưu tiên điện thoại và mở
 
 Trọng tâm là quản lý context qua nhiều chương: lưu hồ sơ, cảnh, sự kiện, quan hệ, tóm tắt và transcript riêng; xem được AI đang dùng dữ kiện nào, sửa được khi nhớ sai, và giữ bộ nhớ đúng theo nhánh truyện.
 
-## Trạng thái — 21/10/2026
+## Trạng thái — 22/10/2026
 
 **Mở bản test trên Windows:** Nhấp đúp **Start Playroom.cmd** để tạo tài khoản lần đầu và mở ứng dụng thật, hoặc **Try Playroom Demo.cmd** để thử giao diện bằng phản hồi mẫu. Xem [hướng dẫn bắt đầu](BAT-DAU.md).
 
-**Chuyển giao hiện hành:** Đọc [bàn giao main ngày 21/10](docs/handoff/2026-10-21-main-sync.md), [hướng dẫn local](docs/handoff/2026-10-18-local-test-product.md) và [AGENTS.md](AGENTS.md) trước khi code; áp dụng chỉ dẫn routing mới nhất của owner trong chat (checkpoint 18/10: Luna medium code, Sol review). `main` của GitHub là source of truth. Bài viết/các SHAs bên dưới là bằng chứng tại từng mốc, không thay cho CI của commit tương lai.
+**Chuyển giao hiện hành:** Đọc [UI và tương tác ngày 22/10](docs/handoff/2026-10-22-interaction-polish.md), [bàn giao main ngày 21/10](docs/handoff/2026-10-21-main-sync.md), [hướng dẫn local](docs/handoff/2026-10-18-local-test-product.md) và [AGENTS.md](AGENTS.md) trước khi code; áp dụng chỉ dẫn routing mới nhất của owner trong chat (checkpoint 18/10: Luna medium code, Sol review). `main` của GitHub là source of truth. Bài viết/các SHAs bên dưới là bằng chứng tại từng mốc, không thay cho CI của commit tương lai.
 
 - **B1–B3**: Send/reconnect, narrator JSON/cast/version và Chromium synthetic gameplay PASS ([PR #3](https://github.com/rua-den/playroom/pull/3), [#5](https://github.com/rua-den/playroom/pull/5), [#7](https://github.com/rua-den/playroom/pull/7), [#8](https://github.com/rua-den/playroom/pull/8)).
 - **Ngân sách**: opt-in cumulative/per-send spending grants qua [PR #11](https://github.com/rua-den/playroom/pull/11), Free-first UI qua [PR #13](https://github.com/rua-den/playroom/pull/13), Gemma4 Cloud starter `gemma4:31b` qua [PR #16](https://github.com/rua-den/playroom/pull/16), cơ chế chặn rủi ro trừ credits mua thêm qua [PR #18](https://github.com/rua-den/playroom/pull/18). Giá/giới hạn nội bộ là dự toán, không phải bảo đảm hóa đơn provider.

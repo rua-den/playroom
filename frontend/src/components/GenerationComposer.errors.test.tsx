@@ -128,4 +128,53 @@ describe("GenerationComposer provider validation messages", () => {
     render(<GenerationComposer ownerId="o" projection={{ ...projection, jobs: [{ id: "old", campaign_id: "c", branch_id: "b", checkpoint_id: "cp", status: "interrupted", mode: "economy", action: "old", created_at: "", cancel_requested: false }] }} profileId="p" onCommitted={vi.fn()} onOpenModelSettings={onOpenModelSettings} />);
     expect(screen.getByRole("button", { name: "Đổi model" })).toBeEnabled();
   });
+
+  it("cancels an active job once, keeps the action, and reports the confirmed state", async () => {
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "preview", campaign_id: "c", branch_id: "b", checkpoint_id: "cp", action: "keep this", status: "ready", profile_id: "p" }), { status: 201 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "job-cancel", campaign_id: "c", branch_id: "b", checkpoint_id: "cp", status: "running", action: "keep this", draft: "partial", offset: 7, offset_unit: "utf16_code_units" }), { status: 201 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "job-cancel", campaign_id: "c", branch_id: "b", checkpoint_id: "cp", status: "cancelled", action: "keep this", draft: "partial", offset: 7, offset_unit: "utf16_code_units" }), { status: 200 })));
+    const user = userEvent.setup();
+    render(<GenerationComposer ownerId="o" projection={projection} profileId="p" onCommitted={vi.fn()} />);
+    const input = screen.getByLabelText("Hành động tiếp theo");
+    await user.type(input, "keep this");
+    await user.click(screen.getByRole("button", { name: "Gửi" }));
+    await user.click(await screen.findByRole("button", { name: "Dừng lượt kể" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Đã dừng lượt kể");
+    expect(input).toHaveValue("keep this");
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls.filter(([url]) => String(url).endsWith("/cancel")).length).toBe(1);
+  });
+
+  it("keeps stopping truthful when cancellation fails", async () => {
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "preview", campaign_id: "c", branch_id: "b", checkpoint_id: "cp", action: "keep this", status: "ready", profile_id: "p" }), { status: 201 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "job-error", campaign_id: "c", branch_id: "b", checkpoint_id: "cp", status: "running", action: "keep this", draft: "", offset: 0, offset_unit: "utf16_code_units" }), { status: 201 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "temporary" }), { status: 500 })));
+    const user = userEvent.setup();
+    render(<GenerationComposer ownerId="o" projection={projection} profileId="p" onCommitted={vi.fn()} />);
+    await user.type(screen.getByLabelText("Hành động tiếp theo"), "keep this");
+    await user.click(screen.getByRole("button", { name: "Gửi" }));
+    await user.click(await screen.findByRole("button", { name: "Dừng lượt kể" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Không thể dừng lượt kể");
+    expect(screen.getByRole("status")).toHaveTextContent("Đang kể lượt này");
+  });
+
+  it("disables duplicate cancellation while the first request is pending", async () => {
+    let resolveCancel!: (response: Response) => void;
+    const cancel = new Promise<Response>((resolve) => { resolveCancel = resolve; });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "preview", campaign_id: "c", branch_id: "b", checkpoint_id: "cp", action: "keep this", status: "ready", profile_id: "p" }), { status: 201 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "job-duplicate", campaign_id: "c", branch_id: "b", checkpoint_id: "cp", status: "running", action: "keep this", draft: "", offset: 0, offset_unit: "utf16_code_units" }), { status: 201 }))
+      .mockReturnValueOnce(cancel);
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<GenerationComposer ownerId="o" projection={projection} profileId="p" onCommitted={vi.fn()} />);
+    await user.type(screen.getByLabelText("Hành động tiếp theo"), "keep this");
+    await user.click(screen.getByRole("button", { name: "Gửi" }));
+    const stop = await screen.findByRole("button", { name: "Dừng lượt kể" });
+    await user.click(stop);
+    expect(screen.getByRole("button", { name: "Đang dừng…" })).toBeDisabled();
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/cancel"))).toHaveLength(1);
+    resolveCancel(new Response(JSON.stringify({ id: "job-duplicate", campaign_id: "c", branch_id: "b", checkpoint_id: "cp", status: "cancelled", action: "keep this", draft: "", offset: 0, offset_unit: "utf16_code_units" }), { status: 200 }));
+  });
 });
