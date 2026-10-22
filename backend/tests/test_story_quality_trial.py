@@ -50,7 +50,7 @@ def test_failed_balance_preflight_sends_nothing():
 def test_checker_retains_text_and_flags_repetition_with_unicode_normalization():
     text = 'Vy đặt chiếc hộp gỗ lên quầy.'
     row = evaluate([{'kind': 'narration', 'text': unicodedata.normalize('NFD', text)}], [text])
-    assert row['repeated_reply'] and row['repeated_opening'] and row['repeated_paragraph']
+    assert row['repeated_reply'] and row['repeated_opening'] and row['repeated_opening_stem'] and row['repeated_paragraph']
     assert row['continuity_anchor_present']
     assert not row['agency_warning']
     assert evaluate([{'kind': 'narration', 'text': 'Lan bắt đầu tìm kiếm quanh quầy.'}], [])['agency_warning']
@@ -126,3 +126,12 @@ def test_offline_app_trial_reports_current_production_fences():
         "UNGROUNDED_PRECISION",
     ]
     assert report["status"] == "completed"
+
+
+
+def test_checker_flags_reused_opening_stem_without_identical_sentence():
+    previous = ["Vy nhìn theo chiếc hộp rồi im lặng."]
+    row = evaluate([{"kind": "narration", "text": "Vy nhìn sang quầy, sau đó hỏi nhỏ."}], previous)
+    assert row["repeated_opening_stem"] is True
+    assert row["repeated_opening"] is False
+    assert row["stock_stage_marker_count"] >= 1
