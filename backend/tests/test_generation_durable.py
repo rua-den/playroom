@@ -154,7 +154,9 @@ def test_quality_narrator_wire_uses_only_validated_director_selection(tmp_path):
     assert "narration prose" in system
     assert "Respond to the latest player action or dialogue" in system
     assert "avoid generic atmosphere or reused prior-turn openings/ambient beats" in system
-    assert "concrete consequence in each selected NPC's established voice" in system
+    assert "established voices of NPCs who have something meaningful to add" in system
+    assert "selected presence does not require every NPC to speak" in system
+    assert "do not open consecutive replies with the same look/turn/pause/body-language template" in system
     assert "End on a natural open scene beat, leaving the player's next action open" in system
     assert "Preserve selected voice/knowledge" in system
     assert "Player controls actions and thoughts" in system
@@ -219,8 +221,10 @@ def test_narrator_dispatch_preserves_turn_style_cast_and_action_in_both_wire_mod
     assert "Never narrate new actions, dialogue, thoughts, or decisions for the player persona" in system
     assert ("known_by means knowledge, not presence" if legacy_plain_output else "Associations/known_by describe knowledge, not presence") in system
     assert "No invented canon" in system
-    assert ("selected NPC established voices" if legacy_plain_output else "concrete consequence in each selected NPC's established voice") in system
-    assert "avoid generic atmosphere or reused prior-turn openings/ambient beats" in system
+    assert ("selected NPC established voices" if legacy_plain_output else "established voices of NPCs who have something meaningful to add") in system
+    assert "selected presence does not require every NPC to speak" in system
+    assert "reused prior-turn openings/ambient beats" in system
+    assert "same look/turn/pause/body-language template" in system
     assert "End on a natural open scene beat, leaving the player's next action open" in system
 
 
