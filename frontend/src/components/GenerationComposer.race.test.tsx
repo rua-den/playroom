@@ -34,6 +34,7 @@ function response(job: Partial<GenerationJob> & Pick<GenerationJob, "id" | "camp
 describe("GenerationComposer stale async generation races", () => {
   beforeEach(() => {
     localStorage.clear();
+    sessionStorage.clear();
     vi.restoreAllMocks();
   });
 
@@ -285,5 +286,103 @@ describe("GenerationComposer stale async generation races", () => {
     expect(localStorage.getItem(oldKey)).toBe(oldRawAfterRecovery);
     expect(localStorage.getItem(newKey)).toBe(newRawAfterRecovery);
     expect(onCommitted).not.toHaveBeenCalled();
+  });
+
+  it("ignores a delayed cancel response after switching owner and campaign scope", async () => {
+    const oldProjection = projection("campaign-old", "branch-old", "checkpoint-old");
+    const newProjection = projection("campaign-new", "branch-new", "checkpoint-new");
+    const cancelResponse = deferred<Response>();
+    const fetchMock = vi.fn((url: string | URL, options?: RequestInit) => {
+      const target = String(url);
+      if (target.endsWith("/context/previews")) return Promise.resolve(new Response(JSON.stringify({ id: "preview-old", campaign_id: "campaign-old", branch_id: "branch-old", checkpoint_id: "checkpoint-old", action: "old action", status: "ready", profile_id: "profile-1" }), { status: 201 }));
+      if (target.endsWith("/generate")) return Promise.resolve(response({ id: "job-old-cancel", campaign_id: "campaign-old", branch_id: "branch-old", checkpoint_id: "checkpoint-old", status: "running", action: "old action" }));
+      if (target.endsWith("/cancel")) return cancelResponse.promise;
+      if (target.includes("campaign-new")) return Promise.resolve(response({ id: "job-new", campaign_id: "campaign-new", branch_id: "branch-new", checkpoint_id: "checkpoint-new", status: "failed", action: "new action" }));
+      return Promise.resolve(new Response(JSON.stringify({ events: [] }), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    const { rerender } = render(<GenerationComposer ownerId="owner-old" projection={oldProjection} profileId="profile-1" onCommitted={vi.fn()} />);
+    const oldInput = screen.getByLabelText("Hành động tiếp theo");
+    await user.type(oldInput, "old action");
+    await user.click(screen.getByRole("button", { name: "Gửi" }));
+    await user.click(await screen.findByRole("button", { name: "Dừng lượt kể" }));
+    rerender(<GenerationComposer ownerId="owner-new" projection={newProjection} profileId="profile-1" onCommitted={vi.fn()} />);
+    const newInput = screen.getByLabelText("Hành động tiếp theo");
+    await user.type(newInput, "new draft");
+    await act(async () => {
+      cancelResponse.resolve(response({ id: "job-old-cancel", campaign_id: "campaign-old", branch_id: "branch-old", checkpoint_id: "checkpoint-old", status: "cancelled", action: "old action", draft: "old partial" }));
+    });
+    await waitFor(() => expect(newInput).toHaveValue("new draft"));
+    expect(screen.queryByText("Đã dừng lượt kể; bản nháp vẫn được giữ.")).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/generate"))).toHaveLength(1);
+  });
+
+  it("lets a same-job terminal poll win over a late cancel response", async () => {
+    const current = projection("campaign-1", "branch-1", "checkpoint-1");
+    const cancelResponse = deferred<Response>();
+    const fetchMock = vi.fn((url: string | URL) => {
+      const target = String(url);
+      if (target.endsWith("/context/previews")) return Promise.resolve(new Response(JSON.stringify({ id: "preview-race", campaign_id: "campaign-1", branch_id: "branch-1", checkpoint_id: "checkpoint-1", action: "keep draft", status: "ready", profile_id: "profile-1" }), { status: 201 }));
+      if (target.endsWith("/generate")) return Promise.resolve(response({ id: "job-race", campaign_id: "campaign-1", branch_id: "branch-1", checkpoint_id: "checkpoint-1", status: "running", action: "keep draft", draft: "partial", offset: 7 }));
+      if (target.endsWith("/cancel")) return cancelResponse.promise;
+      if (target.endsWith("/jobs/job-race")) return Promise.resolve(response({ id: "job-race", campaign_id: "campaign-1", branch_id: "branch-1", checkpoint_id: "checkpoint-1", status: "cancelled", action: "keep draft", draft: "partial" }));
+      return Promise.resolve(new Response(JSON.stringify({ events: [] }), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const intervals: Array<() => void> = [];
+    const originalSetInterval = window.setInterval;
+    vi.spyOn(window, "setInterval").mockImplementation((callback, delay) => {
+      if (delay !== 1200) return originalSetInterval.call(window, callback, delay);
+      intervals.push(callback as () => void);
+      return setTimeout(() => undefined, 0);
+    });
+    const user = userEvent.setup();
+    render(<GenerationComposer ownerId="owner-1" projection={current} profileId="profile-1" onCommitted={vi.fn()} />);
+    const input = screen.getByLabelText("Hành động tiếp theo");
+    await user.type(input, "keep draft");
+    await user.click(screen.getByRole("button", { name: "Gửi" }));
+    await waitFor(() => expect(intervals.length).toBeGreaterThan(0));
+    await user.click(screen.getByRole("button", { name: "Dừng lượt kể" }));
+    await act(async () => { intervals[0](); });
+    expect(await screen.findByRole("status")).toHaveTextContent("Đã dừng lượt kể");
+    cancelResponse.resolve(response({ id: "job-race", campaign_id: "campaign-1", branch_id: "branch-1", checkpoint_id: "checkpoint-1", status: "running", action: "keep draft", draft: "stale" }));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Đã dừng lượt kể"));
+    expect(input).toHaveValue("keep draft");
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/generate"))).toHaveLength(1);
+  });
+
+  it("ignores a late cancel error after the same job is committed by polling", async () => {
+    const current = projection("campaign-commit", "branch-commit", "checkpoint-commit");
+    const cancelResponse = deferred<Response>();
+    const fetchMock = vi.fn((url: string | URL) => {
+      const target = String(url);
+      if (target.endsWith("/context/previews")) return Promise.resolve(new Response(JSON.stringify({ id: "preview-commit", campaign_id: "campaign-commit", branch_id: "branch-commit", checkpoint_id: "checkpoint-commit", action: "commit this", status: "ready", profile_id: "profile-1" }), { status: 201 }));
+      if (target.endsWith("/generate")) return Promise.resolve(response({ id: "job-commit", campaign_id: "campaign-commit", branch_id: "branch-commit", checkpoint_id: "checkpoint-commit", status: "running", action: "commit this" }));
+      if (target.endsWith("/cancel")) return cancelResponse.promise;
+      if (target.endsWith("/jobs/job-commit")) return Promise.resolve(response({ id: "job-commit", campaign_id: "campaign-commit", branch_id: "branch-commit", checkpoint_id: "checkpoint-commit", status: "committed", action: "commit this", draft: "complete" }));
+      return Promise.resolve(new Response(JSON.stringify({ events: [] }), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const intervals: Array<() => void> = [];
+    const originalSetInterval = window.setInterval;
+    vi.spyOn(window, "setInterval").mockImplementation((callback, delay) => {
+      if (delay !== 1200) return originalSetInterval.call(window, callback, delay);
+      intervals.push(callback as () => void);
+      return setTimeout(() => undefined, 0);
+    });
+    const onCommitted = vi.fn().mockResolvedValue(current);
+    const user = userEvent.setup();
+    render(<GenerationComposer ownerId="owner-1" projection={current} profileId="profile-1" onCommitted={onCommitted} />);
+    await user.type(screen.getByLabelText("Hành động tiếp theo"), "commit this");
+    await user.click(screen.getByRole("button", { name: "Gửi" }));
+    await waitFor(() => expect(intervals.length).toBeGreaterThan(0));
+    await user.click(screen.getByRole("button", { name: "Dừng lượt kể" }));
+    await act(async () => { intervals[0](); });
+    await waitFor(() => expect(onCommitted).toHaveBeenCalledOnce());
+    cancelResponse.reject(new Error("late cancel failure"));
+    await waitFor(() => expect(screen.queryByText("late cancel failure")).not.toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Dừng lượt kể" })).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/generate"))).toHaveLength(1);
   });
 });

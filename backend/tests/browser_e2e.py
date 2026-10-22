@@ -667,6 +667,11 @@ def browser_synthetic_chat() -> None:
                 expect(page.get_by_role("button", name="Gửi", exact=True)).to_have_count(1)
                 expect(page.locator(".demo-badge")).to_be_visible()
                 expect(page.locator(".generation-composer .demo-runtime-notice")).to_be_visible()
+                composer_box = page.locator(".generation-composer").bounding_box()
+                assert composer_box and composer_box["height"] <= 240, f"Idle 375px composer is too tall: {composer_box}"
+                help_details = page.locator(".composer-help")
+                expect(help_details).to_be_visible()
+                help_details.locator("summary").click()
                 expect(page.get_by_text("Dùng **...** cho hành động hoặc suy nghĩ;", exact=False)).to_be_visible()
                 campaign = app.state.generation_provider
                 assert campaign.stage_counts == {}
@@ -1098,7 +1103,10 @@ def browser_synthetic_chat() -> None:
                 assert len(campaign.calls) == before_zip_calls, "Import must not call the provider"
                 page.reload(wait_until="domcontentloaded")
                 expect(page.locator(".generation-composer")).to_have_count(0)
-                expect(page.get_by_text("125 cặp lượt đã lưu", exact=False)).to_be_visible(timeout=12000)
+                zip_history_group = page.locator(".import-review-snapshot > details").nth(5)
+                if zip_history_group.get_attribute("open") is None:
+                    zip_history_group.locator("summary").click()
+                expect(zip_history_group.get_by_text("125 cặp lượt đã lưu", exact=False)).to_be_visible(timeout=12000)
                 zip_checks = page.locator(".create-card input[type=checkbox]")
                 expect(zip_checks).to_have_count(4)
                 for index in range(4):
@@ -1202,9 +1210,21 @@ def browser_synthetic_chat() -> None:
                 }), headers={"content-type": "application/json", "origin": origin})
                 assert blocked.status == 409
                 page.reload(wait_until="domcontentloaded")
-                expect(page.get_by_text("3 mục nguồn đang chờ duyệt", exact=False)).to_be_visible(timeout=12000)
+                expect(page.locator(".import-review-warning")).to_be_visible(timeout=12000)
+                expect(page.locator(".import-review-warning")).to_contain_text("3 mục nguồn đang chờ duyệt", timeout=12000)
                 checks = page.locator(".import-review-panel input[type=checkbox]")
                 expect(checks).to_have_count(5)
+                review_groups = page.locator(".import-review-snapshot > details")
+                assert review_groups.count() == 6
+                pending_group = review_groups.nth(4)
+                assert pending_group.get_attribute("open") is not None
+                source_summary = review_groups.nth(5).locator("summary")
+                source_group = review_groups.nth(5)
+                if source_group.get_attribute("open") is None:
+                    source_summary.focus()
+                    source_summary.press("Enter")
+                expect(source_group.locator("section")).to_contain_text("Legacy Bundle có 0 cặp")
+                expect(source_group.locator("section").get_by_text(re.compile("Mã nguồn|Legacy Bundle"))).to_be_visible()
                 for viewport_width in (757, 375):
                     page.set_viewport_size({"width": viewport_width, "height": 780})
                     for index in range(checks.count()):
@@ -1212,9 +1232,12 @@ def browser_synthetic_chat() -> None:
                         label_box = checks.nth(index).locator("xpath=..").bounding_box()
                         assert box and box["width"] <= 24 and box["height"] <= 24
                         assert label_box and label_box["height"] >= 44
-                for index in range(5):
+                for index in range(4):
                     checks.nth(index).check()
-                page.get_by_role("button", name=re.compile("Duy.*Send")).click()
+                approval = page.get_by_role("button", name=re.compile("Duy.*Send"))
+                expect(approval).to_be_disabled()
+                checks.nth(4).check()
+                approval.click()
                 expect(page.locator(".generation-composer")).to_be_visible(timeout=12000)
                 _send_and_wait(page, "*Lan hỏi Vy về tờ giấy.*", 1)
                 assert len(campaign.calls) == 10

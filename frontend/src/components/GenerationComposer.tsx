@@ -132,6 +132,20 @@ function generationJobFailureMessage(failure: GenerationJob["failure"]) {
     return "AI đã tự thêm chi tiết thời gian chính xác không có trong dữ kiện đã duyệt. Lượt này không được lưu; lời bạn nhập vẫn được giữ để gửi lại.";
   return null;
 }
+function generationLifecycleMessage(job: GenerationJob | null, pending: boolean) {
+  if (pending && !job) return "Đang chuẩn bị lượt kể…";
+  switch (job?.status) {
+    case "queued": return "Lượt kể đã xếp hàng, đang chờ xử lý.";
+    case "running": return "Đang kể lượt này…";
+    case "cancelling": return "Đang dừng lượt kể…";
+    case "cancelled": return "Đã dừng lượt kể; bản nháp vẫn được giữ.";
+    case "interrupted": return "Lượt kể bị gián đoạn; bản nháp vẫn được giữ để khôi phục.";
+    case "failed": return "Lượt kể không hoàn tất; bản nháp vẫn được giữ để thử lại.";
+    case "candidate": return "Lượt kể đã sẵn sàng lưu.";
+    case "committed": return "Lượt kể đã được lưu.";
+    default: return null;
+  }
+}
 
 export function GenerationComposer({
   ownerId,
@@ -159,8 +173,10 @@ export function GenerationComposer({
   const [economyRetry, setEconomyRetry] = useState(false);
   const [costAction, setCostAction] = useState(false);
   const [pending, setPending] = useState(false);
+  const latestJob = useRef<GenerationJob | null>(null);
 
   const polling = useRef<number | null>(null);
+  const cancellingJobs = useRef(new Set<string>());
   const operationEpoch = useRef(0);
   const scopeKeyRef = useRef("");
   const actionRevision = useRef(0);
@@ -178,6 +194,7 @@ export function GenerationComposer({
   const draftDirty = useRef(false);
   const latestAction = useRef(action);
   latestAction.current = action;
+  latestJob.current = job;
   const isCurrentEpoch = (epoch: number) =>
     mountedRef.current && operationEpoch.current === epoch;
   const storageKey = generationIdentityKey(
@@ -785,25 +802,63 @@ export function GenerationComposer({
       if (isCurrentEpoch(submitEpoch)) setPending(false);
     }
   }
+  async function cancel() {
+    if (!job || !["queued", "running", "cancelling"].includes(job.status) || cancellingJobs.current.has(job.id)) return;
+    const cancelEpoch = operationEpoch.current;
+    const cancelScope = scopeKey;
+    cancellingJobs.current.add(job.id);
+    setJob((current) => current?.id === job.id ? { ...current, status: "cancelling" } : current);
+    setError(null);
+    try {
+      const result = await api.cancelGeneration(job.id);
+      if (!isCurrentEpoch(cancelEpoch) || scopeKeyRef.current !== cancelScope) return;
+      const currentStatus = latestJob.current?.id === job.id ? latestJob.current.status : null;
+      if (result.status === "committed") {
+        const saved = identity ?? {
+          ownerId,
+          campaignId: projection.campaign.id,
+          branchId: projection.branch.id,
+          checkpointId: result.checkpoint_id,
+          action: latestAction.current,
+          previewId: "",
+          idempotencyKey: "",
+          jobId: result.id,
+        };
+        await refresh({ ...saved, jobId: result.id });
+        return;
+      }
+      if (currentStatus && !["failed", "cancelled", "committed", "interrupted"].includes(currentStatus))
+        setJob(result);
+    } catch {
+      if (isCurrentEpoch(cancelEpoch) && scopeKeyRef.current === cancelScope && latestJob.current?.id === job.id && latestJob.current.status === "cancelling") {
+        setJob((current) => current?.id === job.id ? { ...current, status: job.status } : current);
+        setError("Không thể dừng lượt kể; trạng thái thật vẫn đang được kiểm tra.");
+      }
+    } finally {
+      cancellingJobs.current.delete(job.id);
+    }
+  }
   const stages = job?.cost_ledger?.stages ?? {};
   const active = Boolean(
     job && ["queued", "running", "cancelling"].includes(job.status),
   );
   const busy = pending || active;
   const modelBlocked = busy || job?.status === "candidate" || Boolean(identity?.idempotencyKey && !job);
+  const lifecycleMessage = generationLifecycleMessage(job, pending);
   return (
     <section className="generation-composer" aria-label="Lượt kể chuyện">
       {demoMode && (
-        <div className="demo-runtime-notice composer-runtime-notice" role="status" aria-label="Chế độ demo tổng hợp">
-          <strong>Chế độ demo tổng hợp</strong>
-          <span>Phản hồi mẫu có thể lặp lại; demo không gọi AI thật dù bạn đổi model.</span>
-        </div>
+        <details className="demo-runtime-notice composer-runtime-notice" role="status" aria-label="Chế độ demo tổng hợp">
+          <summary><strong>Chế độ demo tổng hợp</strong></summary>
+          <p>Phản hồi mẫu có thể lặp lại; demo không gọi AI thật dù bạn đổi model.</p>
+        </details>
       )}
+      <details className="composer-help">
+        <summary>Gợi ý cách nhập</summary>
+        <p className="composer-hint">Dùng **...** cho hành động hoặc suy nghĩ; văn bản thường là lời thoại.</p>
+      </details>
       <form onSubmit={submit}>
         <label htmlFor="generation-action">Lời và hành động tiếp theo</label>
-        <p className="composer-hint">
-          Dùng **...** cho hành động hoặc suy nghĩ; văn bản thường là lời thoại.
-        </p>
         <textarea
           aria-label="Hành động tiếp theo"
           id="generation-action"
@@ -839,6 +894,11 @@ export function GenerationComposer({
         >
           {busy ? "Đang gửi…" : "Gửi"}
         </button>
+        {active && (
+          <button type="button" className="quiet-button touch-target" onClick={() => void cancel()} disabled={job?.status === "cancelling" || cancellingJobs.current.has(job?.id ?? "")}>
+            {job?.status === "cancelling" ? "Đang dừng…" : "Dừng lượt kể"}
+          </button>
+        )}
         {onOpenModelSettings && (
           <button type="button" className="quiet-button touch-target" onClick={onOpenModelSettings} disabled={modelBlocked}>
             Đổi model
@@ -846,6 +906,7 @@ export function GenerationComposer({
         )}
         </div>
       </form>
+      {lifecycleMessage && <p className="composer-status" role="status" aria-live="polite">{lifecycleMessage}</p>}
       {error && (
         <div role="alert" className="form-error">
           {error}
