@@ -29,7 +29,7 @@ from playroom.db import connect
 from playroom.model_profiles import OLLAMA_CLOUD_ENDPOINT as ENDPOINT, OLLAMA_CLOUD_MODELS, OLLAMA_FREE_CLOUD_MODEL, OllamaCloudVerifier
 from playroom.provider import default_provider_factory
 
-APPROVAL = 'OWNER_GEMMA_APP_STORY_VOICE_2026_10_22'
+APPROVAL = 'OWNER_GEMMA_APP_STORY_GROUNDING_2026_10_22'
 MODEL_LABEL = os.environ.get('STORY_TRIAL_MODEL_LABEL', OLLAMA_FREE_CLOUD_MODEL)
 if MODEL_LABEL not in OLLAMA_CLOUD_MODELS:
     raise RuntimeError('story trial model is not allowlisted')
@@ -67,6 +67,9 @@ def evaluate(segments, previous):
         old_opening = re.split(r'[.!?]', normalize(old))[0]
         old_stems.append(' '.join(old_opening.split()[:2]))
     stock_markers = ('hơi khựng', 'cau mày', 'vẻ mặt', 'ngạc nhiên', 'bối rối', 'khẽ gật', 'nhìn sang', 'nhìn theo')
+    player_observation_claim = bool(
+        re.search(r"\b(?:toi|to|minh)\s+(?:nho|thay|nhin thay).{0,48}\b(?:cau|ban)\b", normalized)
+    )
     return {
         'narrative': narrative, 'schema_speaker_valid': True,
         'agency_warning': agency, 'absent_warning': absent, 'knowledge_warning': knowledge,
@@ -74,6 +77,7 @@ def evaluate(segments, previous):
         'repeated_opening': any(opening == re.split(r'[.!?]', normalize(old))[0] for old in previous),
         'repeated_opening_stem': bool(opening_stem and opening_stem in old_stems),
         'stock_stage_marker_count': sum(normalized.count(marker) for marker in stock_markers),
+        'player_observation_claim': player_observation_claim,
         'repeated_paragraph': bool(paragraphs & old_paragraphs),
         'continuity_anchor_present': any(anchor in normalized for anchor in ('hộp', 'giấy', 'quầy', 'ngăn kéo')),
     }
@@ -199,7 +203,7 @@ def run_trial(*, transport=None, preflight=None, live=False):
                             'id': NPC_ID,
                             'name': 'Vy',
                             'present': True,
-                            'knowledge': 'Không biết ai đã lấy hay tráo tờ giấy.',
+                            'knowledge': 'Chỉ biết tờ giấy xanh từng ở trong hộp; không biết ai đã đặt, cất, lấy hay tráo nó.',
                             'traits': ['Nhanh miệng, trực tính, tinh ý.', 'Khi căng thẳng thường đùa khô thay vì nói trang trọng.'],
                             'voice': 'Câu ngắn, tự nhiên, hơi châm chọc; tránh giảng giải dài và tránh nói như trợ lý.',
                         }],
