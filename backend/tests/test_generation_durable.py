@@ -154,6 +154,7 @@ def test_quality_narrator_wire_uses_only_validated_director_selection(tmp_path):
     assert "narration prose" in system
     assert "Respond to the latest player action or dialogue" in system
     assert "repeated look/turn/pause openings" in system
+    assert "NPC memories/observations about player actions require context evidence" in system
     assert "React in established NPC voices" in system
     assert "selected presence need not speak" in system
     assert "repeated look/turn/pause openings" in system
