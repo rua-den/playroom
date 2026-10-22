@@ -26,15 +26,21 @@ from live_ollama_gptoss_three_turn_trial import _read_balance
 from live_ollama_three_turn_trial import ACTIONS, VY_ID, _quality_flags
 from playroom.live_local import create_live_local_app
 from playroom.db import connect
-from playroom.model_profiles import OLLAMA_CLOUD_ENDPOINT as ENDPOINT, OLLAMA_CLOUD_API_MODEL as MODEL, OLLAMA_CLOUD_MODEL, OllamaCloudVerifier
+from playroom.model_profiles import OLLAMA_CLOUD_ENDPOINT as ENDPOINT, OLLAMA_CLOUD_MODELS, OLLAMA_FREE_CLOUD_MODEL, OllamaCloudVerifier
 from playroom.provider import default_provider_factory
 
-APPROVAL = 'OWNER_GPTOSS_APP_STORY_2026_10_21'
+APPROVAL = 'OWNER_GEMMA_APP_STORY_OUTPUT_2026_10_22'
+MODEL_LABEL = os.environ.get('STORY_TRIAL_MODEL_LABEL', OLLAMA_FREE_CLOUD_MODEL)
+if MODEL_LABEL not in OLLAMA_CLOUD_MODELS:
+    raise RuntimeError('story trial model is not allowlisted')
+MODEL_SPEC = OLLAMA_CLOUD_MODELS[MODEL_LABEL]
+MODEL = MODEL_SPEC['api_model']
 PRODUCTION_FENCES = ('PLAYER_AGENCY_VIOLATION', 'NPC_KNOWLEDGE_VIOLATION', 'UNGROUNDED_PRECISION')
 MAX_USD = Decimal('0.02')
 MAX_INPUT_BYTES = 30000
 MAX_OUTPUT = 1800
-PROMPT_RATE, OUTPUT_RATE = Decimal('0.00000015'), Decimal('0.00000060')
+PROMPT_RATE = Decimal(MODEL_SPEC['prompt_price'])
+OUTPUT_RATE = Decimal(MODEL_SPEC['completion_price'])
 PER_SEND = MAX_INPUT_BYTES * PROMPT_RATE + MAX_OUTPUT * OUTPUT_RATE
 assert PER_SEND * 3 <= MAX_USD
 # Name the addressed NPC so deterministic production selection retains Vy.
@@ -150,7 +156,7 @@ def run_trial(*, transport=None, preflight=None, live=False):
     transport = transport if transport is not None else (None if live else OfflineTransport())
     secret = os.environ['OLLAMA_API_KEY'] if live else 'synthetic-fixture-key'
     guard = Guard(preflight=preflight if preflight is not None else (lambda: balance_preflight(secret)) if live else None)
-    report = {'mode': 'live model' if live else 'offline fixture; not model quality', 'model': MODEL, 'status': 'stopped', 'quality_verdict': 'needs human review', 'production_fences': list(PRODUCTION_FENCES), 'turns': [], 'committed_turns': 0}
+    report = {'mode': 'live model' if live else 'offline fixture; not model quality', 'model_label': MODEL_LABEL, 'model': MODEL, 'status': 'stopped', 'quality_verdict': 'needs human review', 'production_fences': list(PRODUCTION_FENCES), 'turns': [], 'committed_turns': 0}
     with tempfile.TemporaryDirectory(prefix='playroom-story-') as directory:
         root = Path(directory)
         _create_owner(root)
@@ -174,7 +180,7 @@ def run_trial(*, transport=None, preflight=None, live=False):
                     post('/api/auth/login', {'email': OWNER_EMAIL, 'password': OWNER_PASSWORD})
                     campaign = post('/api/campaigns', {'title': 'Synthetic story quality trial', 'world': {'name': 'Hiệu sách vắng lúc tối', 'public_canon': 'Lan và Vy ở quầy. Tờ giấy xanh từng nằm trong hộp gỗ; nội dung chưa ai biết. Bình ở nơi khác và không xuất hiện trong cảnh.', 'narrator_private': 'Người giao hàng đã tráo tờ giấy. Vy không biết và chưa quan sát được việc này.'}, 'characters': [{'id': NPC_ID, 'name': 'Vy', 'present': True, 'knowledge': 'Không biết ai đã lấy hay tráo tờ giấy.'}], 'persona': {'name': 'Lan', 'player_controlled': True}}, 201)
                     credential = post('/api/provider/credentials', {'secret': secret}, 201)
-                    profile = post('/api/provider/profiles/verify', {'provider': 'ollama', 'credential_id': credential['id'], 'model': OLLAMA_CLOUD_MODEL, 'endpoint': ENDPOINT}, 201)
+                    profile = post('/api/provider/profiles/verify', {'provider': 'ollama', 'credential_id': credential['id'], 'model': MODEL_LABEL, 'endpoint': ENDPOINT}, 201)
                     settings = _assert_ok(client.put('/api/provider/settings', json={'narrator_profile_id': profile['id'], 'mode': 'economy', 'policy': 'capped_paid', 'confirmed_usd_cap': str(MAX_USD), 'budgets': {'narrator': {'input_limit': MAX_INPUT_BYTES, 'requested_output': MAX_OUTPUT, 'wrapper_buffer': 64}}}, headers=headers))
                     assert settings['roles']['narrator']['version'] == profile['version']
                     post('/api/provider/trials', {'profile_id': profile['id'], 'profile_version': profile['version'], 'total_cap_usd': str(MAX_USD), 'per_send_cap_usd': str(PER_SEND), 'max_jobs': 3, 'expires_at': (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()}, 201)

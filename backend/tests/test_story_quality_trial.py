@@ -3,7 +3,7 @@ import unicodedata
 
 import pytest
 
-from story_quality_trial import Guard, MODEL, ENDPOINT, OfflineTransport, evaluate, run_trial, validate_profile, live_gate
+from story_quality_trial import Guard, MODEL, MODEL_LABEL, ENDPOINT, OfflineTransport, evaluate, run_trial, validate_profile, live_gate
 
 
 def test_three_turn_authenticated_production_flow():
@@ -12,6 +12,7 @@ def test_three_turn_authenticated_production_flow():
     assert report['provider_posts'] == report['committed_turns'] == 3
     assert report['status'] == 'completed'
     assert report['quality_verdict'] == 'needs human review'
+    assert report['model_label'] == MODEL_LABEL
     assert len(transport.requests) == 3
     assert report['persisted_grants'] == 1 and report['persisted_reservations'] == 3
     assert all(row['schema_speaker_valid'] for row in report['turns'])

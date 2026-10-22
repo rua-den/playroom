@@ -15,7 +15,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: story-quality-app-trial-20261021
+  group: story-quality-app-trial-20261022
   cancel-in-progress: false
 
 jobs:
@@ -44,7 +44,7 @@ jobs:
   owner-approved-live:
     # This dated approval is for one first-attempt protected-main push only.
     if: >-
-      ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.ref_protected && github.run_attempt == 1 && startsWith(github.event.head_commit.message, 'ci(ollama): owner-approved-story-quality-2026-10-21') }}
+      ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.ref_protected && github.run_attempt == 1 && startsWith(github.event.head_commit.message, 'ci(ollama): owner-approved-story-output-2026-10-22') }}
     needs: offline-story-contract
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -55,11 +55,11 @@ jobs:
           python-version: '3.12'
           enable-cache: true
       - run: uv sync --locked --extra test
-      - name: Three bounded synthetic turns through authenticated app
+      - name: Three bounded Gemma synthetic turns through authenticated app
         env:
           PYTHONPATH: backend:backend/tests
           OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
-          STORY_TRIAL_APPROVAL: OWNER_GPTOSS_APP_STORY_2026_10_21
+          STORY_TRIAL_APPROVAL: OWNER_GEMMA_APP_STORY_OUTPUT_2026_10_22
         run: uv run --locked --extra test python backend/tests/story_quality_trial.py --live --report story-quality-live.json
       - uses: actions/upload-artifact@v4
         if: always()
