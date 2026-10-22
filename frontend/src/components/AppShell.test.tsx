@@ -9,8 +9,8 @@ import type { CampaignProjection, CampaignSummary } from "../api/types";
 
 vi.mock("./GenerationComposer", () => ({ GenerationComposer: () => <div data-testid="generation-composer"><textarea aria-label="Synthetic unsent draft" /></div> }));
 vi.mock("./ProfileEditor", () => ({ ProfileEditor: () => <div data-testid="profile-editor" /> }));
-vi.mock("./MemoryLibrary", () => ({ MemoryLibrary: () => <div data-testid="memory-library" /> }));
-vi.mock("./SceneEditor", () => ({ SceneEditor: () => <div data-testid="scene-editor" /> }));
+vi.mock("./MemoryLibrary", () => ({ MemoryLibrary: () => <textarea aria-label="Memory mock draft" /> }));
+vi.mock("./SceneEditor", () => ({ SceneEditor: () => <input aria-label="Scene mock draft" /> }));
 vi.mock("./SettingsPanel", () => ({ SettingsPanel: () => <div data-testid="settings-panel" /> }));
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
@@ -75,6 +75,47 @@ describe("recoverable job summary", () => {
     expect(screen.getByRole("dialog", { name: "Hồ sơ và ký ức" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Đóng hồ sơ và ký ức" }));
     expect(contextTrigger).toHaveFocus();
+  });
+
+  it("keeps editor drafts while switching tabs and closing/reopening context", async () => {
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([{ id: "campaign-1", title: "Mùa hạ", created_at: "2026-01-01", updated_at: "2026-01-01", archived_at: null }]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "campaign-1", title: "Mùa hạ", created_at: "2026-01-01", updated_at: "2026-01-01", branch_id: "branch-1", state_version: 1, checkpoint_id: "checkpoint-1", profiles: {} }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ campaign: { id: "campaign-1", title: "Mùa hạ", created_at: "2026-01-01", updated_at: "2026-01-01", archived_at: null }, branch: { id: "branch-1", name: "Chính", state_version: 1, checkpoint_id: "checkpoint-1" }, checkpoint: { id: "checkpoint-1", state_version: 1, parent_checkpoint_id: null, selected_revision_ids: [], retrieval_policy: "auto" }, profiles: {}, scene: null, transcript: [], jobs: [] }), { status: 200 })));
+    const user = userEvent.setup();
+    render(<AppShell owner={{ id: "draft-owner", email: "owner@example.test" }} onLogout={() => undefined} />);
+    await user.click(await screen.findByRole("button", { name: "Mở truyện" }));
+    await user.click(await screen.findByRole("button", { name: "Mở hồ sơ và ký ức" }));
+    await user.click(screen.getByRole("button", { name: "Ký ức" }));
+    await user.type(screen.getByLabelText("Memory mock draft"), "giữ lại");
+    await user.click(screen.getByRole("button", { name: "Cảnh" }));
+    await user.click(screen.getByRole("button", { name: "Ký ức" }));
+    expect(screen.getByLabelText("Memory mock draft")).toHaveValue("giữ lại");
+    await user.click(screen.getByRole("button", { name: "Đóng hồ sơ và ký ức" }));
+    await user.click(screen.getByRole("button", { name: "Mở hồ sơ và ký ức" }));
+    expect(screen.getByLabelText("Memory mock draft")).toHaveValue("giữ lại");
+  });
+
+  it("isolates editor drafts when changing campaigns", async () => {
+    const projectionFor = (id: string, branch: string) => ({ campaign: { id, title: id === "campaign-a" ? "Mùa hạ" : "Đêm mưa", created_at: "2026-01-01", updated_at: "2026-01-01", archived_at: null }, branch: { id: branch, name: "Chính", state_version: 1, checkpoint_id: `checkpoint-${id}` }, checkpoint: { id: `checkpoint-${id}`, state_version: 1, parent_checkpoint_id: null, selected_revision_ids: [], retrieval_policy: "auto" as const }, profiles: {}, scene: null, transcript: [], jobs: [] });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([{ id: "campaign-a", title: "Mùa hạ", created_at: "2026-01-01", updated_at: "2026-01-01", archived_at: null }, { id: "campaign-b", title: "Đêm mưa", created_at: "2026-01-01", updated_at: "2026-01-01", archived_at: null }]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "campaign-a", title: "Mùa hạ", branch_id: "branch-a", state_version: 1, checkpoint_id: "checkpoint-campaign-a", profiles: {} }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(projectionFor("campaign-a", "branch-a")), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "campaign-b", title: "Đêm mưa", branch_id: "branch-b", state_version: 1, checkpoint_id: "checkpoint-campaign-b", profiles: {} }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(projectionFor("campaign-b", "branch-b")), { status: 200 })));
+    const user = userEvent.setup();
+    render(<AppShell owner={{ id: "scope-owner", email: "owner@example.test" }} onLogout={() => undefined} />);
+    await user.click((await screen.findAllByRole("button", { name: "Mở truyện" }))[0]);
+    await user.click(await screen.findByRole("button", { name: "Mở hồ sơ và ký ức" }));
+    await user.click(screen.getByRole("button", { name: "Ký ức" }));
+    await user.type(screen.getByLabelText("Memory mock draft"), "campaign-a draft");
+    await user.click(screen.getByRole("button", { name: "Đóng hồ sơ và ký ức" }));
+    await user.click(screen.getByRole("button", { name: "Truyện và tác vụ" }));
+    await user.click(screen.getByRole("button", { name: "Đêm mưa" }));
+    await user.click(await screen.findByRole("button", { name: "Mở hồ sơ và ký ức" }));
+    await user.click(screen.getByRole("button", { name: "Ký ức" }));
+    expect(screen.getByLabelText("Memory mock draft")).toHaveValue("");
   });
 
   it("locks imported campaigns until all four review acknowledgements are explicitly approved", async () => {

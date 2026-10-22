@@ -5,6 +5,17 @@ import { SceneEditor } from "./SceneEditor";
 import { ToastProvider } from "./Toast";
 
 describe("SceneEditor", () => {
+  it("guides an empty scene map and makes the current-scene label tappable", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ focus_scene_id: null, scenes: {} }), { status: 200 })));
+    const user = userEvent.setup();
+    render(<ToastProvider><SceneEditor campaignId="campaign-1" branchId="branch-1" stateVersion={4} /></ToastProvider>);
+    expect(await screen.findByText("Chưa có cảnh nào")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Thêm cảnh" }));
+    const currentLabel = screen.getByLabelText("Cảnh hiện tại");
+    expect(currentLabel).toBeChecked();
+    expect(currentLabel.closest("label")).toHaveTextContent("Cảnh hiện tại");
+  });
+
   it("shows save success after acknowledgement and never for a local scene draft", async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ focus_scene_id: null, scenes: [] }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ state_version: 5, checkpoint_id: "cp" }), { status: 200 }));
