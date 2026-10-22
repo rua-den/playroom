@@ -28,6 +28,7 @@ _RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("smile", ("mỉm cười", "nở nụ cười", "cười")),
     ("sigh", ("thở dài",)),
     ("feel", ("cảm thấy",)),
+    ("emotion_state", ("lo lắng", "bối rối", "ngạc nhiên", "sợ hãi", "tức giận", "vui mừng", "buồn bã", "căng thẳng", "hồi hộp", "xấu hổ", "ngượng ngùng", "hoảng hốt", "bất an")),
     ("decide", ("quyết định",)),
     ("think", ("nghĩ thầm", "thầm nghĩ", "tự nhủ")),
     ("remember", ("chợt nhớ",)),
@@ -90,6 +91,11 @@ def _normalize(value: str) -> str:
 
 _NORMALIZED_NEGATIONS = tuple(_normalize(value) for value in _NEGATIONS)
 
+_EMOTION_STATE_VARIANTS = tuple(
+    _normalize(value)
+    for value in ("lo lắng", "bối rối", "ngạc nhiên", "sợ hãi", "tức giận", "vui mừng", "buồn bã", "căng thẳng", "hồi hộp", "xấu hổ", "ngượng ngùng", "hoảng hốt", "bất an")
+)
+
 _NORMALIZED_RULES = tuple(
     (name, tuple(_normalize(variant) for variant in variants))
     for name, variants in _RULES
@@ -151,6 +157,21 @@ def _subject_remainder(clause: str, aliases: Sequence[str]) -> str | None:
     return None
 
 
+def _contains_player_emotion_claim(clause: str, aliases: Sequence[str]) -> bool:
+    value = _normalize(clause)
+    state = "(?:" + "|".join(re.escape(item) for item in _EMOTION_STATE_VARIANTS) + ")"
+    feature = r"(?:khuon mat|ve mat|net mat|anh mat|giong noi)"
+    for alias in aliases:
+        patterns = (
+            rf"{feature}.{{0,48}}\b{state}\b.{{0,24}}\bcua\s+{re.escape(alias)}\b",
+            rf"{feature}\s+{re.escape(alias)}\b.{{0,48}}\b{state}\b",
+            rf"\b{re.escape(alias)}\b.{{0,24}}\b(?:co ve|trong|to ra|day)\s+{state}\b",
+        )
+        if any(re.search(pattern, value) is not None for pattern in patterns):
+            return True
+    return False
+
+
 def validate_player_agency(
     action_text: str,
     segments: Sequence[Mapping[str, object]],
@@ -174,6 +195,10 @@ def validate_player_agency(
         if not isinstance(text, str):
             continue
         for clause in re.split(r"[.!?;\n]+", text):
+            if "emotion_state" not in authorized and _contains_player_emotion_claim(clause, aliases):
+                raise PlayerAgencyViolation(
+                    "Narrator attempted to author a new observable emotion for the player persona"
+                )
             rest = _subject_remainder(clause, aliases)
             if not rest or any(rest.startswith(prefix) for prefix in _NORMALIZED_NEGATIONS):
                 continue

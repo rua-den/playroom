@@ -527,7 +527,7 @@ class GenerationService:
             "Respect focus/parallel scenes; StyleProfile voice; player controls choices. "
             "Use selected_characters only; never invent speakers. Dialogue only for selected chars; stable IDs character_id/profile_version_id; narration prose. "
             "Respond to the latest player action or dialogue with eligible context. React in established NPC voices; selected presence need not speak. "
-            "Avoid generic atmosphere, stock emotion labels and repeated look/turn/pause openings; vary with dialogue, grounded consequence, scene-specific NPC action or object/world change. "
+            "Avoid generic atmosphere, stock emotion labels and repeated look/turn/pause openings; vary with dialogue, grounded consequence, NPC action or object/world change. NPC memories/observations about player actions require context evidence. "
             "Preserve selected voice/knowledge; plausibly present. End on a natural open scene beat, leaving the player's next action open. Player controls actions and thoughts. Do not force A/B choices, quests, stats, or other game mechanics. "
             "No invented canon"
         )
@@ -538,7 +538,7 @@ class GenerationService:
                 "Continue Vietnamese using supplied context. Respect canon; committed raw turns override summaries. "
                 "Exclude pending, foreign, rejected and future facts. known_by means knowledge, not presence. "
                 "Respect scenes, selected NPC established voices and player choices. Only selected NPCs may speak; selected presence need not speak. "
-                "React with grounded consequences. Avoid generic atmosphere, stock emotion labels and repeated look/turn/pause openings; vary with dialogue, NPC action or object/world change. "
+                "React with grounded consequences. Avoid generic atmosphere, stock emotion labels and repeated look/turn/pause openings; vary with dialogue, NPC action or object/world change. NPC memories/observations about player actions require context evidence. "
                 "End on a natural open scene beat, leaving the player's next action open. "
                 "Never narrate new actions, dialogue, thoughts, or decisions for the player persona. "
                 "Do not force A/B choices, quests, stats, or other game mechanics. No invented canon"

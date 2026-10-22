@@ -159,3 +159,32 @@ def test_generation_fails_before_candidate_on_invented_exact_time(tmp_path):
     assert job["status"] == "failed"
     assert job["failure"]["code"] == "UNGROUNDED_PRECISION"
     assert get_branch_head(db, campaign.id, campaign.initial_branch_id).checkpoint_id == head.checkpoint_id
+
+
+
+def test_generation_fails_before_candidate_when_narrator_assigns_player_emotion(tmp_path):
+    db, owner, campaign = _story(tmp_path)
+    profile = {
+        **DEFAULT_PROFILE,
+        "is_test_profile": False,
+        "legacy_plain_output": False,
+        "native_structured_output": False,
+        "supported_parameters": [],
+    }
+    provider = FakeProvider([
+        '{"segments":[{"kind":"narration","text":"Player có vẻ lo lắng trước câu hỏi."}]}'
+    ])
+    service = GenerationService(db, provider, profile=profile)
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    job = service.generate(
+        owner.id,
+        campaign.id,
+        campaign.initial_branch_id,
+        "Tôi nghe đây.",
+        idempotency_key="agency-emotion-1",
+        expected_checkpoint_id=head.checkpoint_id,
+    )
+
+    assert job["status"] == "failed"
+    assert job["failure"]["code"] == "PLAYER_AGENCY_VIOLATION"
+    assert get_branch_head(db, campaign.id, campaign.initial_branch_id).checkpoint_id == head.checkpoint_id
