@@ -133,8 +133,9 @@ class OfflineTransport:
 
 def live_gate():
     return (os.environ.get('STORY_TRIAL_APPROVAL') == APPROVAL
+            and os.environ.get('GITHUB_EVENT_NAME') == 'push'
             and os.environ.get('GITHUB_REF') == 'refs/heads/main'
-            and os.environ.get('GITHUB_REF_PROTECTED') == 'true'
+            and os.environ.get('GITHUB_ACTOR') == 'rua-den'
             and os.environ.get('GITHUB_RUN_ATTEMPT') == '1'
             and bool(os.environ.get('OLLAMA_API_KEY')))
 
@@ -242,7 +243,7 @@ def main():
     parser.add_argument('--report', type=Path)
     args = parser.parse_args()
     if args.live and not live_gate():
-        print('DENIED: protected main, first attempt, dated approval and credential required')
+        print('DENIED: owner push to main, first attempt, dated approval and credential required')
         return 2
     report = run_trial(live=args.live)
     encoded = json.dumps(report, ensure_ascii=False, indent=2)
