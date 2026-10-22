@@ -200,3 +200,38 @@ def test_does_not_treat_chapter_number_or_score_as_clock_time():
         [{"kind": "narration", "text": "Chương 157 tiếp tục với tỉ số 21-19."}],
         context,
     )
+
+
+
+def test_rejects_observable_player_emotion_described_possessively():
+    with pytest.raises(PlayerAgencyViolation):
+        validate_player_agency(
+            "**Lan đặt chiếc hộp xuống.**",
+            narration("Vy nhướng mày trước khuôn mặt đầy lo lắng của Lan."),
+            persona("Lan"),
+        )
+
+
+def test_rejects_direct_player_emotion_state_not_authored():
+    with pytest.raises(PlayerAgencyViolation):
+        validate_player_agency(
+            "**Lan đặt chiếc hộp xuống.**",
+            narration("Lan có vẻ bối rối trước câu hỏi."),
+            persona("Lan"),
+        )
+
+
+def test_allows_observable_player_emotion_when_player_authored_it():
+    validate_player_agency(
+        "**Lan lo lắng đặt chiếc hộp xuống.**",
+        narration("Khuôn mặt đầy lo lắng của Lan khiến Vy hạ giọng."),
+        persona("Lan"),
+    )
+
+
+def test_npc_emotion_description_does_not_trigger_player_guard():
+    validate_player_agency(
+        "**Lan đặt chiếc hộp xuống.**",
+        narration("Khuôn mặt đầy lo lắng của Vy thoáng dịu lại."),
+        persona("Lan"),
+    )
