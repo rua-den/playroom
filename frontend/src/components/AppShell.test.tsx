@@ -13,9 +13,84 @@ vi.mock("./MemoryLibrary", () => ({ MemoryLibrary: () => <textarea aria-label="M
 vi.mock("./SceneEditor", () => ({ SceneEditor: () => <input aria-label="Scene mock draft" /> }));
 vi.mock("./SettingsPanel", () => ({ SettingsPanel: () => <div data-testid="settings-panel" /> }));
 
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); window.history.replaceState(null, "", "/"); });
 
 describe("recoverable job summary", () => {
+  it("restores a story URL only when the authenticated catalog contains it", async () => {
+    window.history.replaceState(null, "", "/?story=url-story");
+    const projection = reviewProjection("cp", "url-story");
+    projection.import_review.required = false;
+    vi.spyOn(api, "listCampaigns").mockResolvedValue([projection.campaign]);
+    const detail = vi.spyOn(api, "getCampaign").mockResolvedValue({ ...projection.campaign, branch_id: "branch", state_version: 1, checkpoint_id: "cp", profiles: {} });
+    vi.spyOn(api, "getCampaignProjection").mockResolvedValue(projection);
+    const { unmount } = render(<AppShell owner={{ id: "url-owner", email: "url@example.test" }} onLogout={() => undefined} />);
+    expect(await screen.findByTestId("generation-composer")).toBeVisible();
+    expect(detail).toHaveBeenCalledWith("url-story");
+    unmount(); detail.mockClear();
+    window.history.replaceState(null, "", "/?story=someone-elses-story");
+    render(<AppShell owner={{ id: "another-url-owner", email: "url@example.test" }} onLogout={() => undefined} />);
+    await screen.findByRole("button", { name: "Mở truyện" });
+    expect(detail).not.toHaveBeenCalled();
+    expect(window.location.search).toBe("");
+  });
+
+  it("does not restore a previous authentication session from history", async () => {
+    window.history.replaceState(null, "", "/");
+    vi.spyOn(api, "listCampaigns").mockResolvedValue([]);
+    render(<AppShell owner={{ id: "new-history-owner", email: "new@example.test" }} onLogout={() => undefined} />);
+    await screen.findByRole("button", { name: "Cài đặt" });
+    const oldState = { playroom: { owner: "previous-owner", session: "previous-session", index: 9, view: { story: "private-story", details: true } } };
+    act(() => {
+      window.history.replaceState(oldState, "", "/?story=private-story");
+      window.dispatchEvent(new PopStateEvent("popstate", { state: oldState }));
+    });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(window.location.search).toBe("");
+    expect(window.history.state.playroom.owner).toBe("new-history-owner");
+  });
+
+  it("navigates back through panels to library and forward without losing drafts or hash anchors", async () => {
+    window.history.replaceState(null, "", "/");
+    const projection = reviewProjection("cp", "history-story");
+    projection.import_review.required = false;
+    vi.spyOn(api, "listCampaigns").mockResolvedValue([projection.campaign]);
+    vi.spyOn(api, "getCampaign").mockResolvedValue({ ...projection.campaign, branch_id: "branch", state_version: 1, checkpoint_id: "cp", profiles: {} });
+    vi.spyOn(api, "getCampaignProjection").mockResolvedValue(projection);
+    const user = userEvent.setup();
+    render(<AppShell owner={{ id: "history-owner", email: "history@example.test" }} onLogout={() => undefined} />);
+    await user.click(await screen.findByRole("button", { name: "Mở truyện" }));
+    await user.click(await screen.findByRole("button", { name: "Mở hồ sơ và ký ức" }));
+    await user.click(screen.getByRole("button", { name: "Ký ức" }));
+    await user.type(screen.getByLabelText("Memory mock draft"), "saved draft");
+    act(() => window.history.back());
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    act(() => window.history.forward());
+    expect(await screen.findByRole("dialog", { name: "Hồ sơ và ký ức" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Memory mock draft")).toHaveValue("saved draft");
+    act(() => window.history.back());
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Cài đặt" }));
+    act(() => { window.location.hash = "cost-settings"; });
+    await waitFor(() => expect(window.location.hash).toBe("#cost-settings"));
+    act(() => window.history.back());
+    await waitFor(() => expect(window.location.hash).toBe(""));
+    expect(screen.getByRole("dialog", { name: "Cài đặt" })).toBeInTheDocument();
+    act(() => window.history.back());
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    act(() => window.history.back());
+    expect(await screen.findByRole("button", { name: "Đọc tiếp" })).toBeInTheDocument();
+    act(() => window.history.forward());
+    await waitFor(() => expect(screen.getByTestId("generation-composer")).toBeVisible());
+    await user.click(screen.getByRole("button", { name: "Mở hồ sơ và ký ức" }));
+    await user.click(screen.getByRole("button", { name: "Đóng hồ sơ và ký ức" }));
+    await user.click(screen.getByRole("button", { name: "Mở hồ sơ và ký ức" }));
+    act(() => window.history.back());
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByTestId("generation-composer")).toBeVisible();
+    act(() => window.history.back());
+    expect(await screen.findByRole("button", { name: "Đọc tiếp" })).toBeInTheDocument();
+  });
+
   function reviewProjection(checkpoint = "checkpoint", campaign = "imported", branch = "branch", sourceConversationId?: string) {
     return { campaign: { id: campaign, title: campaign, created_at: "2026-01-01", updated_at: "2026-01-01", archived_at: null }, branch: { id: branch, name: "main", state_version: 1, checkpoint_id: checkpoint }, checkpoint: { id: checkpoint, state_version: 1, parent_checkpoint_id: null, selected_revision_ids: [], retrieval_policy: "auto" as const }, profiles: {}, scene: null, transcript: [], jobs: [], import_review: { required: true, approved: false, review: {}, source_conversation_id: sourceConversationId } };
   }
@@ -320,6 +395,14 @@ describe("auxiliary modal routes", () => {
     expect(screen.queryByText("Đã tạo truyện mới.")).not.toBeInTheDocument();
     resolveCreate(new Response(JSON.stringify({ id: "created-story", title: "Created story", branch_id: "created-branch", character_ids: [] }), { status: 200 }));
     expect(await screen.findByText("Đã tạo truyện mới.")).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "Mở hồ sơ và ký ức" }));
+    act(() => window.history.back());
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    act(() => window.history.back());
+    await screen.findByRole("button", { name: "Đọc tiếp" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    act(() => window.history.forward());
+    await waitFor(() => expect(screen.getByTestId("generation-composer")).toBeVisible());
     await user.click(screen.getByRole("button", { name: "Truyện và tác vụ" }));
     await user.click(await screen.findByRole("button", { name: "Tạo truyện mới" }));
     expect(screen.getByLabelText("Tên truyện")).toHaveValue("");

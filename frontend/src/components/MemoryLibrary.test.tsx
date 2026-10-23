@@ -5,6 +5,35 @@ import { MemoryLibrary } from "./MemoryLibrary";
 import { ToastProvider } from "./Toast";
 
 describe("MemoryLibrary", () => {
+  it("offers named audiences and readable summary turns while keeping source IDs", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<MemoryLibrary campaignId="campaign-1" branchId="branch-1" stateVersion={3} characters={[{ id: "char-1", name: "Mira" }]} sourceRevisionIds={["r1", "r2"]} sourceTurns={[{ revision_id: "r1", sequence: 7, action_text: "Open the garden gate" }, { revision_id: "r2", sequence: 8, action_text: "Light the lantern" }]} />);
+    await screen.findByText("Chưa có ký ức đã duyệt");
+    await user.selectOptions(screen.getByLabelText("Phạm vi kiến thức"), "known_by");
+    await user.click(screen.getByRole("checkbox", { name: "Mira" }));
+    await user.selectOptions(screen.getByLabelText("Loại"), "summary");
+    expect(screen.getAllByRole("option", { name: "Lượt 7 · Open the garden gate" })).toHaveLength(2);
+    await user.selectOptions(screen.getByLabelText("Revision bắt đầu"), "r1");
+    await user.selectOptions(screen.getByLabelText("Revision kết thúc"), "r2");
+    await user.type(screen.getByLabelText("Nội dung"), "Garden visit");
+    await user.click(screen.getByRole("button", { name: "Thêm ký ức" }));
+    expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toMatchObject({ known_by: ["char-1"], source_revision_ids: ["r1", "r2"] });
+  });
+
+  it("preserves unknown audience IDs when a memory is edited", async () => {
+    const item = { memory_id: "m1", id: "v1", version: 1, kind: "lore", text: "Secret", origin: "user", status: "approved", pinned: false, source_revision_ids: [], knowledge_scope: "known_by", known_by: ["missing-character"] };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 })).mockResolvedValueOnce(new Response(JSON.stringify([item]), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<MemoryLibrary campaignId="c" branchId="b" stateVersion={1} characters={[{ id: "char-1", name: "Mira" }]} />);
+    await user.click(await screen.findByRole("button", { name: "Sửa Secret" }));
+    expect(screen.getByRole("checkbox", { name: /Chưa có hồ sơ: missing-character/ })).toBeChecked();
+    await user.click(screen.getByRole("checkbox", { name: "Mira" }));
+    await user.click(screen.getByRole("button", { name: "Lưu chỉnh sửa" }));
+    expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toMatchObject({ known_by: ["missing-character", "char-1"] });
+  });
   it("keeps advanced metadata unique and collapsed until requested", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 })));
     render(<ToastProvider><MemoryLibrary campaignId="campaign-1" branchId="branch-1" stateVersion={3} /></ToastProvider>);
@@ -76,7 +105,7 @@ describe("MemoryLibrary", () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
-    render(<MemoryLibrary campaignId="campaign-1" branchId="branch-1" stateVersion={3} sourceRevisionIds={["r1", "r2", "r3"]} />);
+    render(<MemoryLibrary campaignId="campaign-1" branchId="branch-1" stateVersion={3} sourceRevisionIds={["r1", "r2", "r3"]} characters={[{ id: "char-1", name: "Mira" }]} />);
     await screen.findByText("Chưa có ký ức đã duyệt");
     await user.selectOptions(screen.getByLabelText("Loại"), "summary");
     await user.selectOptions(screen.getByLabelText("Revision bắt đầu"), "r3");
@@ -88,7 +117,7 @@ describe("MemoryLibrary", () => {
     await user.selectOptions(screen.getByLabelText("Revision bắt đầu"), "r1");
     await user.selectOptions(screen.getByLabelText("Revision kết thúc"), "r2");
     await user.selectOptions(screen.getByLabelText("Phạm vi kiến thức"), "known_by");
-    await user.type(screen.getByLabelText("Nhân vật biết (UUID)"), "char-1");
+    await user.click(screen.getByRole("checkbox", { name: "Mira" }));
     await user.click(screen.getByText("Thông tin nguồn và quan hệ nâng cao"));
     await user.type(screen.getByLabelText("Nhân vật liên quan (UUID)"), "char-2");
     await user.type(screen.getByLabelText("Chủ thể (UUID)"), "char-1");
@@ -110,12 +139,12 @@ describe("MemoryLibrary", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
-    const { rerender } = render(<ToastProvider><MemoryLibrary campaignId="campaign-1" branchId="branch-1" stateVersion={3} onConflict={conflict} /></ToastProvider>);
+    const { rerender } = render(<ToastProvider><MemoryLibrary campaignId="campaign-1" branchId="branch-1" stateVersion={3} onConflict={conflict} characters={[{ id: "char-1", name: "Mira" }]} /></ToastProvider>);
     await screen.findByText("Canon");
     await user.click(screen.getByRole("button", { name: "Sửa Canon" }));
     await user.clear(screen.getByLabelText("Nội dung Canon")); await user.type(screen.getByLabelText("Nội dung Canon"), "Đã sửa");
     await user.selectOptions(screen.getByLabelText("Phạm vi Canon"), "known_by");
-    await user.clear(screen.getByLabelText("Nhân vật biết Canon")); await user.type(screen.getByLabelText("Nhân vật biết Canon"), "char-1");
+    await user.click(screen.getByRole("checkbox", { name: "Mira" }));
     await user.clear(screen.getByLabelText("Nhân vật liên quan Canon")); await user.type(screen.getByLabelText("Nhân vật liên quan Canon"), "char-2");
     await user.clear(screen.getByLabelText("Chủ thể Canon")); await user.type(screen.getByLabelText("Chủ thể Canon"), "char-1");
     await user.clear(screen.getByLabelText("Predicate Canon")); await user.type(screen.getByLabelText("Predicate Canon"), "owns");
@@ -125,7 +154,7 @@ describe("MemoryLibrary", () => {
     await user.click(screen.getByRole("button", { name: "Lưu chỉnh sửa" }));
     expect(conflict).toHaveBeenCalled();
     expect(screen.getByLabelText("Nội dung Canon")).toHaveValue("Đã sửa");
-    rerender(<ToastProvider><MemoryLibrary campaignId="campaign-1" branchId="branch-1" stateVersion={4} onConflict={conflict} /></ToastProvider>);
+    rerender(<ToastProvider><MemoryLibrary campaignId="campaign-1" branchId="branch-1" stateVersion={4} onConflict={conflict} characters={[{ id: "char-1", name: "Mira" }]} /></ToastProvider>);
     await user.click(screen.getByRole("button", { name: "Lưu chỉnh sửa" }));
     expect(await screen.findByRole("status")).toHaveTextContent("Đã lưu chỉnh sửa ký ức.");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
