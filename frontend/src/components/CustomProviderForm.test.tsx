@@ -10,6 +10,24 @@ const saved = { ...profile, profile_hash: "hash" };
 function renderForm(initial?: ModelProfileSummary) { return render(<ToastProvider><CustomProviderForm profile={initial} onSaved={vi.fn()} /></ToastProvider>); }
 
 describe("CustomProviderForm", () => {
+  it("drops the retained credential when a failed first save is retried at another origin", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "cred-new", masked: "***" }), { status: 201 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "temporary" }), { status: 500 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(saved), { status: 201 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup(); renderForm();
+    await user.type(screen.getByLabelText("Endpoint URL"), "https://first.example.test/v1");
+    await user.type(screen.getByLabelText("Model ID"), "fixture");
+    await user.type(screen.getByLabelText("API key (optional)"), "fixture-secret");
+    await user.click(screen.getByRole("button", { name: "Lưu custom provider" }));
+    await screen.findByRole("alert");
+    await user.clear(screen.getByLabelText("Endpoint URL"));
+    await user.type(screen.getByLabelText("Endpoint URL"), "https://other.example.test/v1");
+    await user.click(screen.getByRole("button", { name: "Lưu custom provider" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(JSON.parse(fetchMock.mock.calls[2][1].body)).not.toHaveProperty("credential_id");
+  });
   it("saves only endpoint, model, and optional credential reference", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(saved), { status: 201 }));
     vi.stubGlobal("fetch", fetchMock);
