@@ -235,3 +235,41 @@ def test_npc_emotion_description_does_not_trigger_player_guard():
         narration("Khuôn mặt đầy lo lắng của Vy thoáng dịu lại."),
         persona("Lan"),
     )
+
+
+@pytest.mark.parametrize("text", [
+    "Vy nói với Lan, giọng đầy lo lắng.",
+    "Vy nhìn Lan, vẻ mặt đầy bối rối.",
+])
+def test_npc_emotion_after_player_object_is_not_player_state(text):
+    validate_player_agency("Ừ.", narration(text), persona("Lan"))
+
+
+@pytest.mark.parametrize("action,text", [
+    ("**Lan lo lắng.**", "Lan vui mừng."),
+    ("**Lan lo lắng.**", "Khuôn mặt đầy vui mừng của Lan."),
+    ("**Vy lo lắng nhìn Lan.**", "Khuôn mặt đầy lo lắng của Lan."),
+    ("**Lan nhìn Vy lo lắng.**", "Lan lo lắng."),
+    ("**Lan không lo lắng.**", "Lan lo lắng."),
+    ("**Vy gật đầu với Lan.**", "Lan gật đầu."),
+    ("**Vy đặt hộp rồi mỉm cười.**", "Lan mỉm cười."),
+    ("**Vy gật đầu và lo lắng.**", "Lan lo lắng."),
+    ("**Lan cảm thấy lo lắng.**", "Lan cảm thấy vui mừng."),
+])
+def test_only_player_authored_specific_state_or_action_is_authorized(action, text):
+    with pytest.raises(PlayerAgencyViolation):
+        validate_player_agency(action, narration(text), persona("Lan"))
+
+
+@pytest.mark.parametrize("action", ["**lo lắng**", "**Lan có vẻ lo lắng.**", "**Khuôn mặt đầy lo lắng của Lan.**"])
+def test_specific_player_emotion_can_be_repeated(action):
+    validate_player_agency(action, narration("Lan lo lắng."), persona("Lan"))
+
+
+@pytest.mark.parametrize("action", ["**Lan mở ngăn kéo và nhặt tờ giấy.**", "**nhặt tờ giấy**", "**Tôi nhặt tờ giấy.**", "**khẽ nhặt tờ giấy**"])
+def test_player_action_continuation_can_be_repeated(action):
+    validate_player_agency(action, narration("Lan nhặt tờ giấy."), persona("Lan"))
+
+
+def test_negated_observation_is_not_a_positive_emotion_claim():
+    validate_player_agency("Ừ.", narration("Lan có vẻ không lo lắng."), persona("Lan"))

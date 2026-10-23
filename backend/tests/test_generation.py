@@ -75,6 +75,32 @@ def test_generation_fails_before_candidate_when_narrator_steals_player_action(tm
         service.commit_candidate(owner.id, job["id"])
 
 
+@pytest.mark.parametrize("action,text,expected_status", [
+    ("**Player lo lắng.**", "Player vui mừng.", "failed"),
+    ("**Vy lo lắng nhìn Player.**", "Khuôn mặt đầy lo lắng của Player.", "failed"),
+    ("Ừ.", "Vy nói với Player, giọng đầy lo lắng.", "candidate"),
+    ("**Player lo lắng.**", "Khuôn mặt đầy lo lắng của Player.", "candidate"),
+])
+def test_specific_player_state_guard_controls_candidate_commit(tmp_path, action, text, expected_status):
+    import json
+
+    db, owner, campaign = _story(tmp_path)
+    profile = {**DEFAULT_PROFILE, "is_test_profile": False, "legacy_plain_output": False,
+               "native_structured_output": False, "supported_parameters": []}
+    service = GenerationService(db, FakeProvider([json.dumps({"segments": [{"kind": "narration", "text": text}]})]), profile=profile)
+    head = get_branch_head(db, campaign.id, campaign.initial_branch_id)
+    job = service.generate(owner.id, campaign.id, campaign.initial_branch_id, action,
+                           idempotency_key="specific-state", expected_checkpoint_id=head.checkpoint_id)
+    assert job["status"] == expected_status
+    if expected_status == "failed":
+        assert job["failure"]["code"] == "PLAYER_AGENCY_VIOLATION"
+        assert get_branch_head(db, campaign.id, campaign.initial_branch_id).checkpoint_id == head.checkpoint_id
+        with pytest.raises(Exception, match="complete candidate"):
+            service.commit_candidate(owner.id, job["id"])
+    else:
+        assert service.commit_candidate(owner.id, job["id"])["status"] == "committed"
+
+
 
 def test_generation_fails_before_candidate_when_npc_leaks_narrator_only_memory(tmp_path):
     db = connect(tmp_path / "knowledge-fence.sqlite3")
