@@ -43,6 +43,7 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
   const [trialPerSend, setTrialPerSend] = useState("");
   const [trialMaxJobs, setTrialMaxJobs] = useState("");
   const [trialExpiry, setTrialExpiry] = useState("");
+  const [trialExpiryError, setTrialExpiryError] = useState<string | null>(null);
   const [paidConsent, setPaidConsent] = useState(false);
   const [narratorBudget, setNarratorBudget] = useState(defaults);
   const [contextBudget, setContextBudget] = useState(defaults);
@@ -267,6 +268,12 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
     )
       return;
     if (pendingAction) return;
+    const expiry = new Date(trialExpiry);
+    if (!Number.isFinite(expiry.getTime()) || expiry.getTime() <= Date.now()) {
+      setTrialExpiryError("Chọn thời điểm hết hạn trong tương lai theo giờ địa phương.");
+      return;
+    }
+    setTrialExpiryError(null);
     setPendingAction("trial-approve");
     try {
       const result = await api.createPaidTrial({
@@ -275,7 +282,7 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
         total_cap_usd: trialTotal,
         per_send_cap_usd: trialPerSend,
         max_jobs: Number(trialMaxJobs),
-        expires_at: trialExpiry,
+        expires_at: expiry.toISOString(),
       });
       setTrial(result);
       setPaidConsent(false);
@@ -367,6 +374,25 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
         </div>
       )}
       <h2>Cài đặt provider</h2>
+      {settings && (
+        <p role="note" aria-label="Bước tiếp theo" className="details-meta">
+          <strong>Bước tiếp theo: </strong>
+          {!pinnedNarrator
+            ? profiles.length
+              ? "Chọn và lưu model narrator ở mục Model."
+              : provider === "custom"
+                ? "Lưu endpoint và model custom ở mục Kết nối; khóa API là tùy chọn."
+                : credentials.length
+                  ? "Xác minh model bằng khóa đã lưu ở mục Kết nối."
+                  : "Lưu khóa API ở mục Kết nối, sau đó xác minh model."
+            : settings.policy === "free_only" && !customNarrator &&
+                (pinnedNarrator.provider === "ollama" || pinnedNarrator.credential_tier !== "free")
+              ? "Free only đang chặn narrator đã lưu. Xem điều kiện chi phí trước khi quyết định cấp ngân sách."
+              : settings.policy === "capped_paid"
+                ? "Narrator đã lưu. Kiểm tra hạn mức phiên và chấp thuận ngân sách ở mục Chi phí; server kiểm tra điều kiện mỗi lượt Gửi."
+                : "Narrator đã lưu. Quay lại Chơi để kiểm tra điều kiện Gửi; server vẫn kiểm tra quyền, context và chi phí mỗi lượt."}
+        </p>
+      )}
       <nav className="settings-nav" aria-label="Mục cài đặt">
         <a href="#settings-connection">Kết nối</a>
         <a href="#settings-model">Model</a>
@@ -806,14 +832,18 @@ export function SettingsPanel({ demoMode = false }: { demoMode?: boolean }) {
                   value={trialMaxJobs}
                   onChange={(event) => setTrialMaxJobs(event.target.value)}
                 />
-                <label htmlFor="trial-expiry">Hết hạn (ISO UTC)</label>
+                <label htmlFor="trial-expiry">Hết hạn (giờ địa phương)</label>
                 <input
                   className="touch-target"
                   id="trial-expiry"
-                  placeholder="2026-10-15T12:00:00Z"
+                  type="datetime-local"
+                  aria-invalid={Boolean(trialExpiryError)}
+                  aria-describedby={trialExpiryError ? "trial-expiry-error" : "trial-expiry-help"}
                   value={trialExpiry}
-                  onChange={(event) => setTrialExpiry(event.target.value)}
+                  onChange={(event) => { setTrialExpiry(event.target.value); setTrialExpiryError(null); }}
                 />
+                <p id="trial-expiry-help" className="details-meta">Theo múi giờ thiết bị; tự chuyển sang UTC khi lưu.</p>
+                {trialExpiryError && <p id="trial-expiry-error" role="alert" className="form-error">{trialExpiryError}</p>}
                 <label htmlFor="trial-consent">
                   <input
                     className="touch-target"

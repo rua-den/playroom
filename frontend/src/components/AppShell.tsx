@@ -41,6 +41,8 @@ function StructuredFields({ data, profiles, idFields = [] }: { data: Record<stri
 interface AppShellProps { owner: Owner; onLogout: () => void; notice?: string | null; }
 type CharacterDraft = { id: string; name: string; aliases: string };
 type CreateDraft = { title: string; worldName: string; worldDescription: string; personaName: string; personaDescription: string; characters: CharacterDraft[] };
+type ShellLocation = { story: string | null; drawer: boolean; details: boolean; settings: boolean; model: boolean; create: boolean; import: boolean; importMode: "chatgpt" | "legacy"; deleteId: string | null };
+const libraryLocation: ShellLocation = { story: null, drawer: false, details: false, settings: false, model: false, create: false, import: false, importMode: "chatgpt", deleteId: null };
 
 const blankDraft = (): CreateDraft => ({ title: "", worldName: "", worldDescription: "", personaName: "", personaDescription: "", characters: [] });
 export function lastStoryStorageKey(ownerId: string) { return `playroom:last-story:${ownerId}`; }
@@ -85,6 +87,65 @@ function CampaignForm({ onCreated, onCancel, ariaHidden = false }: { onCreated: 
 function AppShellContent({ owner, onLogout, notice }: AppShellProps) {
   const [campaigns, setCampaigns] = useState<CampaignSummary[]>([]); const [trashedCampaigns, setTrashedCampaigns] = useState<CampaignSummary[]>([]); const [libraryMode, setLibraryMode] = useState<"active" | "trash">("active"); const [selectedId, setSelectedId] = useState<string | null>(null); const [projection, setProjection] = useState<CampaignProjection | null>(null); const [loading, setLoading] = useState(true); const [error, setError] = useState<string | null>(null); const [demoInfo, setDemoInfo] = useState<import("../api/types").DemoInfo | null>(null); const [createOpen, setCreateOpen] = useState(false); const [createInstance, setCreateInstance] = useState(0); const [importOpen, setImportOpen] = useState(false); const [importInstance, setImportInstance] = useState(0); const [libraryOpen, setLibraryOpen] = useState(true); const [importMode, setImportMode] = useState<"chatgpt" | "legacy">("chatgpt"); const [drawerOpen, setDrawerOpen] = useState(false); const [detailsOpen, setDetailsOpen] = useState(false); const [settingsOpen, setSettingsOpen] = useState(false); const [modelOpen, setModelOpen] = useState(false); const [deleteTarget, setDeleteTarget] = useState<CampaignSummary | null>(null); const [deletePending, setDeletePending] = useState(false); const [deleteError, setDeleteError] = useState<string | null>(null); const [editorTab, setEditorTab] = useState<"profiles" | "memory" | "scene">("profiles");
   const selectedIdRef = useRef<string | null>(selectedId); selectedIdRef.current = selectedId;
+  const navigationSession = useRef(newId());
+  const navigation = useRef<{ view: ShellLocation; index: number; hash: string } | null>(null);
+  const applyingNavigation = useRef(false);
+  const currentLocation: ShellLocation = { story: libraryOpen ? null : selectedId, drawer: drawerOpen, details: detailsOpen, settings: settingsOpen, model: modelOpen, create: createOpen, import: importOpen, importMode: importOpen ? importMode : "chatgpt", deleteId: deleteTarget?.id ?? null };
+  const locationKey = JSON.stringify(currentLocation);
+  useEffect(() => {
+    if (loading) return;
+    const write = (view: ShellLocation, index: number, replace: boolean) => {
+      const url = new URL(window.location.href);
+      if (view.story) url.searchParams.set("story", view.story); else url.searchParams.delete("story");
+      if (!view.settings) url.hash = "";
+      const state = { playroom: { session: navigationSession.current, owner: owner.id, index, view } };
+      window.history[replace ? "replaceState" : "pushState"](state, "", url);
+      navigation.current = { view, index, hash: url.hash };
+    };
+    if (!navigation.current) write(libraryLocation, 0, true);
+    if (applyingNavigation.current) { applyingNavigation.current = false; return; }
+    const previous = navigation.current!;
+    if (JSON.stringify(previous.view) === locationKey) return;
+    // Consuming a panel also replaces its entry when create/import opens a different story.
+    const closedPanel = ["drawer", "details", "settings", "model", "create", "import", "deleteId"].some((key) => previous.view[key as keyof ShellLocation] && !currentLocation[key as keyof ShellLocation]);
+    write(currentLocation, previous.index + (closedPanel ? 0 : 1), closedPanel);
+  }, [loading, locationKey, owner.id]);
+  useEffect(() => {
+    function onPop(event: PopStateEvent) {
+      const target = event.state?.playroom;
+      if (!target) return; // Native settings anchors do not change the open panel.
+      if (target.session !== navigationSession.current || target.owner !== owner.id) {
+        const url = new URL(window.location.href);
+        if (currentLocation.story) url.searchParams.set("story", currentLocation.story); else url.searchParams.delete("story");
+        url.hash = "";
+        window.history.replaceState({ playroom: { session: navigationSession.current, owner: owner.id, index: navigation.current?.index ?? 0, view: currentLocation } }, "", url);
+        return;
+      }
+      const view = target.view as ShellLocation;
+      if (view.story && !campaigns.some((campaign) => campaign.id === view.story)) return;
+      const previous = navigation.current;
+      if (previous && JSON.stringify(previous.view) === JSON.stringify(view) && previous.hash === window.location.hash && previous.index !== target.index) {
+        navigation.current = { ...previous, index: target.index };
+        window.history.go(target.index < previous.index ? -1 : 1);
+        return;
+      }
+      navigation.current = { view, index: target.index, hash: window.location.hash };
+      applyingNavigation.current = JSON.stringify(view) !== locationKey;
+      if (view.story) { selectedIdRef.current = view.story; setSelectedId(view.story); writeLastStoryId(owner.id, view.story); }
+      setLibraryOpen(!view.story); setDrawerOpen(view.drawer); setDetailsOpen(view.details); setSettingsOpen(view.settings); setModelOpen(view.model); setCreateOpen(view.create); setImportOpen(view.import); setImportMode(view.importMode); setDeleteTarget(campaigns.find((campaign) => campaign.id === view.deleteId) ?? null);
+    }
+    function onHash() {
+      if (!navigation.current) return;
+      if (!window.history.state?.playroom) {
+        const next = { ...navigation.current, index: navigation.current.index + 1, hash: window.location.hash };
+        window.history.replaceState({ playroom: { session: navigationSession.current, owner: owner.id, index: next.index, view: next.view } }, "");
+        navigation.current = next;
+      }
+    }
+    window.addEventListener("popstate", onPop);
+    window.addEventListener("hashchange", onHash);
+    return () => { window.removeEventListener("popstate", onPop); window.removeEventListener("hashchange", onHash); };
+  }, [campaigns, locationKey, owner.id]);
   const toast = useToast();
   const ownerRef = useRef(owner.id);
   const mountedRef = useRef(true);
@@ -93,7 +154,7 @@ function AppShellContent({ owner, onLogout, notice }: AppShellProps) {
   const projectionRequest = useRef(0);
   const catalogRequest = useRef(0);
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
-  useEffect(() => { const token = ++catalogRequest.current; const targetOwner = owner.id; setLoading(true); if (import.meta.env.PROD) api.getDemoInfo().then((info) => { if (mountedRef.current && ownerRef.current === targetOwner) setDemoInfo(info); }).catch(() => undefined); api.listCampaigns().then((items) => { if (mountedRef.current && ownerRef.current === targetOwner && catalogRequest.current === token) { const safeItems = Array.isArray(items) ? items : []; const remembered = readLastStoryId(targetOwner); const restored = remembered && safeItems.some((item) => item.id === remembered) ? remembered : null; selectedIdRef.current = restored; setCampaigns(safeItems); setSelectedId(restored); setLibraryOpen(!restored); } }).catch(() => { if (mountedRef.current && ownerRef.current === targetOwner && catalogRequest.current === token) setError("Không thể tải thư viện truyện."); }).finally(() => { if (mountedRef.current && ownerRef.current === targetOwner && catalogRequest.current === token) setLoading(false); }); return () => { catalogRequest.current += 1; }; }, [owner.id]);
+  useEffect(() => { const token = ++catalogRequest.current; const targetOwner = owner.id; setLoading(true); if (import.meta.env.PROD) api.getDemoInfo().then((info) => { if (mountedRef.current && ownerRef.current === targetOwner) setDemoInfo(info); }).catch(() => undefined); api.listCampaigns().then((items) => { if (mountedRef.current && ownerRef.current === targetOwner && catalogRequest.current === token) { const safeItems = Array.isArray(items) ? items : []; const requested = new URL(window.location.href).searchParams.get("story"); const remembered = requested && safeItems.some((item) => item.id === requested) ? requested : readLastStoryId(targetOwner); const restored = remembered && safeItems.some((item) => item.id === remembered) ? remembered : null; selectedIdRef.current = restored; setCampaigns(safeItems); setSelectedId(restored); setLibraryOpen(!restored); } }).catch(() => { if (mountedRef.current && ownerRef.current === targetOwner && catalogRequest.current === token) setError("Không thể tải thư viện truyện."); }).finally(() => { if (mountedRef.current && ownerRef.current === targetOwner && catalogRequest.current === token) setLoading(false); }); return () => { catalogRequest.current += 1; }; }, [owner.id]);
   useEffect(() => { const targetId = selectedId; const requestId = ++projectionRequest.current; if (!targetId) { setProjection(null); return; } setProjection(null); setError(null); api.getCampaign(targetId).then((detail) => { if (!mountedRef.current || selectedIdRef.current !== targetId || projectionRequest.current !== requestId) return null; return api.getCampaignProjection(targetId, detail.branch_id); }).then((next) => { if (next && mountedRef.current && selectedIdRef.current === targetId && projectionRequest.current === requestId) setProjection(next); }).catch(() => { if (mountedRef.current && selectedIdRef.current === targetId && projectionRequest.current === requestId) setError("Không thể tải truyện này."); }); return () => { projectionRequest.current += 1; }; }, [selectedId]);
   const trashRequest = useRef(0);
   const [trashLoading, setTrashLoading] = useState(false);
@@ -302,7 +363,7 @@ function ContextPanel({ projection, editorTab, setEditorTab, editorChanged }: { 
     </div>
     {recoverableJobCount(projection.jobs) > 0 && <p className="details-meta">{recoverableJobSummary(recoverableJobCount(projection.jobs))}</p>}
     {mountedTabs.includes("profiles") && <div hidden={!tabVisible("profiles")} aria-hidden={!tabVisible("profiles")}><ProfileEditor campaignId={projection.campaign.id} branchId={projection.branch.id} stateVersion={projection.branch.state_version} profiles={projection.profiles} onSaved={editorChanged} onConflict={editorChanged} /></div>}
-    {mountedTabs.includes("memory") && <div hidden={!tabVisible("memory")} aria-hidden={!tabVisible("memory")}><MemoryLibrary campaignId={projection.campaign.id} branchId={projection.branch.id} stateVersion={projection.branch.state_version} sourceRevisionIds={projection.transcript.map((turn) => turn.revision_id)} retrievalPolicy={projection.checkpoint.retrieval_policy} onChanged={editorChanged} onConflict={editorChanged} /></div>}
+    {mountedTabs.includes("memory") && <div hidden={!tabVisible("memory")} aria-hidden={!tabVisible("memory")}><MemoryLibrary campaignId={projection.campaign.id} branchId={projection.branch.id} stateVersion={projection.branch.state_version} sourceRevisionIds={projection.transcript.map((turn) => turn.revision_id)} sourceTurns={projection.transcript} characters={Object.entries(projection.profiles).filter(([key, profile]) => key.startsWith("character:") || profile.kind === "character" || profile.kind === "persona").map(([key, profile]) => ({ id: String(profile.data.id ?? (key.startsWith("character:") ? key.slice(10) : "")), name: String(profile.data.name ?? "Nhân vật") })).filter((character) => character.id)} retrievalPolicy={projection.checkpoint.retrieval_policy} onChanged={editorChanged} onConflict={editorChanged} /></div>}
     {mountedTabs.includes("scene") && <div hidden={!tabVisible("scene")} aria-hidden={!tabVisible("scene")}><SceneEditor campaignId={projection.campaign.id} branchId={projection.branch.id} stateVersion={projection.branch.state_version} onSaved={editorChanged} onConflict={editorChanged} characters={Object.entries(projection.profiles).filter(([key]) => key.startsWith("character:")).map(([, profile]) => ({ id: String(profile.data.id ?? ""), name: String(profile.data.name ?? "Nhân vật") }))} /></div>}
   </>;
 }

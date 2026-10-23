@@ -15,20 +15,21 @@ export function CustomProviderForm({
   const [model, setModel] = useState("");
   const [key, setKey] = useState("");
   const [credentialId, setCredentialId] = useState("");
+  const [credentialEndpoint, setCredentialEndpoint] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const savedEndpoint = profile?.endpoint;
   useEffect(() => {
     if (profile) {
       setEndpoint(profile.endpoint ?? "");
       setModel(profile.model);
       setCredentialId(profile.secret_version ?? "");
+      setCredentialEndpoint(profile.endpoint ?? "");
     }
   }, [profile?.id, profile?.version]);
   function changeEndpoint(value: string) {
-    if (savedEndpoint) {
+    if (credentialEndpoint) {
       try {
-        if (new URL(savedEndpoint).origin !== new URL(value).origin)
+        if (new URL(credentialEndpoint).origin !== new URL(value).origin)
           setCredentialId("");
       } catch {
         /* incomplete input is validated by the server */
@@ -45,6 +46,7 @@ export function CustomProviderForm({
       if (key.trim()) {
         selected = (await api.addCredential(key.trim())).id;
         setCredentialId(selected);
+        setCredentialEndpoint(endpoint.trim());
         setKey("");
       }
       const profile = await api.createCustomProfile({

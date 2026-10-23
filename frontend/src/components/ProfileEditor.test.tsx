@@ -7,6 +7,39 @@ import { ToastProvider } from "./Toast";
 const base = { branchId: "branch-1", stateVersion: 4, campaignId: "campaign-1" };
 
 describe("ProfileEditor", () => {
+  it("edits story guidance and roundtrips structured metadata without flattening it", async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ state_version: 5, checkpoint_id: "cp" }), { status: 200 })));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    const character = { id: "vy", name: "Vy", voice: "Câu ngắn", traits: ["Trực tính", "Tinh ý"], knowledge: "Biết tờ giấy xanh", metadata: { source: "approved" } };
+    const { unmount } = render(<ProfileEditor {...base} profiles={{ "character:vy": { kind: "character", data: character }, style: { kind: "style", data: { custom: "Đời thường" } } }} />);
+    expect(screen.getByLabelText("Tính cách nhân vật Vy")).toHaveValue("Trực tính\nTinh ý");
+    for (const [label, value] of [["Giọng nói nhân vật Vy", "Câu ngắn, tự nhiên"], ["Tính cách nhân vật Vy", "Thẳng thắn\nHay đùa"], ["Kiến thức nhân vật Vy", "Chỉ biết tờ giấy xanh"], ["Hướng dẫn phong cách riêng", "Ưu tiên thoại cá tính"]]) {
+      await user.clear(screen.getByLabelText(label));
+      await user.type(screen.getByLabelText(label), value);
+    }
+    await user.click(screen.getByRole("button", { name: "Lưu nhân vật Vy" }));
+    await user.click(screen.getByRole("button", { name: "Lưu style" }));
+    const saved = JSON.parse(fetchMock.mock.calls[0][1].body).data;
+    expect(saved).toEqual({ ...character, aliases: [], voice: "Câu ngắn, tự nhiên", traits: ["Thẳng thắn", "Hay đùa"], knowledge: "Chỉ biết tờ giấy xanh" });
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).data.custom).toBe("Ưu tiên thoại cá tính");
+    unmount();
+    render(<ProfileEditor {...base} profiles={{ "character:vy": { kind: "character", data: saved } }} />);
+    expect(screen.getByLabelText("Tính cách nhân vật Vy")).toHaveValue("Thẳng thắn\nHay đùa");
+    expect(screen.getByLabelText("Giọng nói nhân vật Vy")).toHaveValue("Câu ngắn, tự nhiên");
+  });
+
+  it("preserves imported structured guidance when saving another field", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ state_version: 5, checkpoint_id: "cp" }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    const data = { id: "vy", name: "Vy", traits: { core: ["Tinh ý"] }, knowledge: { facts: ["A"], source: "B" }, voice: ["Câu ngắn", "Tự nhiên"] };
+    render(<ProfileEditor {...base} profiles={{ "character:vy": { kind: "character", data } }} />);
+    expect(screen.getByText(/Kiến thức nhân vật Vy.*cấu trúc/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Lưu nhân vật Vy" }));
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).data).toMatchObject(data);
+  });
+
   it("shows save success only after the server acknowledgement", async () => {
     let resolveSave!: (response: Response) => void;
     const save = new Promise<Response>((resolve) => { resolveSave = resolve; });

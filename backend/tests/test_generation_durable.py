@@ -636,6 +636,74 @@ def _http_login(client, owner):
     assert response.status_code == 200, response.text
 
 
+def test_21_turn_app_state_continuity_with_summary_scene_and_recovery(tmp_path):
+    """State continuity with synthetic output; this is not a semantic quality score."""
+    db, owner, campaign = _story(tmp_path)
+    provider = FakeProvider([f"Synthetic result {index}." for index in range(21)])
+    app = create_app(database_url=str(tmp_path / "durable.sqlite3"), allowed_hosts={"testserver"},
+                     secure_cookies=False, generation_provider=provider, credential_root=tmp_path / "secrets")
+    base = f"/api/campaigns/{campaign.id}"
+    branch = campaign.initial_branch_id
+    headers = {"origin": "https://testserver"}
+    scene_id = str(uuid4())
+    summary_id = None
+    covered_revisions = []
+    with TestClient(app, base_url="https://testserver") as client:
+        _http_login(client, owner)
+        for index in range(21):
+            projection = client.get(base + "/projection", params={"branch_id": branch}).json()
+            if index == 10:
+                covered_revisions = [turn["revision_id"] for turn in projection["transcript"][:8]]
+                summary = client.post(base + "/memory", headers=headers, json={
+                    "branch_id": branch, "expected_state_version": projection["branch"]["state_version"],
+                    "kind": "summary", "text": "Approved synthetic continuity anchor: the blue box remains sealed.",
+                    "source_revision_ids": covered_revisions,
+                })
+                assert summary.status_code == 201, summary.text
+                assert summary.json()["status"] == "approved"
+                summary_id = summary.json()["memory_id"]
+                projection = client.get(base + "/projection", params={"branch_id": branch}).json()
+                scene = client.put(base + "/scene", headers=headers, json={
+                    "branch_id": branch, "expected_state_version": projection["branch"]["state_version"],
+                    "scene_state": {"focus_scene_id": scene_id, "scenes": [
+                        {"id": scene_id, "location": "Synthetic courtyard", "present_ids": []},
+                    ]},
+                })
+                assert scene.status_code == 200, scene.text
+                projection = client.get(base + "/projection", params={"branch_id": branch}).json()
+            body = {"branch_id": branch, "action": f"Continue synthetic turn {index}.",
+                    "idempotency_key": f"continuity-{index}", "checkpoint_id": projection["checkpoint"]["id"]}
+            response = client.post(base + "/generate", json=body, headers=headers)
+            assert response.status_code == 201, response.text
+            job_id = response.json()["id"]
+            deadline = time.monotonic() + 5
+            while True:
+                current = client.get("/api/generation/jobs/by-key", params={"branch_id": branch, "idempotency_key": body["idempotency_key"]}).json()
+                assert current["id"] == job_id
+                if current["status"] not in {"queued", "running"} or time.monotonic() >= deadline:
+                    break
+                time.sleep(0.01)
+            assert current["status"] == "candidate", current.get("failure")
+            replay = client.post(base + "/generate", json=body, headers=headers)
+            assert replay.status_code == 201 and replay.json()["id"] == job_id
+            if summary_id:
+                preview = json.loads(current["final_context_json"])
+                assert preview["replacement_map"] == {revision: summary_id for revision in covered_revisions}
+                assert summary_id in preview["summary_ids"]
+                assert preview["scene"]["scenes"][scene_id]["location"] == "Synthetic courtyard"
+                assert any(block["id"] == summary_id and block["mandatory"] for block in preview["blocks"])
+            committed = client.post(f"/api/generation/jobs/{job_id}/commit", headers=headers)
+            assert committed.status_code == 200, committed.text
+            assert committed.json()["status"] == "committed"
+            assert len(provider.calls) == index + 1
+        final = client.get(base + "/projection", params={"branch_id": branch}).json()
+        assert len(final["transcript"]) == 21
+        assert [turn["narrative_text"] for turn in final["transcript"]] == [f"Synthetic result {index}." for index in range(21)]
+        assert len({turn["revision_id"] for turn in final["transcript"]}) == 21
+        assert final["checkpoint"]["id"] != projection["checkpoint"]["id"]
+    db.close()
+
+
 def test_http_cancel_blocking_director_cannot_save_late_context(tmp_path):
     db, owner, campaign = _story(tmp_path)
     database = tmp_path / "durable.sqlite3"

@@ -106,16 +106,30 @@ def _contains_phrase(value: str, phrase: str) -> bool:
     return re.search(r"(?<!\w)" + re.escape(phrase) + r"(?!\w)", value) is not None
 
 
-def _authorized_rules(action_text: str) -> set[str]:
-    action_segments = [
-        _normalize(segment.get("text", ""))
-        for segment in parse_player_input(action_text)
-        if segment.get("kind") == "action" and segment.get("text", "").strip()
-    ]
+def _authorized_rules(action_text: str, aliases: Sequence[str]) -> set[str]:
     authorized: set[str] = set()
-    for name, variants in _NORMALIZED_RULES:
-        if any(_contains_phrase(action, variant) for action in action_segments for variant in variants):
-            authorized.add(name)
+    action_aliases = [*aliases, "toi", "to", "minh"]
+    for segment in parse_player_input(action_text):
+        if segment.get("kind") != "action":
+            continue
+        for sentence in re.split(r"[.!?;\n]+", _normalize(segment.get("text", ""))):
+            player_subject = True  # An action span may start with an implicit player subject.
+            for clause in re.split(r"\b(?:va|roi)\b", sentence):
+                rest = _subject_remainder(clause, action_aliases)
+                if rest is not None:
+                    player_subject = True
+                else:
+                    rest = _subject_remainder("implicit " + clause, ["implicit"]) or ""
+                rules = {
+                    name for name, variants in _NORMALIZED_RULES
+                    if any(rest == variant or rest.startswith(variant + " ") for variant in variants)
+                }
+                emotions = _player_emotions(clause, action_aliases, implicit=player_subject)
+                if player_subject:
+                    authorized.update(rules - {"emotion_state"})
+                    authorized.update(emotions)
+                if not rules and not emotions:
+                    player_subject = False
     return authorized
 
 
@@ -157,19 +171,27 @@ def _subject_remainder(clause: str, aliases: Sequence[str]) -> str | None:
     return None
 
 
-def _contains_player_emotion_claim(clause: str, aliases: Sequence[str]) -> bool:
+def _player_emotions(clause: str, aliases: Sequence[str], *, implicit: bool = False) -> set[str]:
     value = _normalize(clause)
-    state = "(?:" + "|".join(re.escape(item) for item in _EMOTION_STATE_VARIANTS) + ")"
+    state = "(" + "|".join(re.escape(item) for item in _EMOTION_STATE_VARIANTS) + ")"
     feature = r"(?:khuon mat|ve mat|net mat|anh mat|giong noi)"
+    claimed: set[str] = set()
+    rest = _subject_remainder(clause, aliases)
+    if rest is None and implicit:
+        rest = value
+    if rest:
+        match = re.match(rf"^(?:(?:co ve|trong|to ra|cam thay)\s+)?{state}\b", rest)
+        if match:
+            claimed.add(match.group(1))
     for alias in aliases:
+        # Require explicit ownership; a nearby player name may be an NPC's object.
         patterns = (
-            rf"{feature}.{{0,48}}\b{state}\b.{{0,24}}\bcua\s+{re.escape(alias)}\b",
-            rf"{feature}\s+{re.escape(alias)}\b.{{0,48}}\b{state}\b",
-            rf"\b{re.escape(alias)}\b.{{0,24}}\b(?:co ve|trong|to ra|day)\s+{state}\b",
+            rf"\b{feature}\s+(?:day\s+)?{state}\s+cua\s+{re.escape(alias)}\b",
+            rf"\b{feature}\s+(?:cua\s+)?{re.escape(alias)}\s+(?:day\s+)?{state}\b",
         )
-        if any(re.search(pattern, value) is not None for pattern in patterns):
-            return True
-    return False
+        for pattern in patterns:
+            claimed.update(re.findall(pattern, value))
+    return claimed
 
 
 def validate_player_agency(
@@ -187,7 +209,7 @@ def validate_player_agency(
     aliases = _aliases(persona)
     if not aliases:
         return
-    authorized = _authorized_rules(action_text)
+    authorized = _authorized_rules(action_text, aliases)
     for segment in segments:
         if not isinstance(segment, Mapping) or segment.get("kind") != "narration":
             continue
@@ -195,7 +217,7 @@ def validate_player_agency(
         if not isinstance(text, str):
             continue
         for clause in re.split(r"[.!?;\n]+", text):
-            if "emotion_state" not in authorized and _contains_player_emotion_claim(clause, aliases):
+            if _player_emotions(clause, aliases) - authorized:
                 raise PlayerAgencyViolation(
                     "Narrator attempted to author a new observable emotion for the player persona"
                 )
@@ -203,7 +225,7 @@ def validate_player_agency(
             if not rest or any(rest.startswith(prefix) for prefix in _NORMALIZED_NEGATIONS):
                 continue
             for name, variants in _NORMALIZED_RULES:
-                if name in authorized:
+                if name == "emotion_state" or name in authorized:
                     continue
                 if any(rest == variant or rest.startswith(variant + " ") for variant in variants):
                     raise PlayerAgencyViolation(

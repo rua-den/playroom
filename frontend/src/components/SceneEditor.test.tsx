@@ -1,10 +1,45 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { SceneEditor } from "./SceneEditor";
 import { ToastProvider } from "./Toast";
 
 describe("SceneEditor", () => {
+  it("blocks empty saves and editing until the initial scene arrives", async () => {
+    let resolve!: (response: Response) => void;
+    const fetchMock = vi.fn().mockReturnValue(new Promise<Response>((r) => { resolve = r; }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<SceneEditor campaignId="c" branchId="b" stateVersion={1} />);
+    expect(screen.getByRole("button", { name: "Lưu cảnh" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Thêm cảnh" })).toBeDisabled();
+    expect(screen.getByText("Đang tải bản đồ cảnh…")).toBeInTheDocument();
+    await act(async () => resolve(new Response(JSON.stringify({ focus_scene_id: "s", scenes: { s: { id: "s", name: "Saved", present_ids: [] } } }))));
+    expect(await screen.findByDisplayValue("Saved")).toBeEnabled();
+  });
+
+  it("keeps editing blocked after load failure and provides a retry", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ focus_scene_id: null, scenes: {} }))));
+    const user = userEvent.setup();
+    render(<SceneEditor campaignId="c" branchId="b" stateVersion={1} />);
+    await screen.findByRole("alert");
+    expect(screen.getByRole("button", { name: "Lưu cảnh" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Thử tải lại cảnh" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Thêm cảnh" })).toBeEnabled());
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("ignores a stale branch response after the new branch draft is edited", async () => {
+    let resolve!: (response: Response) => void;
+    vi.stubGlobal("fetch", vi.fn().mockReturnValueOnce(new Promise<Response>((r) => { resolve = r; }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ focus_scene_id: "s", scenes: { s: { id: "s", name: "New branch", present_ids: [] } } }))));
+    const user = userEvent.setup();
+    const view = render(<SceneEditor campaignId="c" branchId="old" stateVersion={1} />);
+    view.rerender(<SceneEditor campaignId="c" branchId="new" stateVersion={2} />);
+    await user.type(await screen.findByDisplayValue("New branch"), " draft");
+    await act(async () => resolve(new Response(JSON.stringify({ focus_scene_id: null, scenes: {} }))));
+    expect(screen.getByDisplayValue("New branch draft")).toBeInTheDocument();
+  });
   it("guides an empty scene map and makes the current-scene label tappable", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ focus_scene_id: null, scenes: {} }), { status: 200 })));
     const user = userEvent.setup();

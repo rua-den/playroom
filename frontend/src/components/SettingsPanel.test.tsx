@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { SettingsPanel } from "./SettingsPanel";
@@ -315,13 +315,13 @@ it("requires explicit consent and separates cumulative grant from per-send setti
   await user.type(screen.getByLabelText("Tối đa mỗi lượt (USD)"), "0.01");
   await user.clear(screen.getByLabelText("Số lượt Send tối đa"));
   await user.type(screen.getByLabelText("Số lượt Send tối đa"), "2");
-  await user.type(screen.getByLabelText("Hết hạn (ISO UTC)"), "2026-10-15T12:00:00Z");
+  fireEvent.change(screen.getByLabelText("Hết hạn (giờ địa phương)"), { target: { value: "2099-10-15T12:00" } });
   expect(approve).toBeDisabled();
   await user.click(screen.getByLabelText(/Tôi chấp thuận hạn mức phiên trả phí/));
   await user.click(approve);
   await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/provider/trials", expect.objectContaining({ method: "POST" })));
   const sent = JSON.parse(String(fetchMock.mock.calls[3][1].body));
-  expect(sent).toMatchObject({ profile_id: "ollama-paid", profile_version: 2, total_cap_usd: "0.02", per_send_cap_usd: "0.01", max_jobs: 2, expires_at: "2026-10-15T12:00:00Z" });
+  expect(sent).toMatchObject({ profile_id: "ollama-paid", profile_version: 2, total_cap_usd: "0.02", per_send_cap_usd: "0.01", max_jobs: 2, expires_at: new Date("2099-10-15T12:00").toISOString() });
   expect(await screen.findByText(/Trạng thái: active.*còn 0.02 USD/)).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Thu hồi phiên trả phí" }));
   await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/provider/trials/trial-one/revoke", expect.objectContaining({ method: "POST" })));
