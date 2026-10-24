@@ -28,7 +28,7 @@ _RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("smile", ("mỉm cười", "nở nụ cười", "cười")),
     ("sigh", ("thở dài",)),
     ("feel", ("cảm thấy",)),
-    ("emotion_state", ("lo lắng", "bối rối", "ngạc nhiên", "sợ hãi", "tức giận", "vui mừng", "buồn bã", "căng thẳng", "hồi hộp", "xấu hổ", "ngượng ngùng", "hoảng hốt", "bất an")),
+    ("emotion_state", ("lo lắng", "bối rối", "ngạc nhiên", "sợ hãi", "tức giận", "vui mừng", "buồn bã", "căng thẳng", "hồi hộp", "xấu hổ", "ngượng ngùng", "hoảng hốt", "bất an", "phân vân")),
     ("decide", ("quyết định",)),
     ("think", ("nghĩ thầm", "thầm nghĩ", "tự nhủ")),
     ("remember", ("chợt nhớ",)),
@@ -93,7 +93,7 @@ _NORMALIZED_NEGATIONS = tuple(_normalize(value) for value in _NEGATIONS)
 
 _EMOTION_STATE_VARIANTS = tuple(
     _normalize(value)
-    for value in ("lo lắng", "bối rối", "ngạc nhiên", "sợ hãi", "tức giận", "vui mừng", "buồn bã", "căng thẳng", "hồi hộp", "xấu hổ", "ngượng ngùng", "hoảng hốt", "bất an")
+    for name, variants in _RULES if name == "emotion_state" for value in variants
 )
 
 _NORMALIZED_RULES = tuple(
@@ -180,14 +180,14 @@ def _player_emotions(clause: str, aliases: Sequence[str], *, implicit: bool = Fa
     if rest is None and implicit:
         rest = value
     if rest:
-        match = re.match(rf"^(?:(?:co ve|trong|to ra|cam thay)\s+)?{state}\b", rest)
+        match = re.match(rf"^(?:(?:co ve|trong|to ra|cam thay)\s+)?(?:dang\s+)?{state}\b", rest)
         if match:
             claimed.add(match.group(1))
     for alias in aliases:
         # Require explicit ownership; a nearby player name may be an NPC's object.
         patterns = (
-            rf"\b{feature}\s+(?:day\s+)?{state}\s+cua\s+{re.escape(alias)}\b",
-            rf"\b{feature}\s+(?:cua\s+)?{re.escape(alias)}\s+(?:day\s+)?{state}\b",
+            rf"\b{feature}\s+(?:dang\s+)?(?:day\s+)?{state}\s+cua\s+{re.escape(alias)}\b",
+            rf"\b{feature}\s+(?:cua\s+)?{re.escape(alias)}\s+(?:dang\s+)?(?:day\s+)?{state}\b",
         )
         for pattern in patterns:
             claimed.update(re.findall(pattern, value))

@@ -69,6 +69,8 @@ def test_ollama_narrator_prompt_always_demands_attributed_json_without_native_sc
     assert 'Return exactly one JSON object with a "segments" array' in prompt
     assert '"kind": "narration"' in prompt
     assert '"kind": "dialogue"' in prompt
+    assert 'copy the exact character_id/profile_version_id pair from selected_characters byte-for-byte' in prompt
+    assert 'Never shorten, reformat, or invent IDs' in prompt
     assert "when structured roleplay output is enabled" not in prompt
     assert "schema" not in request
     assert request["messages"][1]["content"].find(yuna_id) >= 0
@@ -206,6 +208,19 @@ def test_mocked_ollama_invalid_outputs_cannot_create_candidate_or_turn(tmp_path,
     assert len(calls) == 1
     assert get_branch_head(db, campaign.id, campaign.initial_branch_id, owner.id).checkpoint_id == head.checkpoint_id
     assert db.execute("SELECT COUNT(*) FROM turns WHERE campaign_id=?", (campaign.id,)).fetchone()[0] == 0
+
+
+def test_shortened_character_id_with_correct_profile_version_is_rejected(tmp_path, monkeypatch):
+    ids = iter(['00000000-0000-4000-8000-000000000001', str(uuid4())])
+    monkeypatch.setattr('test_ollama_narrator_contract.uuid4', lambda: next(ids))
+    db, owner, campaign, head, _, service, job, calls = _run_mocked_narrator(
+        tmp_path, lambda cid, vid: _stream_response(_valid_segments('00000000-0000-4000-8000-0000000001', vid)), key="shortened-id",
+    )
+    assert job["status"] == "failed" and job["failure"]["code"] == "SCHEMA_INVALID"
+    assert len(calls) == 1
+    assert get_branch_head(db, campaign.id, campaign.initial_branch_id, owner.id).checkpoint_id == head.checkpoint_id
+    with pytest.raises(Exception, match="complete candidate"):
+        service.commit_candidate(owner.id, job["id"])
 
 
 @pytest.mark.parametrize(

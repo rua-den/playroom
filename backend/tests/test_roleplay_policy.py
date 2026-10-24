@@ -273,3 +273,25 @@ def test_player_action_continuation_can_be_repeated(action):
 
 def test_negated_observation_is_not_a_positive_emotion_claim():
     validate_player_agency("Ừ.", narration("Lan có vẻ không lo lắng."), persona("Lan"))
+
+
+@pytest.mark.parametrize("feature", ["khuôn mặt", "vẻ mặt", "ánh mắt"])
+@pytest.mark.parametrize("state", ["đang phân vân", "đang lo lắng", "phân vân"])
+def test_attributive_player_state_requires_explicit_authorization(feature, state):
+    action = "**Lan gấp tờ giấy xanh làm đôi.** Vy, giấu Bình như vậy có công bằng không?"
+    with pytest.raises(PlayerAgencyViolation):
+        validate_player_agency(action, narration(f"Vy nhìn tờ giấy vừa bị gấp làm đôi, rồi nhìn sang {feature} {state} của Lan."), persona("Lan"))
+
+
+@pytest.mark.parametrize("text", [
+    "Vy nhìn Lan, khuôn mặt đang phân vân.",
+    "Lan đứng cạnh khuôn mặt đang phân vân của Vy.",
+    "Vy nhìn tờ giấy vừa bị gấp làm đôi của Lan.",
+])
+def test_npc_states_and_observed_player_objects_remain_allowed(text):
+    validate_player_agency("**Lan gấp tờ giấy xanh làm đôi.**", narration(text), persona("Lan"))
+
+
+def test_explicit_player_state_can_be_repeated_attributively():
+    validate_player_agency("**Lan đang phân vân.**", narration("Vy nhìn khuôn mặt đang phân vân của Lan."), persona("Lan"))
+    validate_player_agency("**Ánh mắt đang phân vân của Lan.**", narration("Lan phân vân."), persona("Lan"))

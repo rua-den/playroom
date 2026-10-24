@@ -77,6 +77,7 @@ def test_generation_fails_before_candidate_when_narrator_steals_player_action(tm
 
 @pytest.mark.parametrize("action,text,expected_status", [
     ("**Player lo lắng.**", "Player vui mừng.", "failed"),
+    ("**Player gấp tờ giấy xanh làm đôi.** Vy, giấu Bình có công bằng không?", "Vy nhìn khuôn mặt đang phân vân của Player.", "failed"),
     ("**Vy lo lắng nhìn Player.**", "Khuôn mặt đầy lo lắng của Player.", "failed"),
     ("Ừ.", "Vy nói với Player, giọng đầy lo lắng.", "candidate"),
     ("**Player lo lắng.**", "Khuôn mặt đầy lo lắng của Player.", "candidate"),
