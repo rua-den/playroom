@@ -4,7 +4,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { lastStoryStorageKey, recoverableJobCount, recoverableJobSummary } from "./AppShell";
 import { AppShell, ImportReviewPanel } from "./AppShell";
-import { api } from "../api/client";
+import { api, ApiError } from "../api/client";
 import type { CampaignProjection, CampaignSummary } from "../api/types";
 
 vi.mock("./GenerationComposer", () => ({ GenerationComposer: () => <div data-testid="generation-composer"><textarea aria-label="Synthetic unsent draft" /></div> }));
@@ -99,6 +99,94 @@ describe("recoverable job summary", () => {
     vi.spyOn(api, "listMemory").mockResolvedValue([]);
     vi.spyOn(api, "getScene").mockResolvedValue({ focus_scene_id: null, scenes: {} });
   }
+
+  function branchStory() {
+    const base: CampaignProjection = {
+      campaign: { id: "campaign-branch", title: "Chuyện nhánh", created_at: "2026-01-01", updated_at: "2026-01-01", archived_at: null },
+      branch: { id: "branch-main", name: "main", state_version: 2, checkpoint_id: "branch-main-head" },
+      checkpoint: { id: "branch-main-head", state_version: 2, parent_checkpoint_id: null, selected_revision_ids: [], retrieval_policy: "auto" as const },
+      profiles: {}, scene: null,
+      transcript: [
+        { revision_id: "revision-1", turn_id: "turn-1", turn_branch_id: "branch-main", turn_checkpoint_id: "commit-1", sequence: 1, action_text: "Mở hộp", revision: 1, narrative_text: "Tờ giấy xanh nằm trong hộp.", complete: true, selected: true },
+        { revision_id: "revision-2", turn_id: "turn-2", turn_branch_id: "branch-main", turn_checkpoint_id: "commit-2", sequence: 2, action_text: "Cất tờ giấy", revision: 1, narrative_text: "Vy không nhìn thấy tờ giấy.", complete: true, selected: true },
+      ],
+      branches: [
+        { id: "branch-main", name: "main", parent_branch_id: null, fork_checkpoint_id: null, state_version: 2, is_root: true },
+      ],
+      jobs: [],
+    };
+    const forked: CampaignProjection = {
+      ...base,
+      branch: { id: "branch-new", name: "Nhánh 2", state_version: 2, checkpoint_id: "branch-new-head" },
+      checkpoint: { ...base.checkpoint, id: "branch-new-head" },
+      transcript: [base.transcript[0]],
+      branches: [base.branches![0], { id: "branch-new", name: "Nhánh 2", parent_branch_id: "branch-main", fork_checkpoint_id: "commit-1", fork_turn_sequence: 1, state_version: 2, is_root: false }],
+    };
+    return { base, forked };
+  }
+
+  function mockBranchStory() {
+    const story = branchStory();
+    vi.spyOn(api, "listCampaigns").mockResolvedValue([story.base.campaign]);
+    vi.spyOn(api, "getCampaign").mockResolvedValue({ ...story.base.campaign, branch_id: "branch-main", state_version: 2, checkpoint_id: "branch-main-head", profiles: {} });
+    vi.spyOn(api, "getCampaignProjection").mockImplementation(async (_campaignId, branchId) => branchId === "branch-new" ? story.forked : story.base);
+    return story;
+  }
+
+  it("creates a branch from an earlier turn and continues reading the new branch", async () => {
+    const story = mockBranchStory();
+    const fork = vi.spyOn(api, "forkBranch").mockResolvedValue({ id: "branch-new", name: "Nhánh 2", campaign_id: "campaign-branch", parent_branch_id: "branch-main", fork_checkpoint_id: "commit-1", fork_turn_sequence: 1, state_version: 2, checkpoint_id: "branch-new-head", head_turn_id: "turn-1", inherited_turns: 1, is_root: false });
+    const user = userEvent.setup();
+    render(<AppShell owner={{ id: "branch-owner", email: "branch@example.test" }} onLogout={() => undefined} />);
+    await user.click(await screen.findByRole("button", { name: "Mở truyện" }));
+    expect(await screen.findByText("Tờ giấy xanh nằm trong hộp.")).toBeInTheDocument();
+    expect(screen.getByText("Vy không nhìn thấy tờ giấy.")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Tạo nhánh từ lượt 1" }));
+
+    expect(fork).toHaveBeenCalledWith("campaign-branch", { source_branch_id: "branch-main", checkpoint_id: "commit-1", expected_state_version: 2 });
+    expect(await screen.findByText("Đã tạo Nhánh 2 từ lượt 1.")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText("Vy không nhìn thấy tờ giấy.")).not.toBeInTheDocument());
+    expect(screen.getByLabelText("Nhánh truyện")).toHaveValue("branch-new");
+    expect(screen.getByRole("option", { name: "Nhánh 2 · từ lượt 1" })).toBeInTheDocument();
+    expect(story.forked.transcript.length).toBe(1);
+  });
+
+  it("switches the branch being read without reloading the story", async () => {
+    const story = branchStory();
+    story.base.branches = [...story.forked.branches!];
+    vi.spyOn(api, "listCampaigns").mockResolvedValue([story.base.campaign]);
+    vi.spyOn(api, "getCampaign").mockResolvedValue({ ...story.base.campaign, branch_id: "branch-main", state_version: 2, checkpoint_id: "branch-main-head", profiles: {} });
+    const projection = vi.spyOn(api, "getCampaignProjection").mockImplementation(async (_campaignId, branchId) => branchId === "branch-new" ? story.forked : story.base);
+    const user = userEvent.setup();
+    render(<AppShell owner={{ id: "branch-switch-owner", email: "switch@example.test" }} onLogout={() => undefined} />);
+    await user.click(await screen.findByRole("button", { name: "Mở truyện" }));
+    expect(await screen.findByText("Vy không nhìn thấy tờ giấy.")).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText("Nhánh truyện"), "branch-new");
+
+    await waitFor(() => expect(screen.queryByText("Vy không nhìn thấy tờ giấy.")).not.toBeInTheDocument());
+    expect(projection).toHaveBeenCalledWith("campaign-branch", "branch-new");
+    expect(screen.getByLabelText("Nhánh truyện")).toHaveValue("branch-new");
+    expect(screen.getByText("Tờ giấy xanh nằm trong hộp.")).toBeInTheDocument();
+    expect(vi.mocked(api.getCampaign)).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the current branch when creating one fails", async () => {
+    mockBranchStory();
+    vi.spyOn(api, "forkBranch").mockRejectedValue(new ApiError(409, "nhánh nguồn đã đổi"));
+    const user = userEvent.setup();
+    render(<AppShell owner={{ id: "branch-fail-owner", email: "fail@example.test" }} onLogout={() => undefined} />);
+    await user.click(await screen.findByRole("button", { name: "Mở truyện" }));
+    await screen.findByText("Tờ giấy xanh nằm trong hộp.");
+
+    await user.click(screen.getByRole("button", { name: "Tạo nhánh từ lượt 1" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Không thể tạo nhánh: nhánh nguồn vừa thay đổi hoặc đang có lượt AI chưa xong. Hãy thử lại.");
+    expect(screen.getByText("Vy không nhìn thấy tờ giấy.")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Nhánh truyện")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Tạo nhánh từ lượt 1" })).toBeEnabled();
+  });
 
   it("renders structured player turns and attributed NPC dialogue", async () => {
     vi.stubGlobal("fetch", vi.fn()

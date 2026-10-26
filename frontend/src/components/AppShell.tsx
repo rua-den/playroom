@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api/client";
-import type { CampaignCreatePayload, CampaignProjection, CampaignSummary, Owner } from "../api/types";
+import type { BranchSummary, CampaignCreatePayload, CampaignProjection, CampaignSummary, CampaignTranscriptEntry, Owner } from "../api/types";
 import { Markdown } from "./Markdown";
 import { ProfileEditor } from "./ProfileEditor";
 import { MemoryLibrary } from "./MemoryLibrary";
@@ -18,6 +18,11 @@ import { CampaignLibrary } from "./CampaignLibrary";
 const RECOVERABLE_JOB_STATUSES = new Set(["queued", "running", "cancelling", "interrupted", "candidate"]);
 export function recoverableJobCount(jobs: Array<{ status?: string }>) { return jobs.filter((job) => RECOVERABLE_JOB_STATUSES.has(job.status ?? "")).length; }
 export function recoverableJobSummary(count: number) { return `Có thể khôi phục trong danh sách (tối đa 20 việc): ${count}`; }
+
+function branchOptionLabel(branch: BranchSummary) {
+  if (branch.is_root) return `${branch.name} · nhánh gốc`;
+  return branch.fork_turn_sequence ? `${branch.name} · từ lượt ${branch.fork_turn_sequence}` : branch.name;
+}
 
 function profileName(profiles: Record<string, { data: Record<string, unknown> }>, id: string) {
   const profile = Object.values(profiles).find((candidate) => candidate.data.id === id);
@@ -85,8 +90,10 @@ function CampaignForm({ onCreated, onCancel, ariaHidden = false }: { onCreated: 
 }
 
 function AppShellContent({ owner, onLogout, notice }: AppShellProps) {
-  const [campaigns, setCampaigns] = useState<CampaignSummary[]>([]); const [trashedCampaigns, setTrashedCampaigns] = useState<CampaignSummary[]>([]); const [libraryMode, setLibraryMode] = useState<"active" | "trash">("active"); const [selectedId, setSelectedId] = useState<string | null>(null); const [projection, setProjection] = useState<CampaignProjection | null>(null); const [loading, setLoading] = useState(true); const [error, setError] = useState<string | null>(null); const [demoInfo, setDemoInfo] = useState<import("../api/types").DemoInfo | null>(null); const [createOpen, setCreateOpen] = useState(false); const [createInstance, setCreateInstance] = useState(0); const [importOpen, setImportOpen] = useState(false); const [importInstance, setImportInstance] = useState(0); const [libraryOpen, setLibraryOpen] = useState(true); const [importMode, setImportMode] = useState<"chatgpt" | "legacy">("chatgpt"); const [drawerOpen, setDrawerOpen] = useState(false); const [detailsOpen, setDetailsOpen] = useState(false); const [settingsOpen, setSettingsOpen] = useState(false); const [modelOpen, setModelOpen] = useState(false); const [deleteTarget, setDeleteTarget] = useState<CampaignSummary | null>(null); const [deletePending, setDeletePending] = useState(false); const [deleteError, setDeleteError] = useState<string | null>(null); const [editorTab, setEditorTab] = useState<"profiles" | "memory" | "scene">("profiles");
+  const [campaigns, setCampaigns] = useState<CampaignSummary[]>([]); const [trashedCampaigns, setTrashedCampaigns] = useState<CampaignSummary[]>([]); const [libraryMode, setLibraryMode] = useState<"active" | "trash">("active"); const [selectedId, setSelectedId] = useState<string | null>(null); const [projection, setProjection] = useState<CampaignProjection | null>(null); const [branchPending, setBranchPending] = useState<string | null>(null); const [branchSwitching, setBranchSwitching] = useState(false); const [loading, setLoading] = useState(true); const [error, setError] = useState<string | null>(null); const [demoInfo, setDemoInfo] = useState<import("../api/types").DemoInfo | null>(null); const [createOpen, setCreateOpen] = useState(false); const [createInstance, setCreateInstance] = useState(0); const [importOpen, setImportOpen] = useState(false); const [importInstance, setImportInstance] = useState(0); const [libraryOpen, setLibraryOpen] = useState(true); const [importMode, setImportMode] = useState<"chatgpt" | "legacy">("chatgpt"); const [drawerOpen, setDrawerOpen] = useState(false); const [detailsOpen, setDetailsOpen] = useState(false); const [settingsOpen, setSettingsOpen] = useState(false); const [modelOpen, setModelOpen] = useState(false); const [deleteTarget, setDeleteTarget] = useState<CampaignSummary | null>(null); const [deletePending, setDeletePending] = useState(false); const [deleteError, setDeleteError] = useState<string | null>(null); const [editorTab, setEditorTab] = useState<"profiles" | "memory" | "scene">("profiles");
   const selectedIdRef = useRef<string | null>(selectedId); selectedIdRef.current = selectedId;
+  const projectionRef = useRef<CampaignProjection | null>(null); projectionRef.current = projection;
+  const storyBranchRef = useRef(new Map<string, string>());
   const navigationSession = useRef(newId());
   const navigation = useRef<{ view: ShellLocation; index: number; hash: string } | null>(null);
   const applyingNavigation = useRef(false);
@@ -150,12 +157,12 @@ function AppShellContent({ owner, onLogout, notice }: AppShellProps) {
   const ownerRef = useRef(owner.id);
   const mountedRef = useRef(true);
   const libraryModeRef = useRef<"active" | "trash">("active");
-  useEffect(() => { if (ownerRef.current === owner.id) return; ownerRef.current = owner.id; setCampaigns([]); setTrashedCampaigns([]); setLibraryMode("active"); setSelectedId(null); setProjection(null); setError(null); setModelOpen(false); setDeleteTarget(null); setLibraryOpen(true); }, [owner.id]);
+  useEffect(() => { if (ownerRef.current === owner.id) return; ownerRef.current = owner.id; setCampaigns([]); setTrashedCampaigns([]); setLibraryMode("active"); setSelectedId(null); setProjection(null); setBranchPending(null); setBranchSwitching(false); storyBranchRef.current.clear(); setError(null); setModelOpen(false); setDeleteTarget(null); setLibraryOpen(true); }, [owner.id]);
   const projectionRequest = useRef(0);
   const catalogRequest = useRef(0);
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
   useEffect(() => { const token = ++catalogRequest.current; const targetOwner = owner.id; setLoading(true); if (import.meta.env.PROD) api.getDemoInfo().then((info) => { if (mountedRef.current && ownerRef.current === targetOwner) setDemoInfo(info); }).catch(() => undefined); api.listCampaigns().then((items) => { if (mountedRef.current && ownerRef.current === targetOwner && catalogRequest.current === token) { const safeItems = Array.isArray(items) ? items : []; const requested = new URL(window.location.href).searchParams.get("story"); const remembered = requested && safeItems.some((item) => item.id === requested) ? requested : readLastStoryId(targetOwner); const restored = remembered && safeItems.some((item) => item.id === remembered) ? remembered : null; selectedIdRef.current = restored; setCampaigns(safeItems); setSelectedId(restored); setLibraryOpen(!restored); } }).catch(() => { if (mountedRef.current && ownerRef.current === targetOwner && catalogRequest.current === token) setError("Không thể tải thư viện truyện."); }).finally(() => { if (mountedRef.current && ownerRef.current === targetOwner && catalogRequest.current === token) setLoading(false); }); return () => { catalogRequest.current += 1; }; }, [owner.id]);
-  useEffect(() => { const targetId = selectedId; const requestId = ++projectionRequest.current; if (!targetId) { setProjection(null); return; } setProjection(null); setError(null); api.getCampaign(targetId).then((detail) => { if (!mountedRef.current || selectedIdRef.current !== targetId || projectionRequest.current !== requestId) return null; return api.getCampaignProjection(targetId, detail.branch_id); }).then((next) => { if (next && mountedRef.current && selectedIdRef.current === targetId && projectionRequest.current === requestId) setProjection(next); }).catch(() => { if (mountedRef.current && selectedIdRef.current === targetId && projectionRequest.current === requestId) setError("Không thể tải truyện này."); }); return () => { projectionRequest.current += 1; }; }, [selectedId]);
+  useEffect(() => { const targetId = selectedId; const requestId = ++projectionRequest.current; if (!targetId) { setProjection(null); return; } setProjection(null); setError(null); api.getCampaign(targetId).then((detail) => { if (!mountedRef.current || selectedIdRef.current !== targetId || projectionRequest.current !== requestId) return null; return api.getCampaignProjection(targetId, storyBranchRef.current.get(targetId) ?? detail.branch_id); }).then((next) => { if (next && mountedRef.current && selectedIdRef.current === targetId && projectionRequest.current === requestId) setProjection(next); }).catch(() => { if (mountedRef.current && selectedIdRef.current === targetId && projectionRequest.current === requestId) setError("Không thể tải truyện này."); }); return () => { projectionRequest.current += 1; }; }, [selectedId]);
   const trashRequest = useRef(0);
   const [trashLoading, setTrashLoading] = useState(false);
   const restorePending = useRef(new Map<string, Promise<void>>());
@@ -189,6 +196,7 @@ function AppShellContent({ owner, onLogout, notice }: AppShellProps) {
       setCampaigns((current) => current.filter((item) => item.id !== target.id));
       setDeleteTarget(null);
       try { if (readLastStoryId(targetOwner) === target.id) window.localStorage.removeItem(lastStoryStorageKey(targetOwner)); } catch { /* storage may be blocked */ }
+      storyBranchRef.current.delete(target.id);
       if (selectedIdRef.current === target.id) { projectionRequest.current += 1; selectedIdRef.current = null; setSelectedId(null); setProjection(null); setError(null); setDetailsOpen(false); setDrawerOpen(false); setModelOpen(false); setLibraryOpen(true); }
       toast.success("\u0110\u00e3 chuy\u1ec3n truy\u1ec7n v\u00e0o Th\u00f9ng r\u00e1c.", { label: "Ho\u00e0n t\u00e1c", onClick: () => restoreStory(trashed, true) });
     } catch (cause) { if (ownerRef.current === targetOwner) { const message = cause instanceof ApiError && cause.status === 409 ? "Truyện đang có lượt AI chưa hoàn tất. Hãy xử lý lượt đó trước khi xoá." : cause instanceof ApiError ? cause.message : "Không thể chuyển truyện vào Thùng rác."; setDeleteError(message); toast.error(message); } }
@@ -200,8 +208,40 @@ function AppShellContent({ owner, onLogout, notice }: AppShellProps) {
   function closeSettings() { setSettingsOpen(false); }
   function openModel() { if (!projection || libraryOpen) return; setSettingsOpen(false); setModelOpen(true); }
   function openCostSettingsFromModel() { setModelOpen(false); setSettingsOpen(true); }
-  async function refreshProjection() { if (!selectedId) return undefined; const targetId = selectedId; const requestId = ++projectionRequest.current; try { const detail = await api.getCampaign(targetId); const next = await api.getCampaignProjection(targetId, detail.branch_id); if (projectionRequest.current !== requestId || selectedIdRef.current !== targetId) return undefined; setProjection(next); return next; } catch { if (projectionRequest.current === requestId && selectedIdRef.current === targetId) setError("Không thể làm mới truyện."); return undefined; } }
+  async function refreshProjection() { if (!selectedId) return undefined; const targetId = selectedId; const requestId = ++projectionRequest.current; const activeBranch = projectionRef.current?.branch.id; try { const branchId = activeBranch ?? (await api.getCampaign(targetId)).branch_id; const next = await api.getCampaignProjection(targetId, branchId); if (projectionRequest.current !== requestId || selectedIdRef.current !== targetId) return undefined; setProjection(next); return next; } catch { if (projectionRequest.current === requestId && selectedIdRef.current === targetId) setError("Không thể làm mới truyện."); return undefined; } }
   const editorChanged = () => refreshProjection();
+  async function switchBranch(branchId: string) {
+    const campaignId = selectedIdRef.current;
+    if (!campaignId || branchPending !== null || branchSwitching || projectionRef.current?.branch.id === branchId) return;
+    const requestId = ++projectionRequest.current;
+    setBranchSwitching(true); setError(null);
+    try {
+      const next = await api.getCampaignProjection(campaignId, branchId);
+      if (!mountedRef.current || selectedIdRef.current !== campaignId || projectionRequest.current !== requestId) return;
+      storyBranchRef.current.set(campaignId, branchId);
+      setProjection(next);
+    } catch (cause) {
+      if (mountedRef.current && selectedIdRef.current === campaignId && projectionRequest.current === requestId) { const message = cause instanceof ApiError ? cause.message : "Không thể mở nhánh này."; setError(message); toast.error(message); }
+    } finally { if (mountedRef.current && selectedIdRef.current === campaignId) setBranchSwitching(false); }
+  }
+  async function forkFromTurn(turn: CampaignTranscriptEntry) {
+    const campaignId = selectedIdRef.current;
+    const checkpointId = turn.turn_checkpoint_id;
+    if (!campaignId || !checkpointId || branchPending !== null) return;
+    const source = (projectionRef.current?.branches ?? []).find((item) => item.id === turn.turn_branch_id);
+    if (!source) { toast.error("Chưa tải được thông tin nhánh của lượt này."); return; }
+    setBranchPending(`fork:${turn.turn_id}`);
+    try {
+      const created = await api.forkBranch(campaignId, { source_branch_id: source.id, checkpoint_id: checkpointId, expected_state_version: source.state_version });
+      const next = await api.getCampaignProjection(campaignId, created.id);
+      if (!mountedRef.current || selectedIdRef.current !== campaignId) return;
+      storyBranchRef.current.set(campaignId, created.id);
+      setProjection(next); setError(null);
+      toast.success(`Đã tạo ${created.name} từ lượt ${turn.sequence}.`);
+    } catch (cause) {
+      if (mountedRef.current && selectedIdRef.current === campaignId) { const message = cause instanceof ApiError && cause.status === 409 ? "Không thể tạo nhánh: nhánh nguồn vừa thay đổi hoặc đang có lượt AI chưa xong. Hãy thử lại." : cause instanceof ApiError ? cause.message : "Không thể tạo nhánh."; setError(message); toast.error(message); }
+    } finally { if (mountedRef.current && selectedIdRef.current === campaignId) setBranchPending(null); }
+  }
   function chooseStory(id: string) { if (id !== selectedIdRef.current) { projectionRequest.current += 1; selectedIdRef.current = id; setProjection(null); } setSelectedId(id); writeLastStoryId(owner.id, id); setLibraryOpen(false); setCreateOpen(false); setImportOpen(false); }
   function created(campaign: CampaignSummary) { setCampaigns((current) => [campaign, ...current]); setCreateInstance((current) => current + 1); setImportInstance((current) => current + 1); setCreateOpen(false); setImportOpen(false); chooseStory(campaign.id); }
   function openCreate() { setImportOpen(false); setCreateOpen(true); }
@@ -209,6 +249,8 @@ function AppShellContent({ owner, onLogout, notice }: AppShellProps) {
   const formatStoryDate = (value: string) => { const date = new Date(value); return Number.isNaN(date.valueOf()) ? "" : new Intl.DateTimeFormat("vi-VN", { dateStyle: "medium" }).format(date); };
   const library = <CampaignLibrary campaigns={campaigns} trash={trashedCampaigns} mode={libraryMode} selectedId={selectedId} error={error} trashLoading={trashLoading} restorePending={restorePendingIds} ariaHidden={settingsOpen || drawerOpen || detailsOpen || createOpen || importOpen || modelOpen || deleteTarget !== null} onMode={(mode) => { if (mode === "trash") void openTrash(); else openActiveLibrary(); }} onCreate={openCreate} onChoose={chooseStory} onDelete={(item) => { setDeleteError(null); setDeleteTarget(item); }} onRestore={(item) => { void restoreStory(item).catch(() => undefined); }} onImport={openImport} formatDate={formatStoryDate} />;
   if (loading) return <main className="app-shell loading-screen" role="status">Đang tải phòng truyện…</main>;
+  const branches: BranchSummary[] = projection?.branches ?? [];
+  const branchOptions: BranchSummary[] = projection && branches.length > 1 && !branches.some((item) => item.id === projection.branch.id) ? [...branches, { id: projection.branch.id, name: projection.branch.name, parent_branch_id: null, fork_checkpoint_id: null, state_version: projection.branch.state_version }] : branches;
   const contextPanel = projection && <ContextPanel key={`${projection.campaign.id}:${projection.branch.id}`} projection={projection} editorTab={editorTab} setEditorTab={setEditorTab} editorChanged={editorChanged} />;
   return <main className={`app-shell story-app ${error && !campaigns.length ? "catalog-failed" : ""}`}>
     <header className="topbar" aria-hidden={drawerOpen || detailsOpen || settingsOpen || modelOpen || createOpen || importOpen || deleteTarget !== null}>
@@ -234,7 +276,7 @@ function AppShellContent({ owner, onLogout, notice }: AppShellProps) {
         <section className="story-column conversation-column">
           {error && <div role="alert" className="form-error">{error}</div>}
           {projection && <p className="story-reading-label">Đang đọc</p>}
-          {projection ? <><h1>{projection.campaign.title}</h1>{projection.transcript.length ? <div className="transcript">{projection.transcript.map((turn) => <article className="story-turn" key={turn.revision_id}>{turn.input_segments?.length ? <div className="input-segments">{turn.input_segments.map((segment, index) => <p className={`input-segment ${segment.kind}`} key={`${turn.revision_id}-input-${index}`}>{segment.text}</p>)}</div> : <p className="turn-action">{turn.action_text}</p>}{turn.output_segments?.length ? <div className="roleplay-segments">{turn.output_segments.map((segment, index) => <div className={`roleplay-segment ${segment.kind}`} key={`${turn.revision_id}-${index}`}>{segment.character_id ? <strong>{projection.profiles[`character:${segment.character_id}`]?.data.name as string ?? segment.character_id}: </strong> : null}<Markdown source={segment.text} /></div>)}</div> : <Markdown source={turn.narrative_text} />}</article>)}</div> : <div className="story-empty"><h2>Chương đầu tiên đang chờ bạn.</h2><p>Thế giới đã sẵn sàng. Bạn có thể tiếp tục thiết lập hồ sơ và ký ức.</p></div>}</> : <div className="loading-story" role="status">Đang mở truyện…</div>}
+          {projection ? <><h1>{projection.campaign.title}</h1>{branchOptions.length > 1 && <div className="branch-bar"><label htmlFor="branch-select">Nhánh truyện</label><select id="branch-select" value={projection.branch.id} disabled={branchPending !== null || branchSwitching} onChange={(event) => void switchBranch(event.target.value)}>{branchOptions.map((item) => <option key={item.id} value={item.id}>{branchOptionLabel(item)}</option>)}</select>{branchSwitching && <p role="status" className="branch-hint">Đang mở nhánh…</p>}<p className="branch-hint">Lượt mới chỉ ghi vào nhánh đang đọc. Mỗi nhánh giữ dữ liệu riêng từ lượt được tạo nhánh.</p></div>}{projection.transcript.length ? <div className="transcript">{projection.transcript.map((turn) => <article className="story-turn" key={turn.revision_id}>{turn.input_segments?.length ? <div className="input-segments">{turn.input_segments.map((segment, index) => <p className={`input-segment ${segment.kind}`} key={`${turn.revision_id}-input-${index}`}>{segment.text}</p>)}</div> : <p className="turn-action">{turn.action_text}</p>}{turn.output_segments?.length ? <div className="roleplay-segments">{turn.output_segments.map((segment, index) => <div className={`roleplay-segment ${segment.kind}`} key={`${turn.revision_id}-${index}`}>{segment.character_id ? <strong>{projection.profiles[`character:${segment.character_id}`]?.data.name as string ?? segment.character_id}: </strong> : null}<Markdown source={segment.text} /></div>)}</div> : <Markdown source={turn.narrative_text} />}{turn.turn_checkpoint_id && branches.some((item) => item.id === turn.turn_branch_id) && <div className="turn-branch-actions"><button type="button" className="quiet-button touch-target" aria-label={`Tạo nhánh từ lượt ${turn.sequence}`} disabled={branchPending !== null} onClick={() => void forkFromTurn(turn)}>{branchPending === `fork:${turn.turn_id}` ? "Đang tạo nhánh…" : "Tạo nhánh từ đây"}</button></div>}</article>)}</div> : <div className="story-empty"><h2>Chương đầu tiên đang chờ bạn.</h2><p>Thế giới đã sẵn sàng. Bạn có thể tiếp tục thiết lập hồ sơ và ký ức.</p></div>}</> : <div className="loading-story" role="status">Đang mở truyện…</div>}
           {projection && (projection.import_review?.required ? <ImportReviewPanel projection={projection} onApproved={editorChanged} /> : <GenerationComposer ownerId={owner.id} projection={projection} profileId="" onCommitted={editorChanged} onOpenModelSettings={openModel} onOpenCostSettings={() => setSettingsOpen(true)} demoMode={demoInfo?.mode === "synthetic"} />)}
         </section>
       </div>

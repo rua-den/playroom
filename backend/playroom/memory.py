@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from .db import assert_branch_mutable, transaction
 from .domain import MemoryVersion, NotFound, StateConflict, ValidationError, require_uuid
-from .timeline import _advance_checkpoint, _branch_row, load_state_checkpoint, utc_now, validate_source_revisions
+from .timeline import _advance_checkpoint, _branch_row, branch_checkpoint_bounds, load_state_checkpoint, utc_now, validate_source_revisions
 
 RETRIEVAL_POLICIES = {"auto", "important_only", "disabled"}
 _UNSET = object()
@@ -243,7 +243,15 @@ def list_memory_history(connection: sqlite3.Connection, campaign_id: str, branch
     memory_id = require_uuid(memory_id, "memory_id")
     if memory_id not in set(checkpoint.snapshot["memory_versions"]) | set(checkpoint.snapshot.get("pending_memory_versions", {})) | set(checkpoint.snapshot.get("reviewed_memory_versions", {})):
         raise NotFound("Memory not found at this checkpoint")
-    rows = connection.execute("SELECT * FROM memory_versions WHERE memory_id = ? AND campaign_id = ? AND branch_id = ? AND effective_state_version <= ? ORDER BY version", (memory_id, campaign_id, branch_id, checkpoint.state_version)).fetchall()
+    bounds = branch_checkpoint_bounds(connection, campaign_id, branch_id, checkpoint)
+    clauses = " OR ".join("(branch_id = ? AND effective_state_version <= ?)" for _ in bounds)
+    arguments: list[object] = [memory_id, campaign_id]
+    for bound_branch_id, bound_version in bounds:
+        arguments.extend([bound_branch_id, bound_version])
+    rows = connection.execute(
+        "SELECT * FROM memory_versions WHERE memory_id = ? AND campaign_id = ? AND (" + clauses + ") ORDER BY version",
+        arguments,
+    ).fetchall()
     return [_to_memory(row, checkpoint.state_version, checkpoint.id) for row in rows]
 
 

@@ -57,6 +57,8 @@ export interface CampaignCreatePayload {
 export interface CampaignTranscriptEntry {
   revision_id: string;
   turn_id: string;
+  turn_branch_id: string;
+  turn_checkpoint_id: string | null;
   sequence: number;
   action_text: string;
   revision: number;
@@ -92,6 +94,29 @@ export interface GenerationJobSummary {
   cancel_requested: boolean;
 }
 
+export interface BranchSummary {
+  id: string;
+  name: string;
+  campaign_id?: string;
+  parent_branch_id: string | null;
+  fork_checkpoint_id: string | null;
+  fork_turn_sequence?: number | null;
+  state_version: number;
+  head_checkpoint_id?: string | null;
+  checkpoint_id?: string;
+  head_turn_id?: string | null;
+  created_at?: string;
+  is_root?: boolean;
+  inherited_turns?: number;
+}
+
+export interface ForkBranchPayload {
+  source_branch_id: string;
+  checkpoint_id: string;
+  expected_state_version: number;
+  name?: string;
+}
+
 export interface CampaignProjection {
   campaign: {
     id: string;
@@ -116,6 +141,7 @@ export interface CampaignProjection {
   profiles: Record<string, CampaignProjectionProfile>;
   scene: { id: string; version: number; data: Record<string, unknown> } | null;
   transcript: CampaignTranscriptEntry[];
+  branches?: BranchSummary[];
   jobs: GenerationJobSummary[];
   import_review?: {
     required: boolean;

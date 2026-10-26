@@ -144,6 +144,19 @@ def restore_campaign(connection: sqlite3.Connection, campaign_id: str, owner_id:
         return _campaign_summary(updated)
 
 
+def list_branches(connection: sqlite3.Connection, campaign_id: str, owner_id: str) -> list[dict]:
+    campaign_id, owner_id = require_uuid(campaign_id, "campaign_id"), require_uuid(owner_id, "owner_id")
+    if connection.execute("SELECT 1 FROM campaigns WHERE id = ? AND owner_id = ? AND deleted_at IS NULL", (campaign_id, owner_id)).fetchone() is None:
+        raise NotFound("Campaign not found")
+    rows = connection.execute(
+        "SELECT b.id, b.name, b.parent_branch_id, b.fork_checkpoint_id, b.state_version, b.head_checkpoint_id, b.head_turn_id, b.head_revision_id, b.created_at, ft.sequence AS fork_turn_sequence "
+        "FROM branches b LEFT JOIN state_checkpoints sc ON sc.id = b.fork_checkpoint_id LEFT JOIN turns ft ON ft.id = sc.turn_id "
+        "WHERE b.campaign_id = ? ORDER BY b.created_at, b.id",
+        (campaign_id,),
+    ).fetchall()
+    return [{**dict(row), "is_root": row["parent_branch_id"] is None} for row in rows]
+
+
 def get_effective_profile(connection: sqlite3.Connection, campaign_id: str, branch_id: str, position: str | None, profile_key: str, owner_id: str | None = None) -> dict:
     checkpoint = load_state_checkpoint(connection, campaign_id, branch_id, position, owner_id)
     version_id = checkpoint.snapshot["profile_versions"].get(profile_key)

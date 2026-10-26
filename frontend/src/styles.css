@@ -122,6 +122,12 @@ h3 { font-size: 18px; line-height: 1.35; font-weight: 620; }
 .story-column, .conversation-column { min-width: 0; }
 .story-reading-label { margin: 0 0 8px; color: var(--accent); font-size: 13px; font-weight: 620; }
 .story-column h1 { max-width: 24ch; margin-bottom: 28px; font-size: clamp(30px, 5vw, 40px); }
+.branch-bar { display: grid; gap: 6px; margin: 0 0 24px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.branch-bar label { font-size: 13px; font-weight: 620; color: var(--accent); }
+.branch-bar select { width: 100%; min-height: 44px; padding: 0 10px; border: 1px solid var(--line); border-radius: 10px; color: var(--text); background: var(--canvas); font: inherit; }
+.branch-hint { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.turn-branch-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
+.turn-branch-actions .quiet-button { font-size: 13px; font-weight: 400; }
 .story-turn { margin: 0 0 40px; overflow-wrap: anywhere; }
 .input-segments { display: grid; justify-items: end; gap: 7px; margin-bottom: 16px; }
 .input-segment { max-width: 82%; margin: 0; padding: 10px 14px; border-radius: 14px; overflow-wrap: anywhere; }

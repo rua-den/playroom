@@ -9,7 +9,7 @@ from .. import campaigns as service
 from ..campaigns import get_effective_profile, update_profile
 from ..domain import Owner
 from ..db import request_connection
-from ..timeline import get_branch_head
+from ..timeline import fork_branch, get_branch_head
 from ..projections import get_campaign_projection, list_owned_generation_jobs
 from .auth import require_owner
 
@@ -47,6 +47,13 @@ class ProfileRemove(BaseModel):
     expected_state_version: int = Field(ge=1)
 
 
+class BranchFork(BaseModel):
+    source_branch_id: str
+    checkpoint_id: str
+    expected_state_version: int = Field(ge=1)
+    name: str | None = Field(default=None, max_length=120)
+
+
 @router.get("")
 def campaigns(trashed: bool = Query(default=False), connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
     return service.list_campaigns(connection, owner.id, trashed=trashed)
@@ -71,6 +78,24 @@ def trash(campaign_id: str, connection: sqlite3.Connection = Depends(request_con
 @router.post("/{campaign_id}/restore")
 def restore(campaign_id: str, connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
     return service.restore_campaign(connection, campaign_id, owner.id)
+
+
+@router.get("/{campaign_id}/branches")
+def branches(campaign_id: str, connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
+    return {"branches": service.list_branches(connection, campaign_id, owner.id)}
+
+
+@router.post("/{campaign_id}/branches", status_code=201)
+def create_branch(campaign_id: str, payload: BranchFork, connection: sqlite3.Connection = Depends(request_connection), owner: Owner = Depends(require_owner)):
+    return fork_branch(
+        connection,
+        campaign_id,
+        payload.source_branch_id,
+        payload.checkpoint_id,
+        expected_state_version=payload.expected_state_version,
+        owner_id=owner.id,
+        name=payload.name,
+    )
 
 
 @router.get("/{campaign_id}/projection")

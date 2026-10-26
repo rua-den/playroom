@@ -4,6 +4,7 @@ import json
 import sqlite3
 
 from .domain import NotFound, require_uuid
+from .campaigns import list_branches
 from .timeline import load_state_checkpoint
 from .chatgpt_import import import_review
 
@@ -61,6 +62,33 @@ def _profile_projection(connection: sqlite3.Connection, campaign_id: str, snapsh
     return result
 
 
+def _turn_commit_checkpoints(connection: sqlite3.Connection, campaign_id: str, rows: list[sqlite3.Row]) -> dict[str, str]:
+    """Map a turn revision to the checkpoint committed with it on its own branch.
+
+    A fork copies a snapshot and its checkpoint references the same revision, so
+    the owning branch is what identifies the commit checkpoint rather than a later
+    fork point.
+    """
+
+    if not rows:
+        return {}
+    branch_by_revision = {row["id"]: row["branch_id"] for row in rows}
+    found: dict[str, str] = {}
+    revision_ids = list(branch_by_revision)
+    for offset in range(0, len(revision_ids), 500):
+        chunk = revision_ids[offset:offset + 500]
+        checkpoint_rows = connection.execute(
+            "SELECT id, branch_id, revision_id FROM state_checkpoints WHERE campaign_id = ? AND turn_id IS NOT NULL AND revision_id IN ({}) ORDER BY state_version".format(
+                ",".join("?" for _ in chunk)
+            ),
+            [campaign_id, *chunk],
+        ).fetchall()
+        for checkpoint in checkpoint_rows:
+            if checkpoint["branch_id"] == branch_by_revision.get(checkpoint["revision_id"]):
+                found.setdefault(checkpoint["revision_id"], checkpoint["id"])
+    return found
+
+
 def _transcript_projection(connection: sqlite3.Connection, campaign_id: str, selected_ids: list[str]) -> list[dict]:
     if not isinstance(selected_ids, list):
         raise NotFound("Checkpoint transcript is malformed")
@@ -75,10 +103,13 @@ def _transcript_projection(connection: sqlite3.Connection, campaign_id: str, sel
         by_id.update({row["id"]: row for row in rows})
     if len(by_id) != len(set(selected_ids)):
         raise NotFound("Checkpoint transcript revision is not part of this campaign")
+    commit_checkpoints = _turn_commit_checkpoints(connection, campaign_id, list(by_id.values()))
     return [
         {
             "revision_id": row["id"],
             "turn_id": row["turn_id"],
+            "turn_branch_id": row["branch_id"],
+            "turn_checkpoint_id": commit_checkpoints.get(row["id"]),
             "sequence": row["sequence"],
             "action_text": row["action_text"],
             "revision": row["revision"],
@@ -125,6 +156,7 @@ def get_campaign_projection(connection: sqlite3.Connection, owner_id: str, campa
         "profiles": _profile_projection(connection, campaign_id, snapshot),
         "scene": scene,
         "transcript": _transcript_projection(connection, campaign_id, snapshot.get("selected_revision_ids", [])),
+        "branches": list_branches(connection, campaign_id, owner_id),
         "jobs": list_owned_generation_jobs(connection, owner_id, campaign_id, branch_id),
         "import_review": import_review(connection, owner_id, campaign_id, branch["head_checkpoint_id"]),
     }

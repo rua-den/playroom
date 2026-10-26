@@ -1,5 +1,6 @@
 import type {
   ApiErrorBody,
+  BranchSummary,
   CampaignCreatePayload,
   CampaignDetail,
   CampaignProjection,
@@ -205,6 +206,18 @@ export const api = {
   getCampaignProjection: (campaignId: string, branchId: string) =>
     request<CampaignProjection>(
       `/api/campaigns/${encodeURIComponent(campaignId)}/projection?branch_id=${encodeURIComponent(branchId)}`,
+    ),
+  listBranches: (campaignId: string) =>
+    request<{ branches: BranchSummary[] }>(
+      `/api/campaigns/${encodeURIComponent(campaignId)}/branches`,
+    ),
+  forkBranch: (
+    campaignId: string,
+    payload: import("./types").ForkBranchPayload,
+  ) =>
+    request<BranchSummary>(
+      `/api/campaigns/${encodeURIComponent(campaignId)}/branches`,
+      { method: "POST", body: JSON.stringify(payload) },
     ),
   getGenerationJobs: (campaignId: string, branchId: string, limit = 20) =>
     request<{ jobs: GenerationJobSummary[] }>(

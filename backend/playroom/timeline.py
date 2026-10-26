@@ -159,6 +159,120 @@ def create_committed_revision(connection: sqlite3.Connection, campaign_id: str, 
         return _create_committed_revision_in_transaction(connection, campaign_id, branch_id, action_text, narrative_text, expected_state_version=expected_state_version, output_segments=output_segments)
 
 
+def branch_checkpoint_bounds(connection: sqlite3.Connection, campaign_id: str, branch_id: str, checkpoint) -> list[tuple[str, int]]:
+    """Highest state version visible from each ancestor branch at this checkpoint.
+
+    A version row belongs to one branch. A forked branch must only see ancestor
+    rows that already existed at its fork point, not rows its parent wrote into an
+    abandoned future later on.
+    """
+
+    bounds: list[tuple[str, int]] = []
+    limit = checkpoint.state_version
+    current: str | None = branch_id
+    seen: set[str] = set()
+    while current is not None:
+        if current in seen:
+            raise ValidationError("Branch ancestry contains a cycle")
+        seen.add(current)
+        bounds.append((current, limit))
+        row = connection.execute("SELECT parent_branch_id, fork_checkpoint_id FROM branches WHERE id = ? AND campaign_id = ?", (current, campaign_id)).fetchone()
+        if row is None:
+            raise NotFound("Campaign branch not found")
+        parent = row["parent_branch_id"]
+        if parent is None:
+            break
+        fork_row = connection.execute("SELECT branch_id, state_version FROM state_checkpoints WHERE id = ? AND campaign_id = ?", (row["fork_checkpoint_id"], campaign_id)).fetchone()
+        if fork_row is None or fork_row["branch_id"] != parent:
+            raise ValidationError("Branch fork checkpoint must belong to its parent branch")
+        limit = min(limit, fork_row["state_version"])
+        current = parent
+    return bounds
+
+
+def _next_turn_sequence(connection: sqlite3.Connection, campaign_id: str, branch_id: str, snapshot: dict) -> int:
+    """Continue numbering after the inherited transcript of a forked branch."""
+
+    own = connection.execute("SELECT COALESCE(MAX(sequence), 0) FROM turns WHERE branch_id = ?", (branch_id,)).fetchone()[0]
+    inherited = 0
+    selected = [item for item in snapshot.get("selected_revision_ids", []) if isinstance(item, str)]
+    if selected:
+        inherited = connection.execute(
+            "SELECT COALESCE(MAX(t.sequence), 0) FROM turn_revisions tr JOIN turns t ON t.id = tr.turn_id WHERE t.campaign_id = ? AND tr.id IN (" + ",".join("?" for _ in selected) + ")",
+            (campaign_id, *selected),
+        ).fetchone()[0]
+    return max(own, inherited) + 1
+
+
+def fork_branch(
+    connection: sqlite3.Connection,
+    campaign_id: str,
+    source_branch_id: str,
+    checkpoint_id: str,
+    *,
+    expected_state_version: int,
+    owner_id: str | None = None,
+    name: str | None = None,
+) -> dict:
+    """Create a new playable branch that inherits exactly one state checkpoint.
+
+    The fork copies the selected checkpoint's snapshot, so later profile, memory,
+    scene, summary and turn mutations on the source branch never reach it. The new
+    branch starts at the source checkpoint's state version, and its first
+    checkpoint keeps the source checkpoint as parent so the immutable import
+    review chain still decides whether Send is allowed.
+    """
+
+    with transaction(connection):
+        assert_branch_mutable(connection, source_branch_id)
+        source = _branch_row(connection, campaign_id, source_branch_id, owner_id)
+        if source["state_version"] != expected_state_version:
+            raise StateConflict("Campaign state changed; reload before creating a branch")
+        checkpoint = load_state_checkpoint(connection, campaign_id, source_branch_id, checkpoint_id, owner_id)
+        snapshot = json.loads(json.dumps(checkpoint.snapshot, ensure_ascii=False, sort_keys=True))
+        existing_names = {row[0] for row in connection.execute("SELECT name FROM branches WHERE campaign_id = ?", (campaign_id,))}
+        if name is None:
+            index = len(existing_names) + 1
+            while f"Nhánh {index}" in existing_names:
+                index += 1
+            name = f"Nhánh {index}"
+        else:
+            name = name.strip()
+            if not name or len(name) > 120:
+                raise ValidationError("Branch name must be between 1 and 120 characters")
+            if name in existing_names:
+                raise StateConflict("Branch name is already used in this campaign")
+        branch_id, forked_checkpoint_id = str(uuid4()), str(uuid4())
+        now = utc_now()
+        turn_id = snapshot.get("turn_id")
+        revision_id = snapshot.get("revision_id")
+        connection.execute(
+            "INSERT INTO branches(id, campaign_id, name, parent_branch_id, fork_checkpoint_id, state_version, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (branch_id, campaign_id, name, source_branch_id, checkpoint.id, checkpoint.state_version, now),
+        )
+        _validate_snapshot(connection, campaign_id, branch_id, snapshot)
+        connection.execute(
+            "INSERT INTO state_checkpoints(id, campaign_id, branch_id, state_version, parent_checkpoint_id, turn_id, revision_id, snapshot_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (forked_checkpoint_id, campaign_id, branch_id, checkpoint.state_version, checkpoint.id, turn_id, revision_id, json.dumps(snapshot, ensure_ascii=False, sort_keys=True), now),
+        )
+        connection.execute(
+            "UPDATE branches SET head_checkpoint_id = ?, head_turn_id = ?, head_revision_id = ? WHERE id = ?",
+            (forked_checkpoint_id, turn_id, revision_id, branch_id),
+        )
+        return {
+            "id": branch_id,
+            "campaign_id": campaign_id,
+            "name": name,
+            "parent_branch_id": source_branch_id,
+            "fork_checkpoint_id": checkpoint.id,
+            "checkpoint_id": forked_checkpoint_id,
+            "state_version": checkpoint.state_version,
+            "head_turn_id": turn_id,
+            "head_revision_id": revision_id,
+            "inherited_turns": len(snapshot.get("selected_revision_ids", [])),
+        }
+
+
 def _create_committed_revision_in_transaction(connection: sqlite3.Connection, campaign_id: str, branch_id: str, action_text: str, narrative_text: str, *, expected_state_version: int, output_segments: list[dict] | None = None) -> tuple[str, str]:
     if not action_text.strip() or not narrative_text.strip():
         raise ValidationError("A committed turn needs both player action and complete narrative")
@@ -166,7 +280,7 @@ def _create_committed_revision_in_transaction(connection: sqlite3.Connection, ca
     if branch["state_version"] != expected_state_version:
         raise StateConflict("Campaign state changed; reload before committing the turn")
     head = load_state_checkpoint(connection, campaign_id, branch_id, branch["head_checkpoint_id"])
-    sequence = connection.execute("SELECT COALESCE(MAX(sequence), 0) + 1 FROM turns WHERE branch_id = ?", (branch_id,)).fetchone()[0]
+    sequence = _next_turn_sequence(connection, campaign_id, branch_id, head.snapshot)
     turn_id, revision_id = str(uuid4()), str(uuid4())
     now = utc_now()
     input_segments = json.dumps(parse_player_input(action_text), ensure_ascii=False)
