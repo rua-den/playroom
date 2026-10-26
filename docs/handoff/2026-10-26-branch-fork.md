@@ -29,6 +29,14 @@ Base: `c03dde5` trên GitHub `main`. Checkpoint này gồm backend/API và UI ch
 - Kiểm chứng bằng API thật trên demo loopback (fake provider, SQLite riêng trong `.playroom-demo/`, đã ignore): tạo campaign, hai lượt commit, fork "Nhánh 2" từ lượt 1, projection của nhánh mới chỉ còn lượt dùng chung và danh sách nhánh hiện `fork_turn_sequence = 1`.
 - Một lượt full suite có 1 failure ở `test_generation_durable::test_restart_during_partial_narration_preserves_partial_and_blocks_late_candidate` (race thời điểm giữa delta draft và restart). Test đó không đi qua code của checkpoint này; chạy lại toàn file 5 lần liên tiếp đều pass và full suite các lượt sau cũng pass. Ghi nhận là flake timing có sẵn, chưa sửa trong checkpoint này.
 
+## Merge và CI
+
+Owner yêu cầu push rồi merge trực tiếp. Vì vậy `main` được **fast-forward** `c03dde5..8363913` (không tạo merge commit, giữ nguyên SHA đã kiểm tra local). Không mở PR nên **không có PR-CI**; đây là ngoại lệ do owner chỉ định, không phải quy trình chuẩn của repo (bình thường phải có PR + CI đúng PR SHA trước khi merge). Kết quả CI trên đúng merged-main SHA `8363913`:
+
+- **Playroom verification #268** (backend, frontend, Chromium): **SUCCESS** — [run](https://github.com/rua-den/playroom/actions/runs/40300571247).
+- **Synthetic app story quality trial #42**: **SUCCESS** — [run](https://github.com/rua-den/playroom/actions/runs/40300571638). Chỉ job offline chạy; job `owner-approved-live` bị bỏ qua vì điều kiện commit message/actor, nên không gọi provider và không phát sinh chi phí.
+- Không deploy, không thay VPS/Caddy, không dùng dữ liệu truyện riêng.
+
 ## Còn lại
 
 - **Reroll một lượt đã chốt** vẫn là hai bước: tạo nhánh tại checkpoint của lượt trước rồi gửi lại action; chưa có nút/endpoint "Tạo lại" tự động.
