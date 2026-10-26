@@ -28,6 +28,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          git config user.name 'Playroom Maintenance'
+          git config user.email 'playroom-maintenance@users.noreply.github.com'
           git fetch --prune origin '+refs/heads/*:refs/remotes/origin/*'
           mapfile -t branches < <(git for-each-ref --format='%(refname:strip=3)' refs/remotes/origin | grep -v -x -e main -e HEAD | sort -u)
           echo "Non-main branches found: ${#branches[@]}"
