@@ -1,0 +1,84 @@
+name: One-time branch cleanup
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/one-time-branch-cleanup.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: playroom-one-time-branch-cleanup
+  cancel-in-progress: false
+
+jobs:
+  archive-and-prune:
+    if: github.repository == 'rua-den/playroom' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Archive all branch heads under one Git tag, then remove non-main branches
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git fetch --prune origin '+refs/heads/*:refs/remotes/origin/*'
+          mapfile -t branches < <(git for-each-ref --format='%(refname:strip=3)' refs/remotes/origin | grep -v -x -e main -e HEAD | sort -u)
+          echo "Non-main branches found: ${#branches[@]}"
+          if (( ${#branches[@]} == 0 )); then
+            echo "No branches need pruning."
+            exit 0
+          fi
+
+          main_sha="$(git rev-parse refs/remotes/origin/main)"
+          main_tree="$(git rev-parse "refs/remotes/origin/main^{tree}")"
+          parents=(-p "$main_sha")
+          declare -A seen=(["$main_sha"]=1)
+          for branch in "${branches[@]}"; do
+            sha="$(git rev-parse "refs/remotes/origin/$branch")"
+            if [[ -z "${seen[$sha]+exists}" ]]; then
+              seen["$sha"]=1
+              parents+=(-p "$sha")
+            fi
+          done
+
+          archive_tag="archive/pre-cleanup-2026-10-26"
+          if git ls-remote --exit-code --tags origin "refs/tags/$archive_tag" >/dev/null 2>&1; then
+            echo "Archive tag already exists, refusing to overwrite."
+            exit 1
+          fi
+          archive_sha="$(printf 'Archive branch tips before pruning Playroom branches on 2026-10-26.\n' | git commit-tree "$main_tree" "${parents[@]}")"
+          git tag "$archive_tag" "$archive_sha"
+          git push origin "refs/tags/$archive_tag"
+          git ls-remote --exit-code --tags origin "refs/tags/$archive_tag"
+          echo "Archived ${#parents[@]} ref arguments under $archive_tag"
+          echo "Archive tag: $archive_tag" >> "$GITHUB_STEP_SUMMARY"
+
+          failures=0
+          removed=0
+          skipped=0
+          for branch in "${branches[@]}"; do
+            [[ "$branch" != "main" ]] || { echo "Safety guard: never delete main"; exit 1; }
+            saved_sha="$(git rev-parse "refs/remotes/origin/$branch")"
+            live_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$branch" --jq '.object.sha' 2>/dev/null || true)"
+            if [[ "$live_sha" != "$saved_sha" ]]; then
+              echo "SKIP $branch: head moved or no longer exists"
+              skipped=$((skipped + 1))
+              continue
+            fi
+            if gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$branch" >/dev/null; then
+              echo "DELETED $branch"
+              removed=$((removed + 1))
+            else
+              echo "FAILED $branch"
+              failures=$((failures + 1))
+            fi
+          done
+          echo "Deleted $removed; skipped $skipped; failed $failures" | tee -a "$GITHUB_STEP_SUMMARY"
+          [[ "$failures" -eq 0 && "$skipped" -eq 0 ]]
