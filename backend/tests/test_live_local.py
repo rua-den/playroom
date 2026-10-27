@@ -19,7 +19,7 @@ from playroom.auth import create_owner
 from playroom.db import connect, migrate
 from playroom.provider import default_provider_factory
 from playroom.model_profiles import persist_model_profile
-from playroom.live_local import create_live_local_app, main, serve_with_browser, setup_owner_if_needed
+from playroom.live_local import create_live_local_app, main, serve_with_browser, setup_owner_if_needed, setup_test_account_if_needed
 
 
 def _dist(tmp_path, *, index="<html>live</html>"):
@@ -113,6 +113,23 @@ def test_live_factory_uses_real_provider_factory_and_persistent_layout(tmp_path)
     assert app.state.allowed_hosts == {"127.0.0.1", "localhost"}
     assert (tmp_path / "data" / "playroom.sqlite3").is_file()
     assert (tmp_path / "data" / "secrets").is_dir()
+
+
+def test_test_account_is_explicit_loopback_setup_only(tmp_path):
+    data = tmp_path / "data"
+    app = create_live_local_app(data, frontend_dist=_dist(tmp_path))
+    connection = connect(data / "playroom.sqlite3")
+    try:
+        assert connection.execute("SELECT 1 FROM owners").fetchone() is None
+    finally:
+        connection.close()
+
+    assert setup_test_account_if_needed(data) is True
+    assert setup_test_account_if_needed(data) is False
+    with TestClient(app, base_url="http://127.0.0.1") as client:
+        login = client.post("/api/auth/login", json={"email": "admin", "password": "admin"}, headers={"origin": "http://127.0.0.1"})
+        assert login.status_code == 200 and login.json()["owner"]["is_admin"] is True
+        assert client.get("/api/accounts").status_code == 200
 
 
 def test_live_serves_spa_and_rejects_api_unknown_and_traversal(tmp_path):

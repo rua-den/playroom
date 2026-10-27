@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 import sqlite3
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field
 
 from ..auth import SESSION_COOKIE, SESSION_TTL_SECONDS, create_session, revoke_session, session_valid, verify_owner_password
 from ..db import request_connection
@@ -21,6 +21,12 @@ def require_owner(request: Request, connection: sqlite3.Connection = Depends(req
     owner = session_valid(connection, token)
     if owner is None:
         raise Unauthorized("Owner session is required")
+    return owner
+
+
+def require_admin(owner: Owner = Depends(require_owner)) -> Owner:
+    if not owner.is_admin:
+        raise HTTPException(status_code=403, detail="Administrator access is required")
     return owner
 
 
@@ -43,7 +49,7 @@ def login(payload: LoginRequest, request: Request, response: Response, connectio
         samesite="strict",
         path="/",
     )
-    return {"owner": {"id": owner.id, "email": owner.email}}
+    return {"owner": {"id": owner.id, "email": owner.email, "username": owner.username, "is_admin": owner.is_admin}}
 
 
 @router.post("/logout", status_code=204)
@@ -56,4 +62,4 @@ def logout(request: Request, response: Response, connection: sqlite3.Connection 
 
 @router.get("/me")
 def me(owner: Owner = Depends(require_owner)):
-    return {"id": owner.id, "email": owner.email}
+    return {"id": owner.id, "email": owner.email, "username": owner.username, "is_admin": owner.is_admin}

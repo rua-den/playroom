@@ -14,6 +14,7 @@ import { LegacyImport } from "./LegacyImport";
 import { Modal } from "./Modal";
 import { ToastProvider, useToast } from "./Toast";
 import { CampaignLibrary } from "./CampaignLibrary";
+import { AccountManagementPage } from "./AccountManagement";
 
 const RECOVERABLE_JOB_STATUSES = new Set(["queued", "running", "cancelling", "interrupted", "candidate"]);
 export function recoverableJobCount(jobs: Array<{ status?: string }>) { return jobs.filter((job) => RECOVERABLE_JOB_STATUSES.has(job.status ?? "")).length; }
@@ -46,8 +47,8 @@ function StructuredFields({ data, profiles, idFields = [] }: { data: Record<stri
 interface AppShellProps { owner: Owner; onLogout: () => void; notice?: string | null; }
 type CharacterDraft = { id: string; name: string; aliases: string };
 type CreateDraft = { title: string; worldName: string; worldDescription: string; personaName: string; personaDescription: string; characters: CharacterDraft[] };
-type ShellLocation = { story: string | null; drawer: boolean; details: boolean; settings: boolean; model: boolean; create: boolean; import: boolean; importMode: "chatgpt" | "legacy"; deleteId: string | null };
-const libraryLocation: ShellLocation = { story: null, drawer: false, details: false, settings: false, model: false, create: false, import: false, importMode: "chatgpt", deleteId: null };
+type ShellLocation = { story: string | null; drawer: boolean; details: boolean; settings: boolean; model: boolean; create: boolean; import: boolean; accounts: boolean; importMode: "chatgpt" | "legacy"; deleteId: string | null };
+const libraryLocation: ShellLocation = { story: null, drawer: false, details: false, settings: false, model: false, create: false, import: false, accounts: false, importMode: "chatgpt", deleteId: null };
 
 const blankDraft = (): CreateDraft => ({ title: "", worldName: "", worldDescription: "", personaName: "", personaDescription: "", characters: [] });
 export function lastStoryStorageKey(ownerId: string) { return `playroom:last-story:${ownerId}`; }
@@ -90,14 +91,14 @@ function CampaignForm({ onCreated, onCancel, ariaHidden = false }: { onCreated: 
 }
 
 function AppShellContent({ owner, onLogout, notice }: AppShellProps) {
-  const [campaigns, setCampaigns] = useState<CampaignSummary[]>([]); const [trashedCampaigns, setTrashedCampaigns] = useState<CampaignSummary[]>([]); const [libraryMode, setLibraryMode] = useState<"active" | "trash">("active"); const [selectedId, setSelectedId] = useState<string | null>(null); const [projection, setProjection] = useState<CampaignProjection | null>(null); const [branchPending, setBranchPending] = useState<string | null>(null); const [branchSwitching, setBranchSwitching] = useState(false); const [loading, setLoading] = useState(true); const [error, setError] = useState<string | null>(null); const [demoInfo, setDemoInfo] = useState<import("../api/types").DemoInfo | null>(null); const [createOpen, setCreateOpen] = useState(false); const [createInstance, setCreateInstance] = useState(0); const [importOpen, setImportOpen] = useState(false); const [importInstance, setImportInstance] = useState(0); const [libraryOpen, setLibraryOpen] = useState(true); const [importMode, setImportMode] = useState<"chatgpt" | "legacy">("chatgpt"); const [drawerOpen, setDrawerOpen] = useState(false); const [detailsOpen, setDetailsOpen] = useState(false); const [settingsOpen, setSettingsOpen] = useState(false); const [modelOpen, setModelOpen] = useState(false); const [deleteTarget, setDeleteTarget] = useState<CampaignSummary | null>(null); const [deletePending, setDeletePending] = useState(false); const [deleteError, setDeleteError] = useState<string | null>(null); const [editorTab, setEditorTab] = useState<"profiles" | "memory" | "scene">("profiles");
+  const [campaigns, setCampaigns] = useState<CampaignSummary[]>([]); const [trashedCampaigns, setTrashedCampaigns] = useState<CampaignSummary[]>([]); const [libraryMode, setLibraryMode] = useState<"active" | "trash">("active"); const [selectedId, setSelectedId] = useState<string | null>(null); const [projection, setProjection] = useState<CampaignProjection | null>(null); const [branchPending, setBranchPending] = useState<string | null>(null); const [branchSwitching, setBranchSwitching] = useState(false); const [loading, setLoading] = useState(true); const [error, setError] = useState<string | null>(null); const [demoInfo, setDemoInfo] = useState<import("../api/types").DemoInfo | null>(null); const [createOpen, setCreateOpen] = useState(false); const [createInstance, setCreateInstance] = useState(0); const [importOpen, setImportOpen] = useState(false); const [importInstance, setImportInstance] = useState(0); const [libraryOpen, setLibraryOpen] = useState(true); const [accountsOpen, setAccountsOpen] = useState(false); const [importMode, setImportMode] = useState<"chatgpt" | "legacy">("chatgpt"); const [drawerOpen, setDrawerOpen] = useState(false); const [detailsOpen, setDetailsOpen] = useState(false); const [settingsOpen, setSettingsOpen] = useState(false); const [modelOpen, setModelOpen] = useState(false); const [deleteTarget, setDeleteTarget] = useState<CampaignSummary | null>(null); const [deletePending, setDeletePending] = useState(false); const [deleteError, setDeleteError] = useState<string | null>(null); const [editorTab, setEditorTab] = useState<"profiles" | "memory" | "scene">("profiles");
   const selectedIdRef = useRef<string | null>(selectedId); selectedIdRef.current = selectedId;
   const projectionRef = useRef<CampaignProjection | null>(null); projectionRef.current = projection;
   const storyBranchRef = useRef(new Map<string, string>());
   const navigationSession = useRef(newId());
   const navigation = useRef<{ view: ShellLocation; index: number; hash: string } | null>(null);
   const applyingNavigation = useRef(false);
-  const currentLocation: ShellLocation = { story: libraryOpen ? null : selectedId, drawer: drawerOpen, details: detailsOpen, settings: settingsOpen, model: modelOpen, create: createOpen, import: importOpen, importMode: importOpen ? importMode : "chatgpt", deleteId: deleteTarget?.id ?? null };
+  const currentLocation: ShellLocation = { story: libraryOpen ? null : selectedId, drawer: drawerOpen, details: detailsOpen, settings: settingsOpen, model: modelOpen, create: createOpen, import: importOpen, accounts: accountsOpen, importMode: importOpen ? importMode : "chatgpt", deleteId: deleteTarget?.id ?? null };
   const locationKey = JSON.stringify(currentLocation);
   useEffect(() => {
     if (loading) return;
@@ -114,7 +115,7 @@ function AppShellContent({ owner, onLogout, notice }: AppShellProps) {
     const previous = navigation.current!;
     if (JSON.stringify(previous.view) === locationKey) return;
     // Consuming a panel also replaces its entry when create/import opens a different story.
-    const closedPanel = ["drawer", "details", "settings", "model", "create", "import", "deleteId"].some((key) => previous.view[key as keyof ShellLocation] && !currentLocation[key as keyof ShellLocation]);
+    const closedPanel = ["drawer", "details", "settings", "model", "create", "import", "accounts", "deleteId"].some((key) => previous.view[key as keyof ShellLocation] && !currentLocation[key as keyof ShellLocation]);
     write(currentLocation, previous.index + (closedPanel ? 0 : 1), closedPanel);
   }, [loading, locationKey, owner.id]);
   useEffect(() => {
@@ -139,7 +140,7 @@ function AppShellContent({ owner, onLogout, notice }: AppShellProps) {
       navigation.current = { view, index: target.index, hash: window.location.hash };
       applyingNavigation.current = JSON.stringify(view) !== locationKey;
       if (view.story) { selectedIdRef.current = view.story; setSelectedId(view.story); writeLastStoryId(owner.id, view.story); }
-      setLibraryOpen(!view.story); setDrawerOpen(view.drawer); setDetailsOpen(view.details); setSettingsOpen(view.settings); setModelOpen(view.model); setCreateOpen(view.create); setImportOpen(view.import); setImportMode(view.importMode); setDeleteTarget(campaigns.find((campaign) => campaign.id === view.deleteId) ?? null);
+      setLibraryOpen(!view.story); setDrawerOpen(view.drawer); setDetailsOpen(view.details); setSettingsOpen(view.settings); setModelOpen(view.model); setCreateOpen(view.create); setImportOpen(view.import); setAccountsOpen(view.accounts); setImportMode(view.importMode); setDeleteTarget(campaigns.find((campaign) => campaign.id === view.deleteId) ?? null);
     }
     function onHash() {
       if (!navigation.current) return;
@@ -242,12 +243,12 @@ function AppShellContent({ owner, onLogout, notice }: AppShellProps) {
       if (mountedRef.current && selectedIdRef.current === campaignId) { const message = cause instanceof ApiError && cause.status === 409 ? "Không thể tạo nhánh: nhánh nguồn vừa thay đổi hoặc đang có lượt AI chưa xong. Hãy thử lại." : cause instanceof ApiError ? cause.message : "Không thể tạo nhánh."; setError(message); toast.error(message); }
     } finally { if (mountedRef.current && selectedIdRef.current === campaignId) setBranchPending(null); }
   }
-  function chooseStory(id: string) { if (id !== selectedIdRef.current) { projectionRequest.current += 1; selectedIdRef.current = id; setProjection(null); } setSelectedId(id); writeLastStoryId(owner.id, id); setLibraryOpen(false); setCreateOpen(false); setImportOpen(false); }
+  function chooseStory(id: string) { if (id !== selectedIdRef.current) { projectionRequest.current += 1; selectedIdRef.current = id; setProjection(null); } setSelectedId(id); writeLastStoryId(owner.id, id); setLibraryOpen(false); setAccountsOpen(false); setCreateOpen(false); setImportOpen(false); }
   function created(campaign: CampaignSummary) { setCampaigns((current) => [campaign, ...current]); setCreateInstance((current) => current + 1); setImportInstance((current) => current + 1); setCreateOpen(false); setImportOpen(false); chooseStory(campaign.id); }
   function openCreate() { setImportOpen(false); setCreateOpen(true); }
   function openImport(mode: "chatgpt" | "legacy") { setCreateOpen(false); setImportMode(mode); setImportOpen(true); }
   const formatStoryDate = (value: string) => { const date = new Date(value); return Number.isNaN(date.valueOf()) ? "" : new Intl.DateTimeFormat("vi-VN", { dateStyle: "medium" }).format(date); };
-  const library = <CampaignLibrary campaigns={campaigns} trash={trashedCampaigns} mode={libraryMode} selectedId={selectedId} error={error} trashLoading={trashLoading} restorePending={restorePendingIds} ariaHidden={settingsOpen || drawerOpen || detailsOpen || createOpen || importOpen || modelOpen || deleteTarget !== null} onMode={(mode) => { if (mode === "trash") void openTrash(); else openActiveLibrary(); }} onCreate={openCreate} onChoose={chooseStory} onDelete={(item) => { setDeleteError(null); setDeleteTarget(item); }} onRestore={(item) => { void restoreStory(item).catch(() => undefined); }} onImport={openImport} formatDate={formatStoryDate} />;
+  const library = <CampaignLibrary campaigns={campaigns} trash={trashedCampaigns} mode={libraryMode} selectedId={selectedId} error={error} trashLoading={trashLoading} restorePending={restorePendingIds} ariaHidden={accountsOpen || settingsOpen || drawerOpen || detailsOpen || createOpen || importOpen || modelOpen || deleteTarget !== null} onMode={(mode) => { if (mode === "trash") void openTrash(); else openActiveLibrary(); }} onCreate={openCreate} onChoose={chooseStory} onDelete={(item) => { setDeleteError(null); setDeleteTarget(item); }} onRestore={(item) => { void restoreStory(item).catch(() => undefined); }} onImport={openImport} formatDate={formatStoryDate} />;
   if (loading) return <main className="app-shell loading-screen" role="status">Đang tải phòng truyện…</main>;
   const branches: BranchSummary[] = projection?.branches ?? [];
   const branchOptions: BranchSummary[] = projection && branches.length > 1 && !branches.some((item) => item.id === projection.branch.id) ? [...branches, { id: projection.branch.id, name: projection.branch.name, parent_branch_id: null, fork_checkpoint_id: null, state_version: projection.branch.state_version }] : branches;
@@ -256,22 +257,23 @@ function AppShellContent({ owner, onLogout, notice }: AppShellProps) {
     <header className="topbar" aria-hidden={drawerOpen || detailsOpen || settingsOpen || modelOpen || createOpen || importOpen || deleteTarget !== null}>
       <div className="wordmark"><span className="brand-mark small" aria-hidden="true"><svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M4 5.5c3.2-.8 5.9-.1 8 1.9v12c-2.1-2-4.8-2.7-8-1.9z"/><path d="M20 5.5c-3.2-.8-5.9-.1-8 1.9v12c2.1-2 4.8-2.7 8-1.9z"/><path d="M7 9h2M15 9h2M7 12h2M15 12h2"/></svg></span><span>Playroom</span>{demoInfo?.mode === "synthetic" && <span className="demo-badge" aria-label={demoInfo.label} title={demoInfo.label}>{demoInfo.label}</span>}</div>
       <div className="campaign-controls">
-        <button type="button" className="quiet-button touch-target library-trigger" onClick={() => { setCreateOpen(false); setImportOpen(false); setLibraryOpen(true); }}>Thư viện truyện</button>
-      {!libraryOpen && campaigns.length > 0 && <>
+        <button type="button" className="quiet-button touch-target library-trigger" onClick={() => { setCreateOpen(false); setImportOpen(false); setAccountsOpen(false); setLibraryOpen(true); }}>Thư viện truyện</button>
+      {!accountsOpen && !libraryOpen && campaigns.length > 0 && <>
         <button type="button" className="quiet-button touch-target" aria-haspopup="dialog" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(true)}>Truyện và tác vụ</button>
         {projection && <button type="button" className="quiet-button touch-target mobile-context-trigger" onClick={openDetails}>AI đang nhớ gì</button>}
       </>}</div>
       <div className="account-menu">
         <ThemeToggle />
-        <span className="account-email">{owner.email}</span>
+        <span className="account-email">{owner.username ?? owner.email}</span>
         {projection && !libraryOpen && <button type="button" className="quiet-button touch-target context-trigger" onClick={openDetails}>Mở hồ sơ và ký ức</button>}
+        {owner.is_admin && <button type="button" className="quiet-button touch-target" aria-pressed={accountsOpen} onClick={() => setAccountsOpen((open) => !open)}>Quản lý tài khoản</button>}
         <button type="button" className="quiet-button touch-target" onClick={() => setSettingsOpen(true)}>Cài đặt</button>
         <button type="button" className="quiet-button touch-target" onClick={onLogout}>Đăng xuất</button>
       </div>
     </header>
     {notice && <div role="alert" className="form-error shell-notice" aria-hidden={drawerOpen || detailsOpen || settingsOpen || createOpen || importOpen}> {notice}</div>}
     {error && !campaigns.length && <a className="catalog-retry" href="/">Thử lại</a>}
-    <>{libraryOpen && library}{error && libraryOpen && <div role="alert" className="form-error shell-notice">{error}</div>}<div className={libraryOpen ? "library-story-hidden" : "story-workspace"} aria-hidden={libraryOpen || deleteTarget !== null} hidden={libraryOpen}>
+    {accountsOpen ? <AccountManagementPage currentOwnerId={owner.id} onBack={() => setAccountsOpen(false)} /> : <>{libraryOpen && library}{error && libraryOpen && <div role="alert" className="form-error shell-notice">{error}</div>}<div className={libraryOpen ? "library-story-hidden" : "story-workspace"} aria-hidden={libraryOpen || deleteTarget !== null} hidden={libraryOpen}>
       <div className="workspace-grid" aria-hidden={libraryOpen || drawerOpen || detailsOpen || settingsOpen || modelOpen || createOpen || importOpen || deleteTarget !== null}>
         <section className="story-column conversation-column">
           {error && <div role="alert" className="form-error">{error}</div>}
@@ -281,7 +283,7 @@ function AppShellContent({ owner, onLogout, notice }: AppShellProps) {
         </section>
       </div>
     </div>
-    </>
+    </>}
     <Modal open={drawerOpen} title="Danh sách truyện" closeLabel="Đóng danh sách truyện" onClose={closeDrawer}>
       {campaigns.map((item) => <button type="button" className="campaign-item touch-target" key={item.id} aria-pressed={item.id === selectedId} onClick={() => { chooseStory(item.id); closeDrawer(); }}>{item.title}</button>)}
       <div className="story-menu-actions" aria-label="Tác vụ thư viện">

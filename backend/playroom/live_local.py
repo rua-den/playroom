@@ -17,7 +17,7 @@ from fastapi import Request
 from fastapi.responses import FileResponse, JSONResponse
 
 from .app import create_app
-from .auth import create_owner
+from .auth import create_owner, create_test_admin
 from .db import connect, migrate, transaction
 from .domain import ValidationError
 
@@ -156,10 +156,25 @@ def setup_owner_if_needed(data_dir: str | Path, *, input_fn=None, password_fn=No
             if connection.execute("SELECT 1 FROM owners LIMIT 1").fetchone() is not None:
                 return False
             try:
-                owner = create_owner(connection, email, password)
+                owner = create_owner(connection, email, password, is_admin=True)
             except ValidationError as exc:
                 raise ValueError(str(exc)) from exc
         print(f"Created owner {owner.email}", flush=True)
+        return True
+    finally:
+        connection.close()
+
+
+def setup_test_account_if_needed(data_dir: str | Path) -> bool:
+    """Seed admin/admin only when explicitly requested on the loopback runner."""
+    root = Path(data_dir).expanduser()
+    connection = connect(root / "playroom.sqlite3")
+    try:
+        migrate(connection)
+        owner = create_test_admin(connection)
+        if owner is None:
+            return False
+        print("Created local test account admin", flush=True)
         return True
     finally:
         connection.close()
@@ -243,13 +258,17 @@ def main() -> None:
     parser.add_argument("--frontend-dist")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
-    parser.add_argument("--setup-owner", action="store_true", help="Prompt for the first owner when no owner exists")
+    setup = parser.add_mutually_exclusive_group()
+    setup.add_argument("--setup-owner", action="store_true", help="Prompt for the first owner when no owner exists")
+    setup.add_argument("--test-account", action="store_true", help="Create the local-only admin/admin test account when no owner exists")
     parser.add_argument("--open-browser", action="store_true", help="Open the loopback UI after the server is ready")
     args = parser.parse_args()
     _validate_cli(args)
     app = create_live_local_app(args.data_dir, frontend_dist=args.frontend_dist)
     if args.setup_owner:
         setup_owner_if_needed(args.data_dir)
+    if args.test_account:
+        setup_test_account_if_needed(args.data_dir)
     if args.open_browser:
         serve_with_browser(app, "127.0.0.1", args.port)
     else:

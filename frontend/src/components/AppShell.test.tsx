@@ -444,6 +444,24 @@ describe("recoverable job summary", () => {
   });
 });
 
+describe("account management navigation", () => {
+  it("shows the account page only to admins and returns to the story library", async () => {
+    vi.spyOn(api, "listCampaigns").mockResolvedValue([]);
+    vi.spyOn(api, "listAccounts").mockResolvedValue([]);
+    const user = userEvent.setup();
+    const view = render(<AppShell owner={{ id: "reader-owner", email: "reader@example.test", is_admin: false }} onLogout={() => undefined} />);
+    await screen.findByRole("button", { name: "Thư viện truyện" });
+    expect(screen.queryByRole("button", { name: "Quản lý tài khoản" })).not.toBeInTheDocument();
+
+    view.rerender(<AppShell owner={{ id: "admin-owner", email: "admin@example.test", username: "admin", is_admin: true }} onLogout={() => undefined} />);
+    await user.click(await screen.findByRole("button", { name: "Quản lý tài khoản" }));
+    expect(await screen.findByRole("heading", { name: "Quản lý tài khoản" })).toBeInTheDocument();
+    expect(api.listAccounts).toHaveBeenCalledOnce();
+    await user.click(screen.getByRole("button", { name: "Quay lại truyện" }));
+    expect(await screen.findByRole("heading", { name: "Thư viện truyện" })).toBeInTheDocument();
+  });
+});
+
 describe("auxiliary modal routes", () => {
   it("keeps the library mounted and preserves an unsent create draft when the modal closes", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response("[]", { status: 200 })));

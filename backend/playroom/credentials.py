@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -74,3 +75,12 @@ class CredentialStore:
         path = self._path(owner_id, credential_id)
         record = self._read(owner_id, credential_id); record["revoked"] = True
         path.write_text(json.dumps(record), encoding="utf-8")
+
+    def delete_owner(self, owner_id: str) -> None:
+        if not owner_id or any(part in owner_id for part in ("..", "/", "\\")) or owner_id != Path(owner_id).name:
+            raise ValidationError("Invalid owner ID")
+        owner_dir = self.root / owner_id
+        if owner_dir.is_symlink():
+            owner_dir.unlink()
+        elif owner_dir.exists():
+            shutil.rmtree(owner_dir)

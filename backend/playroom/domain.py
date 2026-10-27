@@ -32,6 +32,8 @@ class RateLimited(PlayroomError):
 class Owner:
     id: str
     email: str
+    username: str = ""
+    is_admin: bool = False
 
 
 @dataclass(frozen=True)
