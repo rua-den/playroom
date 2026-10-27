@@ -37,6 +37,10 @@ def test_failed_turn_preserves_evidence_without_retry(tmp_path, failure, code):
     assert report['turns'][0]['job_id'] and 'failed_draft' in report['turns'][0]
     assert report['turns'][0]['failed_provider_output']
     assert len(report['turns'][0]['failed_provider_output']) <= MAX_OUTPUT * 8
+    if failure == 'malformed':
+        assert report['usage'] == {'input_tokens': 100, 'output_tokens': 120}
+        assert report['unknown_usage_attempts'] == 0
+        assert Decimal(report['estimated_usage_usd']) == Decimal('.000062')
 
 
 def test_absent_npc_cannot_supply_dialogue(tmp_path):
@@ -105,12 +109,87 @@ def test_preflight_429_is_reported_without_dispatch_retry_or_sensitive_details(t
         calls.append(True)
         raise HTTPError('https://fixture.invalid/private-key', 429, 'sensitive-secret', {'Authorization': 'secret'}, None)
     guard_type = DispatchGuard
-    monkeypatch.setattr('local_story_quality_trial.DispatchGuard', lambda root, preflight: guard_type(root, deny))
+    monkeypatch.setattr('local_story_quality_trial.DispatchGuard', lambda root, preflight, **kwargs: guard_type(root, deny, **kwargs))
     transport = OfflineTransport()
     root = tmp_path / 'rate-limited'
     report = run_trial(root, transport=transport)
     assert calls == [True] and not transport.requests
     assert report['provider_posts'] == report['committed_turns'] == 0
     assert report['preflight_failure'] == {'type': 'HTTPError', 'http_status': 429}
+    assert report['unknown_usage_attempts'] == 1 and report['estimated_usage_usd'] is None
     assert json.loads((root / 'preflight-failure.json').read_text()) == report['preflight_failure']
     assert 'sensitive-secret' not in json.dumps(report) and 'private-key' not in json.dumps(report)
+
+
+def test_voices_scenario_preserves_both_profiles_and_exact_midpoint_dialogue(tmp_path, monkeypatch):
+    from local_story_quality_trial import NPC_ID, KHOA_ID, VY_VOICE, KHOA_VOICE
+    from playroom.db import connect
+
+    monkeypatch.setattr('local_story_quality_trial.read_local_key', lambda: pytest.fail('offline key'))
+    guard_type = DispatchGuard
+    def offline_guard(root, preflight, **kwargs):
+        assert kwargs['pace_balance'] is False
+        return guard_type(root, preflight, **kwargs)
+    monkeypatch.setattr('local_story_quality_trial.DispatchGuard', offline_guard)
+    transport = OfflineTransport()
+    root = tmp_path / 'voices'
+    report = run_trial(root, scenario='voices', transport=transport)
+    assert report['status'] == 'completed' and report['provider_posts'] == report['committed_turns'] == 8
+    assert report['max_posts'] == 8 and Decimal(report['max_usd']) == PER_SEND * 8
+    db = connect(root / 'data' / 'playroom.sqlite3')
+    grant = db.execute('SELECT max_jobs,total_cap_usd FROM paid_trial_authorizations').fetchone()
+    assert grant['max_jobs'] == 8 and Decimal(grant['total_cap_usd']) == PER_SEND * 8
+    summary = db.execute("SELECT text,source_revision_ids_json FROM memory_versions WHERE kind='summary'").fetchone()
+    assert len(json.loads(summary['source_revision_ids_json'])) == 4
+    for turn in report['turns'][:4]:
+        for segment in turn['output_segments']:
+            if segment['kind'] == 'dialogue':
+                assert segment['text'] in summary['text']
+                assert segment['character_id'] in summary['text'] and segment['profile_version_id'] in summary['text']
+    db.close()
+    for request in transport.requests:
+        user = json.loads(request['messages'][1]['content'])
+        selected = {(row['character_id'], row['profile_version_id']) for row in user['selected_characters'] if row['present']}
+        assert {row[0] for row in selected} == {NPC_ID, KHOA_ID}
+        wire = json.dumps(request, ensure_ascii=False)
+        assert VY_VOICE in wire and KHOA_VOICE in wire
+    assert report['turns'][4]['summary_selected']
+    assert all(not turn['absent_warning'] for turn in report['turns'])
+
+
+def test_balance_pacing_uses_fresh_attempts_and_fake_clock(tmp_path, monkeypatch):
+    clock, sleeps, reads = [0.0], [], []
+    monkeypatch.setattr('local_story_quality_trial.time.monotonic', lambda: clock[0])
+    def sleep(seconds):
+        sleeps.append(seconds)
+        clock[0] += seconds
+    monkeypatch.setattr('local_story_quality_trial.time.sleep', sleep)
+    guard = DispatchGuard(tmp_path, lambda: reads.append(clock[0]), max_posts=8, pace_balance=True)
+    for _ in range(8):
+        guard.check('POST', ENDPOINT + '/chat/completions', {'model': MODEL, 'max_tokens': MAX_OUTPUT})
+    with pytest.raises(RuntimeError):
+        guard.check('POST', ENDPOINT + '/chat/completions', {'model': MODEL, 'max_tokens': MAX_OUTPUT})
+    assert reads == [index * 12 for index in range(8)]
+    assert sleeps == [12] * 7
+
+
+@pytest.mark.parametrize('failure', ['known_other', 'khoa_private', 'absent', 'agency'])
+def test_voices_scenario_keeps_production_fences(tmp_path, failure):
+    report = run_trial(tmp_path / failure, scenario='voices', transport=OfflineTransport(failure))
+    assert report['status'] == 'stopped' and report['committed_turns'] == 0
+    assert report['provider_posts'] == 1
+
+
+def test_exact_quoted_summary_refuses_to_clip():
+    from local_story_quality_trial import quoted_dialogue_summary
+    with pytest.raises(RuntimeError, match='no clipping'):
+        quoted_dialogue_summary([{'revision_id': 'source', 'action_text': 'hello', 'output_segments': [
+            {'kind': 'dialogue', 'character_id': 'npc', 'profile_version_id': 'version', 'text': 'x' * 20000},
+        ]}])
+
+
+def test_usage_falls_back_to_persisted_cost_ledger():
+    from local_story_quality_trial import usage_pair
+
+    ledger = json.dumps({'stages': {'narration': {'usage': {'input_tokens': 2297, 'output_tokens': 186}}}})
+    assert usage_pair('{"status":"unknown"}', ledger, 'narration') == (2297, 186)
