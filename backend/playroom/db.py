@@ -65,6 +65,21 @@ def migrate(connection: sqlite3.Connection) -> None:
     connection.executescript(import_review.read_text(encoding="utf-8"))
     legacy_import = Path(__file__).parent / "migrations" / "006_legacy_import.sql"
     connection.executescript(legacy_import.read_text(encoding="utf-8"))
+    with transaction(connection):
+        if connection.execute("SELECT 1 FROM schema_migrations WHERE version=7").fetchone() is None:
+            owner_columns = {row[1] for row in connection.execute("PRAGMA table_info(owners)")}
+            if "username" not in owner_columns:
+                _add_column_if_missing(connection, "owners", "username", "TEXT NOT NULL DEFAULT ''")
+            if "is_admin" not in owner_columns:
+                _add_column_if_missing(connection, "owners", "is_admin", "INTEGER NOT NULL DEFAULT 0 CHECK(is_admin IN (0,1))")
+            connection.execute("UPDATE owners SET username=email WHERE username=''")
+            connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_owners_username ON owners(username COLLATE NOCASE)")
+            connection.execute("CREATE TABLE IF NOT EXISTS account_deletion_requests (owner_id TEXT NOT NULL, campaign_id TEXT)")
+            connection.execute(
+                "UPDATE owners SET is_admin=1 WHERE id=(SELECT id FROM owners ORDER BY created_at,id LIMIT 1) "
+                "AND NOT EXISTS(SELECT 1 FROM owners WHERE is_admin=1)"
+            )
+            connection.execute("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (7, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))")
     source_columns = {row[1] for row in connection.execute("PRAGMA table_info(chatgpt_import_sources)")}
     if "skipped_messages" not in source_columns:
         _add_column_if_missing(connection, "chatgpt_import_sources", "skipped_messages", "INTEGER")
@@ -128,6 +143,24 @@ def migrate(connection: sqlite3.Connection) -> None:
     connection.execute("CREATE TABLE IF NOT EXISTS owner_settings_versions (owner_id TEXT NOT NULL REFERENCES owners(id) ON DELETE CASCADE, revision INTEGER NOT NULL, settings_json TEXT NOT NULL, settings_hash TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(owner_id, revision))")
     connection.execute("CREATE TRIGGER IF NOT EXISTS prevent_owner_settings_update BEFORE UPDATE ON owner_settings_versions BEGIN SELECT RAISE(ABORT, 'owner settings are immutable'); END")
     connection.execute("CREATE TRIGGER IF NOT EXISTS prevent_owner_settings_delete BEFORE DELETE ON owner_settings_versions BEGIN SELECT RAISE(ABORT, 'owner settings are immutable'); END")
+    with transaction(connection):
+        if connection.execute("SELECT 1 FROM schema_migrations WHERE version=8").fetchone() is None:
+            for trigger, table, condition in (
+                ("prevent_checkpoint_delete", "state_checkpoints", "campaign_id=OLD.campaign_id"),
+                ("prevent_profile_version_delete", "profile_versions", "campaign_id=OLD.campaign_id"),
+                ("prevent_memory_version_delete", "memory_versions", "campaign_id=OLD.campaign_id"),
+                ("prevent_scene_version_delete", "scene_versions", "campaign_id=OLD.campaign_id"),
+                ("prevent_context_preview_delete", "context_previews", "owner_id=OLD.owner_id AND campaign_id IS NULL"),
+                ("prevent_model_profile_delete", "model_profile_versions", "owner_id=OLD.owner_id AND campaign_id IS NULL"),
+                ("prevent_owner_settings_delete", "owner_settings_versions", "owner_id=OLD.owner_id AND campaign_id IS NULL"),
+            ):
+                connection.execute(f"DROP TRIGGER IF EXISTS {trigger}")
+                connection.execute(
+                    f"CREATE TRIGGER {trigger} BEFORE DELETE ON {table} "
+                    f"WHEN NOT EXISTS(SELECT 1 FROM account_deletion_requests WHERE {condition}) "
+                    "BEGIN SELECT RAISE(ABORT, 'immutable records can only be removed with their account'); END"
+                )
+            connection.execute("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (8, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))")
     connection.execute("CREATE TABLE IF NOT EXISTS generation_branch_guards (branch_id TEXT PRIMARY KEY REFERENCES branches(id) ON DELETE CASCADE, generation_job_id TEXT NOT NULL REFERENCES generation_jobs(id) ON DELETE CASCADE, acquired_at TEXT NOT NULL)")
     connection.execute("CREATE TABLE IF NOT EXISTS generation_events (id INTEGER PRIMARY KEY AUTOINCREMENT, generation_job_id TEXT NOT NULL REFERENCES generation_jobs(id) ON DELETE CASCADE, stage TEXT, event_type TEXT NOT NULL, offset INTEGER, content TEXT NOT NULL DEFAULT '', payload_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL)")
     connection.execute("CREATE INDEX IF NOT EXISTS ix_generation_events_job ON generation_events(generation_job_id, id)")

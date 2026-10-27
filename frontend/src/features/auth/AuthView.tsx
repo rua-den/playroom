@@ -9,7 +9,7 @@ interface AuthViewProps {
 }
 
 export function AuthView({ onAuthenticated, notice }: AuthViewProps) {
-  const [email, setEmail] = useState("");
+  const [identity, setIdentity] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -19,11 +19,11 @@ export function AuthView({ onAuthenticated, notice }: AuthViewProps) {
     setPending(true);
     setError(null);
     try {
-      const result = await api.login({ email, password });
+      const result = await api.login({ email: identity, password });
       onAuthenticated(result.owner);
     } catch (cause) {
       setError(cause instanceof ApiError && cause.status === 401
-        ? "Email hoặc mật khẩu không đúng."
+        ? "Tên đăng nhập hoặc mật khẩu không đúng."
         : "Không thể kết nối tới Playroom.");
     } finally {
       setPending(false);
@@ -40,8 +40,8 @@ export function AuthView({ onAuthenticated, notice }: AuthViewProps) {
         <p className="auth-intro">Một căn phòng riêng cho những câu chuyện còn đang tiếp diễn.</p>
         {notice && <div role="alert" className="form-error">{notice}</div>}
         <form onSubmit={submit} className="auth-form">
-          <label htmlFor="email">Email</label>
-          <input id="email" type="email" autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} required />
+          <label htmlFor="email">Tên đăng nhập hoặc email</label>
+          <input id="email" type="text" autoComplete="username" value={identity} onChange={(event) => setIdentity(event.target.value)} required />
           <label htmlFor="password">Mật khẩu</label>
           <input id="password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required />
           {error && <div role="alert" className="form-error">{error}</div>}

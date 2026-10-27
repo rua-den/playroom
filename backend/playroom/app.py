@@ -10,7 +10,7 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from .api import auth, campaigns, context as context_api, memory, generation, configuration, transfers
+from .api import accounts, auth, campaigns, context as context_api, memory, generation, configuration, transfers
 from .credentials import CredentialStore
 from .model_profiles import OpenRouterVerifier, ensure_profile_tables
 from .settings import ensure_configuration_tables
@@ -171,6 +171,7 @@ def create_app(
         return {"status": "ok"}
 
     app.include_router(auth.router)
+    app.include_router(accounts.router)
     app.include_router(campaigns.router)
     app.include_router(memory.router)
     app.include_router(context_api.router)

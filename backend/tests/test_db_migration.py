@@ -56,3 +56,20 @@ def test_migrate_adds_nullable_roleplay_columns_without_backfilling_legacy_rows(
     assert legacy_revision["narrative_text"] == "Legacy narrative"
     assert legacy_revision["output_segments_json"] is None
     db.close()
+
+
+def test_migrate_backfills_existing_owner_as_admin_once(tmp_path):
+    db = connect(tmp_path / "legacy-account.sqlite3")
+    initial = Path(__file__).parents[1] / "playroom" / "migrations" / "001_initial.sql"
+    db.executescript(initial.read_text(encoding="utf-8"))
+    owner_id = str(uuid4())
+    db.execute("INSERT INTO owners(id,email,password_hash,created_at) VALUES(?,?,?,?)", (owner_id, "legacy@example.test", "hash", "2026-10-13T00:00:00Z"))
+
+    migrate(db)
+    owner = db.execute("SELECT username,is_admin FROM owners WHERE id=?", (owner_id,)).fetchone()
+    assert (owner["username"], owner["is_admin"]) == ("legacy@example.test", 1)
+
+    db.execute("UPDATE owners SET is_admin=0 WHERE id=?", (owner_id,))
+    migrate(db)
+    assert db.execute("SELECT is_admin FROM owners WHERE id=?", (owner_id,)).fetchone()[0] == 0
+    db.close()

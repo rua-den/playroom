@@ -118,6 +118,14 @@ Tạo tài khoản một lần bằng email muốn dùng; CLI hỏi mật khẩu
 rtk proxy uv run --locked playroom-owner create-owner --database-url .playroom-live/playroom.sqlite3 --email owner@example.test
 ```
 
+Owner đầu tiên là admin và có thể quản lý tài khoản trong trang **Quản lý tài khoản**. Mật khẩu account mới phải dài ít nhất 12 ký tự; xóa account sẽ xóa truyện, dữ liệu và provider credentials của account đó.
+
+Để thử riêng bằng dữ liệu test local, dùng một thư mục trống và cờ `--test-account`; cặp `admin` / `admin` chỉ được tạo nếu database chưa có owner. Runner chỉ bind loopback:
+
+```powershell
+rtk proxy uv run --locked playroom-live-local --data-dir .playroom-test --test-account
+```
+
 Mỗi lần chơi, chạy một lệnh và mở `http://127.0.0.1:8000`:
 
 ```powershell

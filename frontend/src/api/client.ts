@@ -1,5 +1,6 @@
 import type {
   ApiErrorBody,
+  AccountSummary,
   BranchSummary,
   CampaignCreatePayload,
   CampaignDetail,
@@ -98,6 +99,13 @@ export const api = {
     request<import("./types").DemoInfo>("/api/demo/info", {}, false),
   me: (options: { notifyAuthExpired?: boolean } = {}) =>
     request<Owner>("/api/auth/me", {}, options.notifyAuthExpired ?? true),
+  listAccounts: () => request<AccountSummary[]>("/api/accounts"),
+  createAccount: (payload: { username: string; password: string }) =>
+    request<AccountSummary>("/api/accounts", { method: "POST", body: JSON.stringify(payload) }),
+  updateAccount: (id: string, payload: { username: string; password?: string }) =>
+    request<AccountSummary>(`/api/accounts/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  deleteAccount: (id: string) =>
+    request<void>(`/api/accounts/${encodeURIComponent(id)}`, { method: "DELETE" }),
   listCampaigns: (trashed = false) => request<CampaignSummary[]>(`/api/campaigns${trashed ? "?trashed=true" : ""}`),
   deleteCampaign: (campaignId: string) =>
     request<CampaignSummary>(`/api/campaigns/${encodeURIComponent(campaignId)}`, { method: "DELETE" }),

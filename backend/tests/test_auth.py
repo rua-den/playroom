@@ -135,3 +135,83 @@ def test_authenticated_campaign_and_memory_lifecycle_api(tmp_path):
     assert len(client.get(f"/api/campaigns/{campaign['id']}/memory?branch_id={branch}").json()) == 1
     archived = client.post(f"/api/campaigns/{campaign['id']}/archive", json={"branch_id": branch, "expected_state_version": 5}, headers=headers)
     assert archived.status_code == 200
+
+
+def test_admin_can_create_update_and_delete_accounts_without_leaking_credentials(tmp_path):
+    database_path = tmp_path / "accounts.sqlite3"
+    connection = connect(database_path)
+    migrate(connection)
+    admin = create_owner(connection, "admin@example.test", "admin password long enough", is_admin=True)
+    connection.close()
+    app = create_app(database_url=f"sqlite:///{database_path}", allowed_hosts={"testserver"}, secure_cookies=False, credential_root=str(tmp_path / "secrets"))
+    headers = {"origin": "https://testserver"}
+    client = TestClient(app, base_url="https://testserver")
+
+    assert client.get("/api/accounts").status_code == 401
+    login = client.post("/api/auth/login", json={"email": "admin@example.test", "password": "admin password long enough"}, headers=headers)
+    assert login.status_code == 200 and login.json()["owner"]["is_admin"] is True
+    accounts = client.get("/api/accounts")
+    assert accounts.status_code == 200
+    assert accounts.json() == [{"id": admin.id, "username": "admin@example.test", "is_admin": True, "created_at": accounts.json()[0]["created_at"]}]
+    assert "password_hash" not in accounts.text and "email" not in accounts.text
+
+    created = client.post("/api/accounts", json={"username": "reader", "password": "reader password long"}, headers=headers)
+    assert created.status_code == 201
+    account = created.json()
+    assert account["username"] == "reader" and account["is_admin"] is False
+    assert "password" not in created.text and "password_hash" not in created.text
+    app.state.credential_store.put(account["id"], "reader-secret")
+    app.state.credential_store.put(admin.id, "admin-secret")
+    connection = connect(database_path)
+    try:
+        connection.execute("INSERT INTO owner_settings_versions(owner_id,revision,settings_json,settings_hash,created_at) VALUES(?,?,?,?,?)", (account["id"], 1, "{}", "test-hash", "2026-10-27T00:00:00Z"))
+        connection.execute("INSERT INTO model_profile_versions(owner_id,id,version,snapshot_json,profile_hash,created_at) VALUES(?,?,?,?,?,?)", (account["id"], "test-profile", 1, "{}", "test-hash", "2026-10-27T00:00:00Z"))
+    finally:
+        connection.close()
+    reader = TestClient(app, base_url="https://testserver")
+    assert reader.post("/api/auth/login", json={"email": "reader", "password": "reader password long"}, headers=headers).status_code == 200
+    campaign = reader.post("/api/campaigns", json={"title": "Private", "world": {"name": "World"}, "persona": {"name": "Player"}}, headers=headers)
+    assert campaign.status_code == 201
+
+    updated = client.patch(f"/api/accounts/{account['id']}", json={"username": "reader2", "password": "replacement reader password"}, headers=headers)
+    assert updated.status_code == 200 and updated.json()["username"] == "reader2"
+    assert reader.get("/api/campaigns").status_code == 401
+    assert reader.post("/api/auth/login", json={"email": "reader2", "password": "replacement reader password"}, headers=headers).status_code == 200
+    assert client.delete(f"/api/accounts/{account['id']}", headers=headers).status_code == 204
+    assert reader.get("/api/campaigns").status_code == 401
+    assert not (tmp_path / "secrets" / account["id"]).exists()
+    assert (tmp_path / "secrets" / admin.id).is_dir()
+    connection = connect(database_path)
+    try:
+        assert connection.execute("SELECT 1 FROM owners WHERE id = ?", (account["id"],)).fetchone() is None
+        assert connection.execute("SELECT 1 FROM campaigns WHERE id = ?", (campaign.json()["id"],)).fetchone() is None
+        assert connection.execute("SELECT 1 FROM owner_settings_versions WHERE owner_id = ?", (account["id"],)).fetchone() is None
+        assert connection.execute("SELECT 1 FROM model_profile_versions WHERE owner_id = ?", (account["id"],)).fetchone() is None
+    finally:
+        connection.close()
+    assert client.delete(f"/api/accounts/{admin.id}", headers=headers).status_code == 409
+
+
+def test_account_management_is_admin_only_and_validates_input(tmp_path):
+    client = TestClient(_app(tmp_path), base_url="https://testserver")
+    headers = {"origin": "https://testserver"}
+    assert client.post("/api/auth/login", json={"email": "owner@example.test", "password": "secret owner password"}, headers=headers).status_code == 200
+    assert client.get("/api/accounts").status_code == 403
+    assert client.post("/api/accounts", json={"username": "reader", "password": "reader password long"}, headers=headers).status_code == 403
+    account_id = str(uuid4())
+    assert client.patch(f"/api/accounts/{account_id}", json={"username": "reader"}, headers=headers).status_code == 403
+    assert client.delete(f"/api/accounts/{account_id}", headers=headers).status_code == 403
+
+    database_path = tmp_path / "admin-accounts.sqlite3"
+    connection = connect(database_path)
+    migrate(connection)
+    create_owner(connection, "admin@example.test", "admin password long enough", is_admin=True)
+    connection.close()
+    app = create_app(database_url=f"sqlite:///{database_path}", allowed_hosts={"testserver"}, secure_cookies=False)
+    admin = TestClient(app, base_url="https://testserver")
+    assert admin.post("/api/auth/login", json={"email": "admin@example.test", "password": "admin password long enough"}, headers=headers).status_code == 200
+    assert admin.post("/api/accounts", json={"username": "x!", "password": "reader password long", "is_admin": True}, headers=headers).status_code == 422
+    created = admin.post("/api/accounts", json={"username": "reader", "password": "reader password long", "is_admin": True}, headers=headers)
+    assert created.status_code == 201 and created.json()["is_admin"] is False
+    assert admin.post("/api/accounts", json={"username": "reader", "password": "another password long"}, headers=headers).status_code == 422
+    assert admin.patch(f"/api/accounts/{created.json()['id']}", json={"username": "reader", "password": "short"}, headers=headers).status_code == 422

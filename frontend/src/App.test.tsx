@@ -18,10 +18,10 @@ describe("authentication shell", () => {
     const user = userEvent.setup();
     render(<App />);
     await screen.findByRole("heading", { name: "Đăng nhập Playroom" });
-    await user.type(screen.getByLabelText("Email"), "owner@example.test");
+    await user.type(screen.getByLabelText("Tên đăng nhập hoặc email"), "owner@example.test");
     await user.type(screen.getByLabelText("Mật khẩu"), "wrong-password");
     await user.click(screen.getByRole("button", { name: "Đăng nhập" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Email hoặc mật khẩu không đúng.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Tên đăng nhập hoặc mật khẩu không đúng.");
   });
 
   it("clears all private client cache when logging out", async () => {
@@ -82,7 +82,7 @@ describe("authentication shell", () => {
     expect(privateCache.size).toBe(0);
     expect(localStorage.getItem(generationIdentityKey("owner-1", "campaign-1", "branch-1"))).toBeNull();
     expect(screen.getByRole("alert")).toHaveTextContent("Phiên đăng nhập đã hết hạn");
-    await user.type(screen.getByLabelText("Email"), "owner@example.test");
+    await user.type(screen.getByLabelText("Tên đăng nhập hoặc email"), "owner@example.test");
     await user.type(screen.getByLabelText("Mật khẩu"), "correct-password");
     await user.click(screen.getByRole("button", { name: "Đăng nhập" }));
     expect(await screen.findByRole("heading", { name: "Thư viện truyện" })).toBeInTheDocument();
@@ -122,7 +122,7 @@ describe("authentication shell", () => {
     await screen.findByRole("heading", { name: "Thư viện truyện" });
     const oldProtected = api.me();
     await user.click(screen.getByRole("button", { name: "Đăng xuất" }));
-    await user.type(screen.getByLabelText("Email"), "new@example.test");
+    await user.type(screen.getByLabelText("Tên đăng nhập hoặc email"), "new@example.test");
     await user.type(screen.getByLabelText("Mật khẩu"), "new-password");
     await user.click(screen.getByRole("button", { name: "Đăng nhập" }));
     await screen.findByRole("heading", { name: "Thư viện truyện" });
@@ -157,7 +157,7 @@ describe("authentication shell", () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Thư viện truyện" });
     await user.click(screen.getByRole("button", { name: "Đăng xuất" }));
-    await user.type(screen.getByLabelText("Email"), "new@example.test");
+    await user.type(screen.getByLabelText("Tên đăng nhập hoặc email"), "new@example.test");
     await user.type(screen.getByLabelText("Mật khẩu"), "new-password");
     await user.click(screen.getByRole("button", { name: "Đăng nhập" }));
     await screen.findByRole("heading", { name: "Thư viện truyện" });

@@ -1,6 +1,15 @@
 export interface Owner {
   id: string;
   email: string;
+  username?: string;
+  is_admin?: boolean;
+}
+
+export interface AccountSummary {
+  id: string;
+  username: string;
+  is_admin: boolean;
+  created_at: string;
 }
 
 export interface DemoInfo {
